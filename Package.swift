@@ -1,0 +1,49 @@
+// swift-tools-version: 6.4
+import PackageDescription
+
+let package = Package(
+    name: "Laperm",
+    platforms: [
+        .macOS(.v27),
+    ],
+    products: [
+        .library(name: "Laperm", targets: ["Laperm"]),
+        .library(name: "LapermCore", targets: ["LapermCore"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.4.0"),
+    ],
+    targets: [
+        .target(
+            name: "LapermCore",
+            dependencies: [
+                .product(name: "Markdown", package: "swift-markdown"),
+            ],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        .target(
+            name: "Laperm",
+            dependencies: ["LapermCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        .testTarget(
+            name: "LapermCoreTests",
+            dependencies: ["LapermCore"],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+        .testTarget(
+            name: "LapermTests",
+            dependencies: ["Laperm"],
+            swiftSettings: [
+                .enableUpcomingFeature("ApproachableConcurrency"),
+            ],
+        ),
+    ],
+    swiftLanguageModes: [.v6]
+)
