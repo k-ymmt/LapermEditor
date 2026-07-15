@@ -35,6 +35,26 @@ public final class MarkdownTextView: NSTextView {
     /// IME 変換中(marked text)は変換セッションを優先し、呼ばれない。
     public weak var inputInterceptor: (any TextInputInterceptor)?
 
+    /// カーソル形状。bar 以外ではシステムの挿入ポイントを消してオーバーレイで描く。
+    /// 注意: 現状オーバーレイはフォーカス状態を見ない(非フォーカスでも表示される)
+    public var insertionPointStyle: InsertionPointStyle = .bar {
+        didSet {
+            guard insertionPointStyle != oldValue else { return }
+            // システムのインジケータ(NSTextInsertionIndicator)はサブビュー構成に
+            // 依存しないよう色で消し、bar に戻すとき元色を復元する
+            if insertionPointStyle == .bar {
+                if let color = barInsertionPointColor { insertionPointColor = color }
+                barInsertionPointColor = nil
+            } else if barInsertionPointColor == nil {
+                barInsertionPointColor = insertionPointColor
+                insertionPointColor = .clear
+            }
+            updateInsertionPointOverlay()
+        }
+    }
+    private var barInsertionPointColor: NSColor?
+    private let insertionPointOverlay = InsertionPointOverlayView()
+
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
@@ -86,6 +106,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.rehighlightAll(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        updateInsertionPointOverlay()
     }
 
     /// 保留中の編集を即時処理する(通常は didProcessEditing からの遅延実行で呼ばれる)。
@@ -105,6 +126,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.flushPendingHighlight(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        updateInsertionPointOverlay()
     }
 
     private func updateBlockDecorations() {
@@ -206,6 +228,80 @@ public final class MarkdownTextView: NSTextView {
             let input = KeyInput(event: event)
         else { return false }
         return interceptor.textView(self, handle: input) == .handled
+    }
+
+    // MARK: - カーソル形状
+
+    public override func setSelectedRanges(
+        _ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool
+    ) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        updateInsertionPointOverlay()
+    }
+
+    public override func didChangeText() {
+        super.didChangeText()
+        updateInsertionPointOverlay()
+    }
+
+    public override func layout() {
+        super.layout()
+        updateInsertionPointOverlay()
+    }
+
+    private func updateInsertionPointOverlay() {
+        guard insertionPointStyle != .bar,
+            selectedRange().length == 0,
+            let frame = caretOverlayFrame()
+        else {
+            insertionPointOverlay.removeFromSuperview()
+            return
+        }
+        if insertionPointOverlay.superview !== self {
+            addSubview(insertionPointOverlay)
+        }
+        insertionPointOverlay.style = insertionPointStyle
+        insertionPointOverlay.color = barInsertionPointColor ?? .textInsertionPointColor
+        insertionPointOverlay.frame = frame
+        insertionPointOverlay.needsDisplay = true
+    }
+
+    /// カーソル位置の文字を覆う矩形(textView 座標)。行末・空行では等幅 1 文字ぶんの幅。
+    private func caretOverlayFrame() -> NSRect? {
+        guard let layoutManager = textLayoutManager,
+            let contentManager = layoutManager.textContentManager
+        else { return nil }
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        let text = string as NSString
+        let caret = selectedRange().location
+        guard caret != NSNotFound, caret <= text.length else { return nil }
+        var characterRange = NSRange(location: caret, length: 0)
+        if caret < TextMotions.lineEnd(text: text, at: caret) {
+            characterRange = text.rangeOfComposedCharacterSequence(at: caret)
+        }
+        guard let start = contentManager.location(
+                contentManager.documentRange.location, offsetBy: characterRange.location),
+            let end = contentManager.location(start, offsetBy: characterRange.length),
+            let textRange = NSTextRange(location: start, end: end)
+        else { return nil }
+        var segmentFrame = CGRect.null
+        layoutManager.enumerateTextSegments(
+            in: textRange, type: .standard, options: [.rangeNotRequired]
+        ) { _, frame, _, _ in
+            segmentFrame = frame
+            return false
+        }
+        guard !segmentFrame.isNull else { return nil }
+        var frame = segmentFrame
+        if frame.width < 1 {
+            // キャレットのみ(行末・空行)は等幅 1 文字ぶんの幅を与える
+            frame.size.width = ("M" as NSString)
+                .size(withAttributes: [.font: theme.bodyFont]).width
+        }
+        let origin = textContainerOrigin
+        return NSRect(
+            x: frame.minX + origin.x, y: frame.minY + origin.y,
+            width: frame.width, height: frame.height)
     }
 
     // MARK: - 編集支援

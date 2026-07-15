@@ -56,26 +56,6 @@ import Testing
 
 // MARK: - 編集支援
 
-/// characterRange の表示フレーム中心点(textView 座標)を求める
-@MainActor
-private func midpoint(of characterRange: NSRange, in textView: MarkdownTextView) -> NSPoint {
-    let layoutManager = textView.textLayoutManager!
-    let contentManager = layoutManager.textContentManager!
-    layoutManager.ensureLayout(for: layoutManager.documentRange)
-    let start = contentManager.location(
-        contentManager.documentRange.location, offsetBy: characterRange.location)!
-    let end = contentManager.location(start, offsetBy: characterRange.length)!
-    let textRange = NSTextRange(location: start, end: end)!
-    var frame = CGRect.zero
-    layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) {
-        _, segmentFrame, _, _ in
-        frame = segmentFrame
-        return false
-    }
-    let origin = textView.textContainerOrigin
-    return NSPoint(x: frame.midX + origin.x, y: frame.midY + origin.y)
-}
-
 @MainActor @Test func insertNewlineContinuesList() {
     let textView = MarkdownTextView()
     textView.string = "- item"
