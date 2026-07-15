@@ -1,10 +1,13 @@
 import SwiftUI
+import LapermCore
 
 /// MarkdownTextView の SwiftUI ラッパー。
 public struct MarkdownEditorView: NSViewRepresentable {
     @Binding private var text: String
     private var theme: MarkdownTheme
     private var showsLineNumbers = true
+    private var inputInterceptor: (any TextInputInterceptor)?
+    private var insertionPointStyle: InsertionPointStyle = .bar
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
         self._text = text
@@ -17,6 +20,27 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
+    /// キー入力のインターセプタを設定する。MarkdownTextView 側は weak 保持のため、
+    /// 呼び出し側がインターセプタの所有権を持つこと(@State 等)。
+    public func inputInterceptor(_ interceptor: (any TextInputInterceptor)?) -> MarkdownEditorView {
+        var copy = self
+        copy.inputInterceptor = interceptor
+        return copy
+    }
+
+    /// カーソル形状を設定する。
+    public func insertionPointStyle(_ style: InsertionPointStyle) -> MarkdownEditorView {
+        var copy = self
+        copy.insertionPointStyle = style
+        return copy
+    }
+
+    /// make / update 共通の反映処理(テストの継ぎ目)
+    func apply(to textView: MarkdownTextView) {
+        textView.inputInterceptor = inputInterceptor
+        textView.insertionPointStyle = insertionPointStyle
+    }
+
     public func makeNSView(context: Context) -> NSScrollView {
         let scrollView = MarkdownTextView.scrollableMarkdownEditor(theme: theme)
         let textView = scrollView.documentView as! MarkdownTextView
@@ -24,6 +48,7 @@ public struct MarkdownEditorView: NSViewRepresentable {
         textView.string = text
         textView.highlightAll()
         textView.showsLineNumbers = showsLineNumbers
+        apply(to: textView)
         return scrollView
     }
 
@@ -40,6 +65,7 @@ public struct MarkdownEditorView: NSViewRepresentable {
             textView.theme = theme
         }
         textView.showsLineNumbers = showsLineNumbers
+        apply(to: textView)
     }
 
     public func makeCoordinator() -> Coordinator {

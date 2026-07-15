@@ -1,6 +1,7 @@
 import SwiftUI
 import Testing
 @testable import Laperm
+@testable import LapermCore
 
 // NSViewRepresentable.Context は外部から構築できないため、makeNSView 経路は
 // ExampleMacOS(Task 13-14)で検証し、ここでは Coordinator の同期ロジックを検証する。
@@ -28,4 +29,37 @@ import Testing
     coordinator.isUpdatingFromSwiftUI = true
     coordinator.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
     #expect(text == "a")  // ガード中は Binding を更新しない
+}
+
+@MainActor private final class NullInterceptor: TextInputInterceptor {
+    func textView(_ textView: MarkdownTextView, handle input: LapermCore.KeyInput)
+        -> LapermCore.KeyInputResult
+    { .passthrough }
+}
+
+@MainActor @Test func modifiersApplyInterceptorAndCursorStyle() {
+    var text = ""
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let interceptor = NullInterceptor()
+    let view = MarkdownEditorView(text: binding)
+        .inputInterceptor(interceptor)
+        .insertionPointStyle(.block)
+
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    view.apply(to: textView)
+    #expect(textView.inputInterceptor === interceptor)
+    #expect(textView.insertionPointStyle == .block)
+}
+
+@MainActor @Test func defaultModifiersLeaveTextViewUntouched() {
+    var text = ""
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let view = MarkdownEditorView(text: binding)
+
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    view.apply(to: textView)
+    #expect(textView.inputInterceptor == nil)
+    #expect(textView.insertionPointStyle == .bar)
 }
