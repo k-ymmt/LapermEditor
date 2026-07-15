@@ -56,12 +56,6 @@ import Testing
 
 // MARK: - 編集支援
 
-/// NSTextView は window か delegate から undoManager を取るため、テストでは delegate で供給する
-@MainActor private final class UndoManagerProvider: NSObject, NSTextViewDelegate {
-    let manager = UndoManager()
-    func undoManager(for view: NSTextView) -> UndoManager? { manager }
-}
-
 /// characterRange の表示フレーム中心点(textView 座標)を求める
 @MainActor
 private func midpoint(of characterRange: NSRange, in textView: MarkdownTextView) -> NSPoint {

@@ -214,7 +214,7 @@ public final class MarkdownTextView: NSTextView {
         if editingOptions.continuesLists,
             let command = EditingAssistant.newline(
                 text: string as NSString, selection: selectedRange()),
-            apply(command) {
+            perform(command) {
             return
         }
         super.insertNewline(sender)
@@ -224,7 +224,7 @@ public final class MarkdownTextView: NSTextView {
         if editingOptions.indentsListItems,
             let command = EditingAssistant.indent(
                 text: string as NSString, selection: selectedRange()),
-            apply(command) {
+            perform(command) {
             return
         }
         super.insertTab(sender)
@@ -234,7 +234,7 @@ public final class MarkdownTextView: NSTextView {
         if editingOptions.indentsListItems,
             let command = EditingAssistant.outdent(
                 text: string as NSString, selection: selectedRange()),
-            apply(command) {
+            perform(command) {
             return
         }
         super.insertBacktab(sender)
@@ -247,7 +247,7 @@ public final class MarkdownTextView: NSTextView {
             let typed = insertString as? String,
             let command = EditingAssistant.insertion(
                 text: string as NSString, selection: selectedRange(), typing: typed),
-            apply(command) {
+            perform(command) {
             return
         }
         super.insertText(insertString, replacementRange: replacementRange)
@@ -258,7 +258,7 @@ public final class MarkdownTextView: NSTextView {
         if editingOptions.completesPairs, !hasMarkedText(),
             let command = EditingAssistant.deleteBackward(
                 text: string as NSString, selection: selectedRange()),
-            apply(command) {
+            perform(command) {
             return
         }
         super.deleteBackward(sender)
@@ -284,7 +284,7 @@ public final class MarkdownTextView: NSTextView {
             text: string as NSString, at: offset) else { return false }
         // 同長 1 文字の置換なので選択座標はずれない — 適用前の選択を復元する
         let selectionBefore = selectedRanges
-        guard apply(command) else { return false }
+        guard perform(command) else { return false }
         selectedRanges = selectionBefore
         return true
     }
@@ -292,7 +292,19 @@ public final class MarkdownTextView: NSTextView {
     /// EditCommand を undo 対応の経路で適用する。
     /// shouldChangeText / didChangeText を通すことで NSTextView 標準の undo に乗り、
     /// 既存の NSTextStorageDelegate 経由で再ハイライトも自動で走る。
-    private func apply(_ command: EditCommand) -> Bool {
+    /// 範囲が文書外のコマンドは適用せず false を返す。
+    @discardableResult
+    public func perform(_ command: EditCommand) -> Bool {
+        let length = (string as NSString).length
+        guard command.replacementRange.location != NSNotFound,
+            NSMaxRange(command.replacementRange) <= length
+        else { return false }
+        // 適用後の文書長で selectedRange を検証(範囲外だと NSTextView が例外を投げる)
+        let newLength = length - command.replacementRange.length
+            + (command.replacementString as NSString).length
+        guard command.selectedRange.location != NSNotFound,
+            NSMaxRange(command.selectedRange) <= newLength
+        else { return false }
         // 純粋なカーソル移動(タイプオーバー)は置換なしで選択だけ動かす
         if command.replacementRange.length == 0, command.replacementString.isEmpty {
             setSelectedRange(command.selectedRange)
