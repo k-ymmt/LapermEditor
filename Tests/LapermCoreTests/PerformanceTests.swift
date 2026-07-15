@@ -24,9 +24,11 @@ private func makeLargeDocument(lines: Int) -> String {
     _ = parser.highlightPlan(for: text)  // ウォームアップ
 
     let clock = ContinuousClock()
-    let elapsed = clock.measure {
-        _ = parser.highlightPlan(for: text)
-    }
+    // テストは並列実行されるため単発計測はスケジューラノイズで揺れる。
+    // 3 回計測の最小値なら真のコストに近く、リグレッション検知の意図を保てる。
+    let elapsed = (0..<3).map { _ in
+        clock.measure { _ = parser.highlightPlan(for: text) }
+    }.min()!
     // リグレッション閾値。実機目標は 16ms(spec)だが、この回帰テストの狙いは
     // 「パースが桁で遅くなったら気付く」こと。debug ビルドは Swift の
     // 最適化なしで 2〜3 倍遅いため閾値を分ける。
