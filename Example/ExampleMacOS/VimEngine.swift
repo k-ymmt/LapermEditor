@@ -44,7 +44,16 @@ struct VimEngine {
         }
         guard case .character(let char) = input.key else {
             pendingDelete = false
-            return input.key == .escape ? .none : .passthrough
+            // 編集系の特殊キー(Return / Tab / Backspace 等)は NORMAL では消費して
+            // 文書を変更させない。移動系(矢印・Page/Home/End)は無害なので通過させる
+            switch input.key {
+            case .escape, .return, .tab, .backspace, .forwardDelete:
+                return .none
+            case .up, .down, .left, .right, .pageUp, .pageDown, .home, .end:
+                return .passthrough
+            case .character:
+                return .passthrough  // guard で除外済み(到達しない)
+            }
         }
         if pendingDelete {
             pendingDelete = false
