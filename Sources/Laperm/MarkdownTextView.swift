@@ -37,6 +37,7 @@ public final class MarkdownTextView: NSTextView {
 
     /// カーソル形状。bar 以外ではシステムの挿入ポイントを消してオーバーレイで描く。
     /// 注意: 現状オーバーレイはフォーカス状態を見ない(非フォーカスでも表示される)
+    /// bar 以外のスタイル中は `insertionPointColor` を外部から設定しないこと(システムキャレットの再表示と、bar 復帰時の保存色復元により設定が失われるため)。
     public var insertionPointStyle: InsertionPointStyle = .bar {
         didSet {
             guard insertionPointStyle != oldValue else { return }
@@ -391,6 +392,7 @@ public final class MarkdownTextView: NSTextView {
     /// shouldChangeText / didChangeText を通すことで NSTextView 標準の undo に乗り、
     /// 既存の NSTextStorageDelegate 経由で再ハイライトも自動で走る。
     /// 範囲が文書外のコマンドは適用せず false を返す。
+    /// IME 変換中(`hasMarkedText()` が true)の呼び出しは変換セッションを乱す恐れがあるため避けること。
     @discardableResult
     public func perform(_ command: EditCommand) -> Bool {
         let length = (string as NSString).length

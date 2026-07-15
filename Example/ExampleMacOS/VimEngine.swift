@@ -50,6 +50,8 @@ struct VimEngine {
             case .escape, .return, .tab, .backspace, .forwardDelete:
                 return .none
             case .up, .down, .left, .right, .pageUp, .pageDown, .home, .end:
+                // 通過した移動キーで列記憶が古くなるためリセット
+                preferredColumn = nil
                 return .passthrough
             case .character:
                 return .passthrough  // guard で除外済み(到達しない)

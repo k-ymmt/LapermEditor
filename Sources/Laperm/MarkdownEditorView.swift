@@ -1,5 +1,4 @@
 import SwiftUI
-import LapermCore
 
 /// MarkdownTextView の SwiftUI ラッパー。
 public struct MarkdownEditorView: NSViewRepresentable {
