@@ -84,3 +84,49 @@ private func newline(_ text: String, caret: Int) -> EditCommand? {
     // "[link](…)" の '[' をチェックボックス扱いしない → 通常のバレット継続
     #expect(newline("- [link](https://x)", caret: 19)?.replacementString == "\n- ")
 }
+
+private func indent(_ text: String, selection: NSRange) -> EditCommand? {
+    EditingAssistant.indent(text: text as NSString, selection: selection)
+}
+private func outdent(_ text: String, selection: NSRange) -> EditCommand? {
+    EditingAssistant.outdent(text: text as NSString, selection: selection)
+}
+
+// MARK: - Tab インデント
+
+@Test func indentsListItemLineFromAnyCaretPosition() {
+    let command = indent("- item", selection: NSRange(location: 4, length: 0))
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 0, length: 6),
+        replacementString: "    - item",
+        selectedRange: NSRange(location: 8, length: 0)))
+}
+
+@Test func outdentRemovesUpToFourSpaces() {
+    let command = outdent("    - item", selection: NSRange(location: 8, length: 0))
+    #expect(command?.replacementString == "- item")
+    #expect(command?.selectedRange == NSRange(location: 4, length: 0))
+}
+
+@Test func outdentRemovesFewerSpacesWhenShallow() {
+    #expect(outdent("  - a", selection: NSRange(location: 4, length: 0))?.replacementString == "- a")
+}
+
+@Test func outdentAtColumnZeroReturnsNil() {
+    #expect(outdent("- a", selection: NSRange(location: 2, length: 0)) == nil)
+}
+
+@Test func indentsAllSelectedListLines() {
+    let command = indent("- a\n- b", selection: NSRange(location: 0, length: 7))
+    #expect(command?.replacementString == "    - a\n    - b")
+    #expect(command?.selectedRange == NSRange(location: 4, length: 11))
+}
+
+@Test func skipsNonListLinesInSelection() {
+    let command = indent("- a\nplain\n- b", selection: NSRange(location: 0, length: 13))
+    #expect(command?.replacementString == "    - a\nplain\n    - b")
+}
+
+@Test func indentOnPlainLineReturnsNil() {
+    #expect(indent("plain", selection: NSRange(location: 3, length: 0)) == nil)
+}

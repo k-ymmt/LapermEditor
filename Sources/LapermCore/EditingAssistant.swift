@@ -44,6 +44,63 @@ public enum EditingAssistant {
             selectedRange: NSRange(
                 location: selection.location + (inserted as NSString).length, length: 0))
     }
+
+    /// インデント単位(スペース 4。番号付きマーカー幅でもネストが常に成立する値)
+    private static let indentUnit = "    "
+
+    /// Tab: 選択範囲(またはカーソル行)内のリスト項目行を 1 段深くする
+    public static func indent(text: NSString, selection: NSRange) -> EditCommand? {
+        changeIndent(text: text, selection: selection, removing: false)
+    }
+
+    /// Shift+Tab: 選択範囲(またはカーソル行)内のリスト項目行を 1 段浅くする
+    public static func outdent(text: NSString, selection: NSRange) -> EditCommand? {
+        changeIndent(text: text, selection: selection, removing: true)
+    }
+
+    private static func changeIndent(
+        text: NSString, selection: NSRange, removing: Bool
+    ) -> EditCommand? {
+        guard NSMaxRange(selection) <= text.length else { return nil }
+        let linesRange = text.lineRange(for: selection)
+        var rebuilt = ""
+        var firstDelta: Int?
+        var totalDelta = 0
+        var foundListLine = false
+        var location = linesRange.location
+        while location < NSMaxRange(linesRange) {
+            let lineRange = text.lineRange(for: NSRange(location: location, length: 0))
+            var line = text.substring(with: lineRange)
+            var delta = 0
+            if ListItemLine.parse(text: text, lineRange: lineRange) != nil {
+                foundListLine = true
+                if removing {
+                    // 行頭から最大 indentUnit 分のスペースを削除
+                    let removable = line.prefix(indentUnit.count).prefix(while: { $0 == " " }).count
+                    if removable > 0 {
+                        line.removeFirst(removable)
+                        delta = -removable
+                    }
+                } else {
+                    line = indentUnit + line
+                    delta = indentUnit.count
+                }
+            }
+            rebuilt += line
+            if firstDelta == nil { firstDelta = delta }
+            totalDelta += delta
+            location = NSMaxRange(lineRange)
+        }
+        guard foundListLine, totalDelta != 0 else { return nil }
+        // 選択範囲の維持: 先頭行の増減分だけ開始位置をずらし、残りは長さに反映する
+        let first = firstDelta ?? 0
+        let newLocation = max(linesRange.location, selection.location + first)
+        let newLength = max(0, selection.length + totalDelta - first)
+        return EditCommand(
+            replacementRange: linesRange,
+            replacementString: rebuilt,
+            selectedRange: NSRange(location: newLocation, length: newLength))
+    }
 }
 
 /// リスト項目行の解析結果。行頭のインデント・マーカー・チェックボックスを走査で検出する。
