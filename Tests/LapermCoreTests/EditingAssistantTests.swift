@@ -96,6 +96,45 @@ private func insertion(_ text: String, selection: NSRange, typing: String) -> Ed
     EditingAssistant.insertion(text: text as NSString, selection: selection, typing: typing)
 }
 
+private func toggle(_ text: String, at offset: Int) -> EditCommand? {
+    EditingAssistant.toggleCheckbox(text: text as NSString, at: offset)
+}
+
+// MARK: - チェックボックストグル
+
+@Test func togglesUncheckedToChecked() {
+    let command = toggle("- [ ] task", at: 3)
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 3, length: 1),
+        replacementString: "x",
+        selectedRange: NSRange(location: 3, length: 1)))
+}
+
+@Test func togglesCheckedToUnchecked() {
+    #expect(toggle("- [x] task", at: 2)?.replacementString == " ")
+    #expect(toggle("- [X] task", at: 4)?.replacementString == " ")
+}
+
+@Test func togglesOnSecondLine() {
+    let command = toggle("- [x] a\n- [ ] b", at: 11)
+    #expect(command?.replacementRange == NSRange(location: 11, length: 1))
+    #expect(command?.replacementString == "x")
+}
+
+@Test func offsetOutsideCheckboxReturnsNil() {
+    #expect(toggle("- [ ] task", at: 0) == nil)  // バレット上
+    #expect(toggle("- [ ] task", at: 7) == nil)  // 本文上
+}
+
+@Test func nonTaskLineReturnsNil() {
+    #expect(toggle("- [link](https://x) a", at: 3) == nil)
+    #expect(toggle("plain [ ] text", at: 7) == nil)
+}
+
+@Test func outOfBoundsOffsetReturnsNil() {
+    #expect(toggle("- [ ]", at: 99) == nil)
+}
+
 // MARK: - Tab インデント
 
 @Test func indentsListItemLineFromAnyCaretPosition() {

@@ -145,6 +145,25 @@ public enum EditingAssistant {
         }
         return nil
     }
+
+    /// クリック: offset がタスク項目のチェックボックス "[ ]" / "[x]" の 3 文字上に
+    /// あるときだけ状態文字 1 文字を置換するコマンドを返す。
+    /// 置換は同長 1 文字なので、UI 層は適用前の選択範囲をそのまま復元できる。
+    public static func toggleCheckbox(text: NSString, at offset: Int) -> EditCommand? {
+        guard offset >= 0, offset <= text.length else { return nil }
+        let lineRange = text.lineRange(for: NSRange(location: offset, length: 0))
+        guard let item = ListItemLine.parse(text: text, lineRange: lineRange),
+            let boxLocation = item.checkboxLocation,
+            offset >= boxLocation, offset < boxLocation + 3 else { return nil }
+        let stateLocation = boxLocation + 1
+        let state = text.character(at: stateLocation)
+        let isChecked = state == unichar(UnicodeScalar("x").value)
+            || state == unichar(UnicodeScalar("X").value)
+        return EditCommand(
+            replacementRange: NSRange(location: stateLocation, length: 1),
+            replacementString: isChecked ? " " : "x",
+            selectedRange: NSRange(location: stateLocation, length: 1))
+    }
 }
 
 /// リスト項目行の解析結果。行頭のインデント・マーカー・チェックボックスを走査で検出する。
