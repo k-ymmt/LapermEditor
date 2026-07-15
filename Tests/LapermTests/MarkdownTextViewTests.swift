@@ -30,6 +30,19 @@ import Testing
     #expect(font == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
 }
 
+@MainActor @Test func scrollableEditorGrowsBeyondClipHeight() {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+    scrollView.layoutSubtreeIfNeeded()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.string = Array(repeating: "line", count: 100).joined(separator: "\n")
+    textView.highlightAll()
+    textView.textLayoutManager!.ensureLayout(for: textView.textLayoutManager!.documentRange)
+    textView.sizeToFit()
+    // 文書がクリップ領域より高い場合、documentView が伸びないとスクロールできない
+    #expect(textView.frame.height > 200)
+}
+
 @MainActor @Test func settingThemeRehighlights() {
     let textView = MarkdownTextView()
     textView.string = "# Title"

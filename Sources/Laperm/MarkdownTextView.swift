@@ -161,6 +161,13 @@ public final class MarkdownTextView: NSTextView {
         let textView = MarkdownTextView(theme: theme)
         textView.isVerticallyResizable = true
         textView.isHorizontallyResizable = false
+        // maxSize を明示しないと frame 変更時に frame サイズへ追従してしまい、
+        // 文書がクリップ領域より高くなっても伸びられずスクロール不能になる
+        textView.minSize = .zero
+        textView.maxSize = CGSize(
+            width: CGFloat.greatestFiniteMagnitude,
+            height: CGFloat.greatestFiniteMagnitude
+        )
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
 
