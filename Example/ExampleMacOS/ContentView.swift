@@ -13,10 +13,13 @@ struct ContentView: View {
     @State private var text = ContentView.sampleDocument
     @State private var showsLineNumbers = true
     @State private var useAlternateTheme = false
+    @State private var vim = VimController()
 
     var body: some View {
         MarkdownEditorView(text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default)
             .showsLineNumbers(showsLineNumbers)
+            .inputInterceptor(vim.isEnabled ? vim : nil)
+            .insertionPointStyle(vim.insertionPointStyle)
             .frame(minWidth: 640, minHeight: 480)
             .toolbar {
                 ToolbarItem {
@@ -24,6 +27,19 @@ struct ContentView: View {
                 }
                 ToolbarItem {
                     Toggle("テーマ", isOn: $useAlternateTheme)
+                }
+                ToolbarItem {
+                    Toggle("Vim", isOn: $vim.isEnabled)
+                }
+            }
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if let status = vim.statusText {
+                    Text(status)
+                        .font(.system(.caption, design: .monospaced).bold())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(.bar)
                 }
             }
     }
@@ -82,6 +98,7 @@ struct ContentView: View {
     - リスト行末で Enter → 次項目を自動継続(空項目で Enter すると脱出)
     - [ ] このチェックボックスはクリックでトグルできます
     - Tab / Shift+Tab でネスト変更、テキストを選択して `*` などを入力すると囲い込み
+    - ツールバーの Vim トグルで簡易 Vim モード(hjkl / w b / 0 $ / x dd / i a o O / Esc)
 
     日本語も絵文字 🎉 も正しくハイライトされます。
     """
