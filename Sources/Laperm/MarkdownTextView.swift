@@ -271,7 +271,6 @@ public final class MarkdownTextView: NSTextView {
         guard let layoutManager = textLayoutManager,
             let contentManager = layoutManager.textContentManager
         else { return nil }
-        layoutManager.ensureLayout(for: layoutManager.documentRange)
         let text = string as NSString
         let caret = selectedRange().location
         guard caret != NSNotFound, caret <= text.length else { return nil }
@@ -284,6 +283,9 @@ public final class MarkdownTextView: NSTextView {
             let end = contentManager.location(start, offsetBy: characterRange.length),
             let textRange = NSTextRange(location: start, end: end)
         else { return nil }
+        // キーストロークごとに呼ばれるため、レイアウト保証はキャレット周辺のみに絞る
+        // (documentRange 全体だとビューポート単位の増分レイアウトが無効化される)
+        layoutManager.ensureLayout(for: textRange)
         var segmentFrame = CGRect.null
         layoutManager.enumerateTextSegments(
             in: textRange, type: .standard, options: [.rangeNotRequired]
