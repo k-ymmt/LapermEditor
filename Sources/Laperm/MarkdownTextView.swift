@@ -28,6 +28,9 @@ public final class MarkdownTextView: NSTextView {
         didSet { enclosingScrollView?.rulersVisible = showsLineNumbers }
     }
 
+    /// 編集支援機能の設定(デフォルト全 ON)
+    public var editingOptions = EditingOptions()
+
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
@@ -182,6 +185,93 @@ public final class MarkdownTextView: NSTextView {
         scrollView.rulersVisible = textView.showsLineNumbers
         textView.gutterView = gutter
         return scrollView
+    }
+
+    // MARK: - 編集支援
+
+    public override func insertNewline(_ sender: Any?) {
+        if editingOptions.continuesLists,
+            let command = EditingAssistant.newline(
+                text: string as NSString, selection: selectedRange()),
+            apply(command) {
+            return
+        }
+        super.insertNewline(sender)
+    }
+
+    public override func insertTab(_ sender: Any?) {
+        if editingOptions.indentsListItems,
+            let command = EditingAssistant.indent(
+                text: string as NSString, selection: selectedRange()),
+            apply(command) {
+            return
+        }
+        super.insertTab(sender)
+    }
+
+    public override func insertBacktab(_ sender: Any?) {
+        if editingOptions.indentsListItems,
+            let command = EditingAssistant.outdent(
+                text: string as NSString, selection: selectedRange()),
+            apply(command) {
+            return
+        }
+        super.insertBacktab(sender)
+    }
+
+    public override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        // IME 変換中・属性付き文字列・置換指定付きの挿入(IME 確定等)は対象外
+        if editingOptions.completesPairs, !hasMarkedText(),
+            replacementRange.location == NSNotFound,
+            let typed = insertString as? String,
+            let command = EditingAssistant.insertion(
+                text: string as NSString, selection: selectedRange(), typing: typed),
+            apply(command) {
+            return
+        }
+        super.insertText(insertString, replacementRange: replacementRange)
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        if editingOptions.togglesCheckboxOnClick,
+            event.clickCount == 1,
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+            toggleCheckbox(atPoint: convert(event.locationInWindow, from: nil)) {
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    /// point(ビュー座標)のクリックでチェックボックスをトグルする。トグルしたら true。
+    /// mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
+    func toggleCheckbox(atPoint point: NSPoint) -> Bool {
+        let offset = characterIndexForInsertion(at: point)
+        guard let command = EditingAssistant.toggleCheckbox(
+            text: string as NSString, at: offset) else { return false }
+        // 同長 1 文字の置換なので選択座標はずれない — 適用前の選択を復元する
+        let selectionBefore = selectedRanges
+        guard apply(command) else { return false }
+        selectedRanges = selectionBefore
+        return true
+    }
+
+    /// EditCommand を undo 対応の経路で適用する。
+    /// shouldChangeText / didChangeText を通すことで NSTextView 標準の undo に乗り、
+    /// 既存の NSTextStorageDelegate 経由で再ハイライトも自動で走る。
+    private func apply(_ command: EditCommand) -> Bool {
+        // 純粋なカーソル移動(タイプオーバー)は置換なしで選択だけ動かす
+        if command.replacementRange.length == 0, command.replacementString.isEmpty {
+            setSelectedRange(command.selectedRange)
+            return true
+        }
+        guard shouldChangeText(
+                in: command.replacementRange, replacementString: command.replacementString),
+            let textStorage else { return false }
+        textStorage.replaceCharacters(
+            in: command.replacementRange, with: command.replacementString)
+        didChangeText()
+        setSelectedRange(command.selectedRange)
+        return true
     }
 }
 

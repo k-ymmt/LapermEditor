@@ -53,3 +53,113 @@ import Testing
     let font = textView.textStorage!.attribute(.font, at: 3, effectiveRange: nil) as? NSFont
     #expect(font?.pointSize == 40)
 }
+
+// MARK: - 編集支援
+
+/// NSTextView は window か delegate から undoManager を取るため、テストでは delegate で供給する
+@MainActor private final class UndoManagerProvider: NSObject, NSTextViewDelegate {
+    let manager = UndoManager()
+    func undoManager(for view: NSTextView) -> UndoManager? { manager }
+}
+
+/// characterRange の表示フレーム中心点(textView 座標)を求める
+@MainActor
+private func midpoint(of characterRange: NSRange, in textView: MarkdownTextView) -> NSPoint {
+    let layoutManager = textView.textLayoutManager!
+    let contentManager = layoutManager.textContentManager!
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    let start = contentManager.location(
+        contentManager.documentRange.location, offsetBy: characterRange.location)!
+    let end = contentManager.location(start, offsetBy: characterRange.length)!
+    let textRange = NSTextRange(location: start, end: end)!
+    var frame = CGRect.zero
+    layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) {
+        _, segmentFrame, _, _ in
+        frame = segmentFrame
+        return false
+    }
+    let origin = textView.textContainerOrigin
+    return NSPoint(x: frame.midX + origin.x, y: frame.midY + origin.y)
+}
+
+@MainActor @Test func insertNewlineContinuesList() {
+    let textView = MarkdownTextView()
+    textView.string = "- item"
+    textView.setSelectedRange(NSRange(location: 6, length: 0))
+    textView.insertNewline(nil)
+    #expect(textView.string == "- item\n- ")
+    #expect(textView.selectedRange() == NSRange(location: 9, length: 0))
+}
+
+@MainActor @Test func insertNewlineRespectsDisabledOption() {
+    let textView = MarkdownTextView()
+    textView.editingOptions.continuesLists = false
+    textView.string = "- item"
+    textView.setSelectedRange(NSRange(location: 6, length: 0))
+    textView.insertNewline(nil)
+    #expect(textView.string == "- item\n")
+}
+
+@MainActor @Test func listContinuationUndoesInOneStep() {
+    let textView = MarkdownTextView()
+    let provider = UndoManagerProvider()
+    textView.delegate = provider
+    textView.string = "- item"
+    textView.setSelectedRange(NSRange(location: 6, length: 0))
+    textView.insertNewline(nil)
+    #expect(textView.string == "- item\n- ")
+    provider.manager.undo()
+    #expect(textView.string == "- item")
+}
+
+@MainActor @Test func insertTabIndentsListItem() {
+    let textView = MarkdownTextView()
+    textView.string = "- item"
+    textView.setSelectedRange(NSRange(location: 6, length: 0))
+    textView.insertTab(nil)
+    #expect(textView.string == "    - item")
+}
+
+@MainActor @Test func typingBacktickAutoCloses() {
+    let textView = MarkdownTextView()
+    textView.insertText("`", replacementRange: NSRange(location: NSNotFound, length: 0))
+    #expect(textView.string == "``")
+    #expect(textView.selectedRange() == NSRange(location: 1, length: 0))
+}
+
+@MainActor @Test func typingClosingBacktickTypesOver() {
+    let textView = MarkdownTextView()
+    textView.string = "``"
+    textView.setSelectedRange(NSRange(location: 1, length: 0))
+    textView.insertText("`", replacementRange: NSRange(location: NSNotFound, length: 0))
+    #expect(textView.string == "``")
+    #expect(textView.selectedRange() == NSRange(location: 2, length: 0))
+}
+
+@MainActor @Test func pairCompletionIsSkippedDuringMarkedText() {
+    let textView = MarkdownTextView()
+    textView.setMarkedText(
+        "か", selectedRange: NSRange(location: 0, length: 0),
+        replacementRange: NSRange(location: NSNotFound, length: 0))
+    textView.insertText("`", replacementRange: NSRange(location: NSNotFound, length: 0))
+    // マークテキストが "`" に置換されるだけで自動閉じは走らない
+    #expect(textView.string == "`")
+}
+
+@MainActor @Test func clickOnCheckboxTogglesState() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.string = "- [ ] task"
+    let point = midpoint(of: NSRange(location: 2, length: 3), in: textView)
+    #expect(textView.toggleCheckbox(atPoint: point))
+    #expect(textView.string == "- [x] task")
+}
+
+@MainActor @Test func clickOutsideCheckboxDoesNotToggle() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.string = "- [ ] task"
+    let point = midpoint(of: NSRange(location: 7, length: 3), in: textView)
+    #expect(!textView.toggleCheckbox(atPoint: point))
+    #expect(textView.string == "- [ ] task")
+}
