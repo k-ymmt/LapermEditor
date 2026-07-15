@@ -31,6 +31,10 @@ public final class MarkdownTextView: NSTextView {
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
 
+    /// キー入力のインターセプタ(weak 保持)。Vim モード等のモーダル編集の実装点。
+    /// IME 変換中(marked text)は変換セッションを優先し、呼ばれない。
+    public weak var inputInterceptor: (any TextInputInterceptor)?
+
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
@@ -185,6 +189,23 @@ public final class MarkdownTextView: NSTextView {
         scrollView.rulersVisible = textView.showsLineNumbers
         textView.gutterView = gutter
         return scrollView
+    }
+
+    // MARK: - 入力インターセプト
+
+    public override func keyDown(with event: NSEvent) {
+        if interceptsKeyDown(event) { return }
+        super.keyDown(with: event)
+    }
+
+    /// keyDown をインターセプタが消費すべきなら true。
+    /// mouseDown / toggleCheckbox と同様、テストから直接呼べるよう分離してある。
+    func interceptsKeyDown(_ event: NSEvent) -> Bool {
+        guard let interceptor = inputInterceptor,
+            !hasMarkedText(),
+            let input = KeyInput(event: event)
+        else { return false }
+        return interceptor.textView(self, handle: input) == .handled
     }
 
     // MARK: - 編集支援
