@@ -148,7 +148,28 @@ public enum EditingAssistant {
         return nil
     }
 
-    /// クリック: offset がタスク項目のチェックボックス "[ ]" / "[x]" の 3 文字上に
+    /// Backspace: カーソルが空ペア("()" / "[]" / "``")の間にあるときだけ
+    /// 両側をまとめて削除する(自動閉じで入った閉じ側を消す対の操作)。
+    /// 中身のあるペアや選択ありは nil(通常の削除に任せる)。
+    public static func deleteBackward(text: NSString, selection: NSRange) -> EditCommand? {
+        guard selection.length == 0,
+            selection.location >= 1, selection.location < text.length else { return nil }
+        let previous = text.character(at: selection.location - 1)
+        let next = text.character(at: selection.location)
+        // 対象は自動閉じと同じペアのみ(asciiValue は全対象文字が ASCII なので非 nil)
+        for character in autoClosing {
+            guard let closing = wrapPairs[character],
+                previous == unichar(character.asciiValue!),
+                next == unichar(closing.asciiValue!) else { continue }
+            return EditCommand(
+                replacementRange: NSRange(location: selection.location - 1, length: 2),
+                replacementString: "",
+                selectedRange: NSRange(location: selection.location - 1, length: 0))
+        }
+        return nil
+    }
+
+    /// クリック: offset がタスク項目のチェックボックス "[ ]" / "[x]" / "[X]" の 3 文字上に
     /// あるときだけ状態文字 1 文字を置換するコマンドを返す。
     /// 置換は同長 1 文字なので、UI 層は適用前の選択範囲をそのまま復元できる。
     public static func toggleCheckbox(text: NSString, at offset: Int) -> EditCommand? {

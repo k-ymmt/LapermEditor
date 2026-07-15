@@ -232,6 +232,17 @@ public final class MarkdownTextView: NSTextView {
         super.insertText(insertString, replacementRange: replacementRange)
     }
 
+    public override func deleteBackward(_ sender: Any?) {
+        // 空ペアの間で Backspace したら両側をまとめて削除(ペア補完の対になる操作)
+        if editingOptions.completesPairs, !hasMarkedText(),
+            let command = EditingAssistant.deleteBackward(
+                text: string as NSString, selection: selectedRange()),
+            apply(command) {
+            return
+        }
+        super.deleteBackward(sender)
+    }
+
     public override func mouseDown(with event: NSEvent) {
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,

@@ -163,3 +163,20 @@ private func midpoint(of characterRange: NSRange, in textView: MarkdownTextView)
     #expect(!textView.toggleCheckbox(atPoint: point))
     #expect(textView.string == "- [ ] task")
 }
+
+@MainActor @Test func backspaceBetweenEmptyPairDeletesBoth() {
+    let textView = MarkdownTextView()
+    textView.string = "()"
+    textView.setSelectedRange(NSRange(location: 1, length: 0))
+    textView.deleteBackward(nil)
+    #expect(textView.string == "")
+}
+
+@MainActor @Test func backspacePairDeletionRespectsDisabledOption() {
+    let textView = MarkdownTextView()
+    textView.editingOptions.completesPairs = false
+    textView.string = "()"
+    textView.setSelectedRange(NSRange(location: 1, length: 0))
+    textView.deleteBackward(nil)
+    #expect(textView.string == ")")
+}

@@ -238,3 +238,49 @@ private func toggle(_ text: String, at offset: Int) -> EditCommand? {
     #expect(insertion("", selection: NSRange(location: 0, length: 0), typing: "a") == nil)
     #expect(insertion("", selection: NSRange(location: 0, length: 0), typing: "ab") == nil)
 }
+
+// MARK: - 空ペア削除
+
+private func deleteBackward(_ text: String, selection: NSRange) -> EditCommand? {
+    EditingAssistant.deleteBackward(text: text as NSString, selection: selection)
+}
+
+@Test func backspaceDeletesEmptyPair() {
+    let command = deleteBackward("()", selection: NSRange(location: 1, length: 0))
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 0, length: 2),
+        replacementString: "",
+        selectedRange: NSRange(location: 0, length: 0)))
+}
+
+@Test func backspaceDeletesEachAutoClosingPair() {
+    #expect(deleteBackward("[]", selection: NSRange(location: 1, length: 0))?.replacementRange
+        == NSRange(location: 0, length: 2))
+    #expect(deleteBackward("``", selection: NSRange(location: 1, length: 0))?.replacementRange
+        == NSRange(location: 0, length: 2))
+}
+
+@Test func backspaceDeletesEmptyPairMidText() {
+    let command = deleteBackward("a()b", selection: NSRange(location: 2, length: 0))
+    #expect(command?.replacementRange == NSRange(location: 1, length: 2))
+    #expect(command?.selectedRange == NSRange(location: 1, length: 0))
+}
+
+@Test func backspaceKeepsNonEmptyPair() {
+    // 中身のあるペアは通常の 1 文字削除に任せる
+    #expect(deleteBackward("(x)", selection: NSRange(location: 1, length: 0)) == nil)
+}
+
+@Test func backspaceIgnoresWrapOnlyDelimiters() {
+    // * などの囲い込み専用文字は自動閉じされないので対象外
+    #expect(deleteBackward("**", selection: NSRange(location: 1, length: 0)) == nil)
+    #expect(deleteBackward("~~", selection: NSRange(location: 1, length: 0)) == nil)
+}
+
+@Test func backspaceEdgeCasesReturnNil() {
+    // 選択あり・行頭・末尾・不一致ペアはすべて通常動作
+    #expect(deleteBackward("()", selection: NSRange(location: 0, length: 2)) == nil)
+    #expect(deleteBackward("()", selection: NSRange(location: 0, length: 0)) == nil)
+    #expect(deleteBackward("()", selection: NSRange(location: 2, length: 0)) == nil)
+    #expect(deleteBackward("(]", selection: NSRange(location: 1, length: 0)) == nil)
+}

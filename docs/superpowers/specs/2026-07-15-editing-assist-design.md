@@ -17,7 +17,7 @@
 既存の「Core が判断し UI が適用する」2 層構造を踏襲する(採用案 A)。
 
 - **LapermCore**: 新ファイル `EditingAssistant.swift`。編集判断を純粋関数として実装。swift-markdown には依存せず、行単位のテキスト走査のみで判断する。ハイライトパイプラインとは完全に独立
-- **Laperm**: `MarkdownTextView` が `insertNewline` / `insertTab` / `insertBacktab` / `insertText(_:replacementRange:)` / `mouseDown` を薄くオーバーライドして Core に委譲し、返った `EditCommand` を undo 対応の経路で適用する
+- **Laperm**: `MarkdownTextView` が `insertNewline` / `insertTab` / `insertBacktab` / `insertText(_:replacementRange:)` / `deleteBackward` / `mouseDown` を薄くオーバーライドして Core に委譲し、返った `EditCommand` を undo 対応の経路で適用する
 
 却下した代替案:
 
@@ -40,6 +40,7 @@ public enum EditingAssistant {
     public static func indent(text: NSString, selection: NSRange) -> EditCommand?
     public static func outdent(text: NSString, selection: NSRange) -> EditCommand?
     public static func insertion(text: NSString, selection: NSRange, typing: String) -> EditCommand?
+    public static func deleteBackward(text: NSString, selection: NSRange) -> EditCommand?
     public static func toggleCheckbox(text: NSString, at offset: Int) -> EditCommand?
 }
 ```
@@ -83,7 +84,7 @@ public enum EditingAssistant {
 - **囲い込み**: 選択ありで対象文字を入力 → 選択範囲を `[` → `]`、`(` → `)`、他は同字で囲み、**内側のテキストを選択したまま**にする(続けて `*` を打てば `**bold**` になる)
 - **自動閉じ**: 選択なしで `` ` `` `[` `(` を入力 → 閉じ側を自動挿入しカーソルを間に置く。抑制ヒューリスティックは持たない(常に自動閉じ)
 - **タイプオーバー**: カーソル直後が `` ` `` `]` `)` で同じ文字を入力 → 挿入せずカーソルだけ進める
-- Backspace でのペア一括削除はやらない(YAGNI)
+- **空ペア削除**: Backspace(選択なし)でカーソルの直前が開き文字・直後がその閉じ文字という空ペア(`()` `[]` `` `` ``)のときだけ 2 文字まとめて削除する。中身のあるペア(`(x)`)や選択ありは通常動作。対象は自動閉じと同じ 3 ペア(自動閉じで入った閉じ側を消す対の操作)
 - IME 変換中(marked text あり)はすべて素通し。入力文字列がちょうど対象 1 文字のときだけ発動する
 
 ## UI 統合(Laperm)
@@ -103,6 +104,7 @@ public struct EditingOptions: Equatable, Sendable {
   - `insertNewline(_:)` → `EditingAssistant.newline`
   - `insertTab(_:)` / `insertBacktab(_:)` → `indent` / `outdent`
   - `insertText(_:replacementRange:)` → `insertion`(`hasMarkedText()` なら即 super)
+  - `deleteBackward(_:)` → `deleteBackward`(`completesPairs` でゲート。`hasMarkedText()` なら即 super)
   - `mouseDown(with:)` → 座標を文字オフセットへ変換して `toggleCheckbox`。テスト容易性のため中身は internal メソッド `toggleCheckbox(atPoint:)` に切り出す
 
 **適用経路(undo 統合)**: 共通ヘルパー `apply(_ command: EditCommand) -> Bool` を 1 つ用意する:
@@ -133,7 +135,6 @@ setSelectedRange(command.selectedRange)
 ## スコープ外(明示)
 
 - 順序付きリストの番号振り直し
-- Backspace でのペア一括削除
 - 自動閉じの抑制ヒューリスティック(直後が英数字なら閉じない等)
 - blockquote(`>`)の自動継続
 - インデント単位のカスタマイズ
