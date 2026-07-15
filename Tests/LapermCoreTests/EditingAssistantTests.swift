@@ -174,6 +174,19 @@ private func toggle(_ text: String, at offset: Int) -> EditCommand? {
     #expect(indent("plain", selection: NSRange(location: 3, length: 0)) == nil)
 }
 
+@Test func outdentOfFullySelectedIndentedLineClampsSelection() {
+    // 選択が削除される空白の内側から始まっても、編集後テキスト長を超えない
+    let command = outdent("    - a", selection: NSRange(location: 0, length: 7))
+    #expect(command?.replacementString == "- a")
+    #expect(command?.selectedRange == NSRange(location: 0, length: 3))
+}
+
+@Test func outdentSelectionStartingInsideRemovedWhitespaceStaysValid() {
+    let command = outdent("    - a\n    - b\ntail", selection: NSRange(location: 1, length: 11))
+    #expect(command?.replacementString == "- a\n- b\n")
+    #expect(command?.selectedRange == NSRange(location: 0, length: 4))
+}
+
 // MARK: - ペア補完
 
 @Test func wrapsSelectionWithAsterisk() {

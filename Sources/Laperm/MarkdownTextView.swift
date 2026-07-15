@@ -235,7 +235,9 @@ public final class MarkdownTextView: NSTextView {
     public override func mouseDown(with event: NSEvent) {
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,
-            event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty,
+            // deviceIndependentFlagsMask は capsLock を含み、Caps Lock 中は常時セットされるため
+            // 実際に押されうる修飾キーだけを見る
+            event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty,
             toggleCheckbox(atPoint: convert(event.locationInWindow, from: nil)) {
             return
         }

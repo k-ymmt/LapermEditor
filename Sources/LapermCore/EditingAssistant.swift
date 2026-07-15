@@ -92,10 +92,12 @@ public enum EditingAssistant {
             location = NSMaxRange(lineRange)
         }
         guard foundListLine, totalDelta != 0 else { return nil }
-        // 選択範囲の維持: 先頭行の増減分だけ開始位置をずらし、残りは長さに反映する
+        // 選択範囲の維持: 先頭行の増減分だけ開始位置をずらす。終端は編集後座標へ直接
+        // 写像することで、開始側のクランプ分が長さへ漏れて範囲が文字数を超えるのを防ぐ。
         let first = firstDelta ?? 0
         let newLocation = max(linesRange.location, selection.location + first)
-        let newLength = max(0, selection.length + totalDelta - first)
+        let newEnd = max(newLocation, NSMaxRange(selection) + totalDelta)
+        let newLength = newEnd - newLocation
         return EditCommand(
             replacementRange: linesRange,
             replacementString: rebuilt,
