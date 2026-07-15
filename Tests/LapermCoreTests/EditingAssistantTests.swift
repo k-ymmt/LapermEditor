@@ -92,6 +92,10 @@ private func outdent(_ text: String, selection: NSRange) -> EditCommand? {
     EditingAssistant.outdent(text: text as NSString, selection: selection)
 }
 
+private func insertion(_ text: String, selection: NSRange, typing: String) -> EditCommand? {
+    EditingAssistant.insertion(text: text as NSString, selection: selection, typing: typing)
+}
+
 // MARK: - Tab インデント
 
 @Test func indentsListItemLineFromAnyCaretPosition() {
@@ -129,4 +133,56 @@ private func outdent(_ text: String, selection: NSRange) -> EditCommand? {
 
 @Test func indentOnPlainLineReturnsNil() {
     #expect(indent("plain", selection: NSRange(location: 3, length: 0)) == nil)
+}
+
+// MARK: - ペア補完
+
+@Test func wrapsSelectionWithAsterisk() {
+    let command = insertion("bold text", selection: NSRange(location: 0, length: 4), typing: "*")
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 0, length: 4),
+        replacementString: "*bold*",
+        selectedRange: NSRange(location: 1, length: 4)))
+}
+
+@Test func wrapsSelectionWithMatchingBracket() {
+    #expect(insertion("text", selection: NSRange(location: 0, length: 4), typing: "[")?
+        .replacementString == "[text]")
+    #expect(insertion("text", selection: NSRange(location: 0, length: 4), typing: "(")?
+        .replacementString == "(text)")
+}
+
+@Test func wrapsSelectionWithAllDelimiters() {
+    for delimiter in ["*", "_", "`", "~"] {
+        let command = insertion("x", selection: NSRange(location: 0, length: 1), typing: delimiter)
+        #expect(command?.replacementString == "\(delimiter)x\(delimiter)")
+    }
+}
+
+@Test func autoClosesBacktickBracketParen() {
+    for (opening, closing) in [("`", "`"), ("[", "]"), ("(", ")")] {
+        let command = insertion("", selection: NSRange(location: 0, length: 0), typing: opening)
+        #expect(command?.replacementString == opening + closing)
+        #expect(command?.selectedRange == NSRange(location: 1, length: 0))
+    }
+}
+
+@Test func doesNotAutoCloseEmphasisCharacters() {
+    // * _ ~ は日本語の文章中で誤発火しやすいため自動閉じ対象外(spec)
+    for character in ["*", "_", "~"] {
+        #expect(insertion("", selection: NSRange(location: 0, length: 0), typing: character) == nil)
+    }
+}
+
+@Test func typesOverExistingClosingCharacter() {
+    let command = insertion("()", selection: NSRange(location: 1, length: 0), typing: ")")
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 1, length: 0),
+        replacementString: "",
+        selectedRange: NSRange(location: 2, length: 0)))
+}
+
+@Test func plainCharacterReturnsNil() {
+    #expect(insertion("", selection: NSRange(location: 0, length: 0), typing: "a") == nil)
+    #expect(insertion("", selection: NSRange(location: 0, length: 0), typing: "ab") == nil)
 }

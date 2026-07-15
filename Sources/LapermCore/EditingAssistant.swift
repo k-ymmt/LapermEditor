@@ -101,6 +101,50 @@ public enum EditingAssistant {
             replacementString: rebuilt,
             selectedRange: NSRange(location: newLocation, length: newLength))
     }
+
+    /// 囲い込み対象(開き文字 → 閉じ文字)
+    private static let wrapPairs: [Character: Character] = [
+        "*": "*", "_": "_", "`": "`", "~": "~", "[": "]", "(": ")",
+    ]
+    /// 自動閉じ対象(強調記号は日本語の文章中で誤発火しやすいため除外)
+    private static let autoClosing: Set<Character> = ["`", "[", "("]
+    /// タイプオーバー対象の閉じ文字
+    private static let closers: Set<Character> = ["`", "]", ")"]
+
+    /// 文字入力: ペア補完(囲い込み・自動閉じ・タイプオーバー)。
+    /// タイプオーバーは「置換なし・選択移動のみ」のコマンドを返す。
+    public static func insertion(
+        text: NSString, selection: NSRange, typing: String
+    ) -> EditCommand? {
+        guard NSMaxRange(selection) <= text.length,
+            typing.count == 1, let character = typing.first else { return nil }
+        // 囲い込み: 選択範囲をペアで囲み、内側のテキストを選択したままにする
+        if selection.length > 0 {
+            guard let closing = wrapPairs[character] else { return nil }
+            let selected = text.substring(with: selection)
+            return EditCommand(
+                replacementRange: selection,
+                replacementString: "\(character)\(selected)\(closing)",
+                selectedRange: NSRange(location: selection.location + 1, length: selection.length))
+        }
+        // タイプオーバー: カーソル直後が同じ閉じ文字ならカーソルだけ進める
+        // (closers 通過後なので character は必ず ASCII — asciiValue は非 nil)
+        if closers.contains(character), selection.location < text.length,
+            text.character(at: selection.location) == unichar(character.asciiValue!) {
+            return EditCommand(
+                replacementRange: NSRange(location: selection.location, length: 0),
+                replacementString: "",
+                selectedRange: NSRange(location: selection.location + 1, length: 0))
+        }
+        // 自動閉じ: 閉じ側を挿入してカーソルを間に置く
+        if autoClosing.contains(character), let closing = wrapPairs[character] {
+            return EditCommand(
+                replacementRange: selection,
+                replacementString: "\(character)\(closing)",
+                selectedRange: NSRange(location: selection.location + 1, length: 0))
+        }
+        return nil
+    }
 }
 
 /// リスト項目行の解析結果。行頭のインデント・マーカー・チェックボックスを走査で検出する。
