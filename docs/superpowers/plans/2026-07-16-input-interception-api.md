@@ -33,6 +33,7 @@
 **Files:**
 - Create: `Sources/LapermCore/KeyInput.swift`
 - Create: `Sources/Laperm/KeyInput+NSEvent.swift`
+- Create: `Tests/LapermTests/TestSupport.swift`(テスト共用ヘルパー。後続タスクも共有物をここに追加する)
 - Test: `Tests/LapermTests/KeyInputConversionTests.swift`
 
 **Interfaces:**
@@ -44,17 +45,14 @@
 
 - [ ] **Step 1: 失敗するテストを書く**
 
-`Tests/LapermTests/KeyInputConversionTests.swift`:
+`Tests/LapermTests/TestSupport.swift`(テスト共用ヘルパー。private にしないこと — 後続タスクのテストも使う):
 
 ```swift
 import AppKit
-import Testing
-@testable import Laperm
-@testable import LapermCore
 
-/// keyDown イベントを合成する(context は現行 SDK で nil 固定)
+/// keyDown 系イベントを合成する(テスト共用。context は現行 SDK で nil 固定)
 @MainActor
-private func keyEvent(
+func keyEvent(
     _ characters: String, ignoringModifiers: String? = nil,
     modifiers: NSEvent.ModifierFlags = [], keyCode: UInt16 = 0,
     type: NSEvent.EventType = .keyDown
@@ -65,6 +63,15 @@ private func keyEvent(
         charactersIgnoringModifiers: ignoringModifiers ?? characters,
         isARepeat: false, keyCode: keyCode)!
 }
+```
+
+`Tests/LapermTests/KeyInputConversionTests.swift`:
+
+```swift
+import AppKit
+import Testing
+@testable import Laperm
+@testable import LapermCore
 
 @MainActor @Test func convertsPlainCharacter() {
     let input = KeyInput(event: keyEvent("a"))
@@ -226,7 +233,7 @@ Expected: PASS(全テスト)
 - [ ] **Step 6: コミット**
 
 ```bash
-git add Sources/LapermCore/KeyInput.swift Sources/Laperm/KeyInput+NSEvent.swift Tests/LapermTests/KeyInputConversionTests.swift
+git add Sources/LapermCore/KeyInput.swift Sources/Laperm/KeyInput+NSEvent.swift Tests/LapermTests/TestSupport.swift Tests/LapermTests/KeyInputConversionTests.swift
 git commit -m "feat(core): add KeyInput value type with NSEvent conversion"
 ```
 
@@ -268,20 +275,12 @@ private final class RecordingInterceptor: TextInputInterceptor {
     }
 }
 
-@MainActor
-private func keyDownEvent(_ characters: String) -> NSEvent {
-    NSEvent.keyEvent(
-        with: .keyDown, location: .zero, modifierFlags: [], timestamp: 0,
-        windowNumber: 0, context: nil, characters: characters,
-        charactersIgnoringModifiers: characters, isARepeat: false, keyCode: 0)!
-}
-
 @MainActor @Test func handledResultConsumesKeyDown() {
     let textView = MarkdownTextView()
     let interceptor = RecordingInterceptor()
     interceptor.result = .handled
     textView.inputInterceptor = interceptor
-    textView.keyDown(with: keyDownEvent("a"))
+    textView.keyDown(with: keyEvent("a"))
     #expect(textView.string == "")  // 挿入されない
     #expect(interceptor.received == [KeyInput(key: .character("a"))])
 }
@@ -291,13 +290,13 @@ private func keyDownEvent(_ characters: String) -> NSEvent {
     let interceptor = RecordingInterceptor()
     interceptor.result = .passthrough
     textView.inputInterceptor = interceptor
-    #expect(!textView.interceptsKeyDown(keyDownEvent("a")))
+    #expect(!textView.interceptsKeyDown(keyEvent("a")))
     #expect(interceptor.received.count == 1)  // 呼ばれた上で通過
 }
 
 @MainActor @Test func noInterceptorMeansNoInterception() {
     let textView = MarkdownTextView()
-    #expect(!textView.interceptsKeyDown(keyDownEvent("a")))
+    #expect(!textView.interceptsKeyDown(keyEvent("a")))
 }
 
 @MainActor @Test func markedTextBypassesInterceptor() {
@@ -308,7 +307,7 @@ private func keyDownEvent(_ characters: String) -> NSEvent {
     textView.setMarkedText(
         "か", selectedRange: NSRange(location: 0, length: 0),
         replacementRange: NSRange(location: NSNotFound, length: 0))
-    #expect(!textView.interceptsKeyDown(keyDownEvent("a")))
+    #expect(!textView.interceptsKeyDown(keyEvent("a")))
     #expect(interceptor.received.isEmpty)  // IME 変換中は呼ばれない
 }
 
@@ -391,6 +390,8 @@ git commit -m "feat: add TextInputInterceptor hook to MarkdownTextView"
 
 **Files:**
 - Modify: `Sources/Laperm/MarkdownTextView.swift`(private `apply(_:)` を public `perform(_:)` に改名・検証追加。既存呼び出し 6 箇所も改名)
+- Modify: `Tests/LapermTests/TestSupport.swift`(`UndoManagerProvider` を移設)
+- Modify: `Tests/LapermTests/MarkdownTextViewTests.swift`(private `UndoManagerProvider` を削除して共有版を使う)
 - Test: `Tests/LapermTests/PerformCommandTests.swift`
 
 **Interfaces:**
@@ -399,6 +400,8 @@ git commit -m "feat: add TextInputInterceptor hook to MarkdownTextView"
 
 - [ ] **Step 1: 失敗するテストを書く**
 
+まず `Tests/LapermTests/MarkdownTextViewTests.swift` の private `UndoManagerProvider`(`/// NSTextView は window か delegate から...` のコメントごと)を `Tests/LapermTests/TestSupport.swift` へ移設し、`private` を外して internal にする(利用側の `MarkdownTextViewTests.swift` はクラス名そのままで共有版を参照する)。
+
 `Tests/LapermTests/PerformCommandTests.swift`:
 
 ```swift
@@ -406,12 +409,6 @@ import AppKit
 import Testing
 @testable import Laperm
 @testable import LapermCore
-
-/// NSTextView は window か delegate から undoManager を取るため、テストでは delegate で供給する
-@MainActor private final class UndoManagerProvider: NSObject, NSTextViewDelegate {
-    let manager = UndoManager()
-    func undoManager(for view: NSTextView) -> UndoManager? { manager }
-}
 
 @MainActor @Test func performReplacesTextAndMovesSelection() {
     let textView = MarkdownTextView()
@@ -538,7 +535,7 @@ Expected: PASS(全テスト。既存の編集支援テストも改名の影響�
 - [ ] **Step 5: コミット**
 
 ```bash
-git add Sources/Laperm/MarkdownTextView.swift Tests/LapermTests/PerformCommandTests.swift
+git add Sources/Laperm/MarkdownTextView.swift Tests/LapermTests/TestSupport.swift Tests/LapermTests/MarkdownTextViewTests.swift Tests/LapermTests/PerformCommandTests.swift
 git commit -m "feat: expose undo-aware perform(EditCommand) on MarkdownTextView"
 ```
 
@@ -788,6 +785,8 @@ git commit -m "feat(core): add TextMotions pure cursor-motion helpers"
 - Create: `Sources/Laperm/InsertionPointStyle.swift`
 - Create: `Sources/Laperm/InsertionPointOverlayView.swift`
 - Modify: `Sources/Laperm/MarkdownTextView.swift`(プロパティ・オーバーレイ更新・オーバーライド追加)
+- Modify: `Tests/LapermTests/TestSupport.swift`(`midpoint(of:in:)` を移設)
+- Modify: `Tests/LapermTests/MarkdownTextViewTests.swift`(private `midpoint` を削除して共有版を使う)
 - Test: `Tests/LapermTests/InsertionPointStyleTests.swift`
 
 **Interfaces:**
@@ -801,6 +800,8 @@ git commit -m "feat(core): add TextMotions pure cursor-motion helpers"
 
 - [ ] **Step 1: 失敗するテストを書く**
 
+まず `Tests/LapermTests/MarkdownTextViewTests.swift` の private `midpoint(of:in:)`(`/// characterRange の表示フレーム中心点...` のコメントごと)を `Tests/LapermTests/TestSupport.swift` へ移設し、`private` を外して internal にする(`TestSupport.swift` に `@testable import Laperm` の追加が必要になる)。
+
 `Tests/LapermTests/InsertionPointStyleTests.swift`:
 
 ```swift
@@ -808,26 +809,6 @@ import AppKit
 import Testing
 @testable import Laperm
 @testable import LapermCore
-
-/// characterRange の表示フレーム中心点(textView 座標)を求める
-@MainActor
-private func midpoint(of characterRange: NSRange, in textView: MarkdownTextView) -> NSPoint {
-    let layoutManager = textView.textLayoutManager!
-    let contentManager = layoutManager.textContentManager!
-    layoutManager.ensureLayout(for: layoutManager.documentRange)
-    let start = contentManager.location(
-        contentManager.documentRange.location, offsetBy: characterRange.location)!
-    let end = contentManager.location(start, offsetBy: characterRange.length)!
-    let textRange = NSTextRange(location: start, end: end)!
-    var frame = CGRect.zero
-    layoutManager.enumerateTextSegments(in: textRange, type: .standard, options: []) {
-        _, segmentFrame, _, _ in
-        frame = segmentFrame
-        return false
-    }
-    let origin = textView.textContainerOrigin
-    return NSPoint(x: frame.midX + origin.x, y: frame.midY + origin.y)
-}
 
 @MainActor
 private func overlay(in textView: MarkdownTextView) -> InsertionPointOverlayView? {
@@ -1094,7 +1075,7 @@ Expected: PASS(全テスト)
 - [ ] **Step 6: コミット**
 
 ```bash
-git add Sources/Laperm/InsertionPointStyle.swift Sources/Laperm/InsertionPointOverlayView.swift Sources/Laperm/MarkdownTextView.swift Tests/LapermTests/InsertionPointStyleTests.swift
+git add Sources/Laperm/InsertionPointStyle.swift Sources/Laperm/InsertionPointOverlayView.swift Sources/Laperm/MarkdownTextView.swift Tests/LapermTests/TestSupport.swift Tests/LapermTests/MarkdownTextViewTests.swift Tests/LapermTests/InsertionPointStyleTests.swift
 git commit -m "feat: add insertionPointStyle (bar/block/underline) with overlay rendering"
 ```
 
