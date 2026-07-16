@@ -46,7 +46,7 @@ private func outline(for text: String) -> [OutlineItem] {
     #expect(items.count == 1)
     #expect(items[0].level == 1)
     #expect(items[0].title == "Title")
-    #expect(items[0].bodyRange == NSRange(location: 16, length: 0))
+    #expect(items[0].bodyRange == NSRange(location: 12, length: 4))
 }
 
 @Test func stripsClosingHashesFromTitle() {

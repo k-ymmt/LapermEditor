@@ -51,6 +51,12 @@ private func ranges(of kind: SyntaxKind, in markdown: String) -> [NSRange] {
     #expect(ranges(of: .syntaxMarker, in: md).isEmpty)
 }
 
+@Test func setextHeadingRangeStopsAtUnderline() {
+    // cmark は Setext 見出しの終端を次ブロックまで過大報告する — 下線行末尾へのクランプを検証
+    let md = "Title\n=====\nbody"
+    #expect(ranges(of: .heading(level: 1), in: md) == [NSRange(location: 0, length: 11)])
+}
+
 @Test func indentedCodeBlockHasNoFenceMarker() {
     let md = "para\n\n    let x = 1"
     #expect(ranges(of: .codeBlock, in: md).count == 1)

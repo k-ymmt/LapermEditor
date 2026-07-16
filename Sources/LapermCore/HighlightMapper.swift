@@ -30,10 +30,16 @@ enum HighlightMapper {
         // MARK: ブロック要素
 
         mutating func visitHeading(_ heading: Heading) {
-            if let range = nsRange(of: heading), range.length > 0 {
-                blockSpans.append(HighlightSpan(range: range, kind: .heading(level: heading.level)))
+            if var range = nsRange(of: heading), range.length > 0 {
                 // ATX 見出しの行頭 "#…"(+スペース 1 個)をマーカーに。Setext はマーカーなし。
                 let markerLength = leadingHashMarkerLength(in: range)
+                if markerLength == 0 {
+                    // cmark が Setext 見出しの終端を次ブロックまで過大報告するため
+                    // (例: "Title\n=====\nbody" で見出しレンジが後続の Paragraph
+                    // "body" まで飲み込む)、下線行末尾にクランプする。
+                    range = clampedSetextRange(range, heading: heading)
+                }
+                blockSpans.append(HighlightSpan(range: range, kind: .heading(level: heading.level)))
                 if markerLength > 0 {
                     markerSpans.append(HighlightSpan(
                         range: NSRange(location: range.location, length: markerLength),
@@ -42,6 +48,28 @@ enum HighlightMapper {
                 }
             }
             descendInto(heading)
+        }
+
+        /// Setext 見出し(下線型)の終端を、下線行の内容末尾(改行を含まない)に
+        /// クランプする。見出しテキストの終端がどの行にあるかを子ノードのレンジ
+        /// から求め、その次行(下線行)の contentsEnd を新しい終端とする。
+        /// クランプの結果レンジが縮まらない場合は元のレンジをそのまま返す。
+        private func clampedSetextRange(_ range: NSRange, heading: Heading) -> NSRange {
+            let childRanges = heading.children.compactMap { nsRange(of: $0) }
+            guard let textEnd = childRanges.map(NSMaxRange).max() else { return range }
+            let textLine = text.lineRange(for: NSRange(location: textEnd, length: 0))
+            let underlineStart = NSMaxRange(textLine)
+            guard underlineStart <= NSMaxRange(range), underlineStart <= text.length else {
+                return range
+            }
+            let underlineLine = text.lineRange(for: NSRange(location: underlineStart, length: 0))
+            var lineStart = 0
+            var lineEnd = 0
+            var contentsEnd = 0
+            text.getLineStart(&lineStart, end: &lineEnd, contentsEnd: &contentsEnd, for: underlineLine)
+            let newLength = min(NSMaxRange(range), contentsEnd) - range.location
+            guard newLength < range.length else { return range }
+            return NSRange(location: range.location, length: newLength)
         }
 
         mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
