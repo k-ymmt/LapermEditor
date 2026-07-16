@@ -12,24 +12,42 @@ private func ref(location: Int, destination: String) -> ImageReference {
 }
 
 @Test func stacksImagesBottomUpInSourceOrder() {
-    // フラグメント高さ 200、うち予約領域 = (50+8) + (30+8) = 96
+    // テキスト行下端 104 から予約領域 = (50+8) + (30+8) = 96 を下に積む
     let items = ImagePreviewLayout.itemFrames(
         references: [ref(location: 0, destination: "a.png"), ref(location: 12, destination: "b.png")],
         sizes: [CGSize(width: 100, height: 50), CGSize(width: 60, height: 30)],
         fragmentFrame: CGRect(x: 0, y: 0, width: 500, height: 200),
+        textLinesBottom: 104,
         leadingInset: 5,
         padding: 8)
     #expect(items.count == 2)
-    // 1 枚目: 予約領域先頭(y = 200 - 96 = 104)+ padding/2
+    // 1 枚目: テキスト行下端(y = 104)+ padding/2
     #expect(items[0].frame == CGRect(x: 5, y: 108, width: 100, height: 50))
     // 2 枚目: 1 枚目のスロット(58)ぶん下
     #expect(items[1].frame == CGRect(x: 5, y: 166, width: 60, height: 30))
+}
+
+@Test func stacksBelowTextLineRegardlessOfFragmentHeight() {
+    // 末尾段落: layoutFragmentFrame に spacing が含まれず height=17 でも、
+    // テキスト行下端(17)を起点にプレビューはテキストの下へ積まれる(上に食い込まない)。
+    let items = ImagePreviewLayout.itemFrames(
+        references: [ref(location: 0, destination: "a.png")],
+        sizes: [CGSize(width: 100, height: 50)],
+        fragmentFrame: CGRect(x: 0, y: 34, width: 500, height: 17),
+        textLinesBottom: 17,
+        leadingInset: 5,
+        padding: 8)
+    #expect(items.count == 1)
+    // フラグメント原点(34)+ テキスト行下端(17)= 51 が予約領域先頭、+ padding/2
+    #expect(items[0].frame == CGRect(x: 5, y: 55, width: 100, height: 50))
+    #expect(items[0].frame.minY > 34 + 17)  // テキスト行下端より下
 }
 
 @Test func emptyReferencesYieldNoItems() {
     let items = ImagePreviewLayout.itemFrames(
         references: [], sizes: [],
         fragmentFrame: CGRect(x: 0, y: 0, width: 500, height: 20),
+        textLinesBottom: 17,
         leadingInset: 5, padding: 8)
     #expect(items.isEmpty)
 }

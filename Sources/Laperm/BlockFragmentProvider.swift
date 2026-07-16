@@ -62,6 +62,15 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         }
     }
 
+    /// 画像プレビューの予約(spacing マーカー)が付いた段落かどうか。
+    private func hasImageSpacing(_ textElement: NSTextElement) -> Bool {
+        guard let paragraph = textElement as? NSTextParagraph else { return false }
+        let attributed = paragraph.attributedString
+        guard attributed.length > 0 else { return false }
+        return attributed.attribute(
+            ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) != nil
+    }
+
     private func decoration(at location: NSTextLocation, in contentManager: NSTextContentManager) -> BlockDecoration? {
         let offset = contentManager.offset(from: contentManager.documentRange.location, to: location)
         return decorations.first { NSLocationInRange(offset, $0.range) }?.kind
@@ -74,6 +83,10 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     ) -> NSTextLayoutFragment {
         guard let contentManager = textLayoutManager.textContentManager,
               let kind = decoration(at: location, in: contentManager) else {
+            // 画像段落(spacing マーカー付き)は末尾でも予約領域を確保する専用フラグメントにする
+            if hasImageSpacing(textElement) {
+                return ImageParagraphFragment(textElement: textElement, range: textElement.elementRange)
+            }
             return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
         }
         switch kind {

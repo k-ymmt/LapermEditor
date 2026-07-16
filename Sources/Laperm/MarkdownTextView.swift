@@ -83,6 +83,9 @@ public final class MarkdownTextView: NSTextView {
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
     private var lastImageContainerWidth: CGFloat = 0
 
+    /// テスト用: 直近のビューポートレイアウトで収集したオーバーレイ配置。
+    var debugImageEntries: [ImagePreviewOverlayEntry] { collectedImageEntries }
+
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
@@ -212,10 +215,15 @@ public final class MarkdownTextView: NSTextView {
             imagePreviewController.displaySize(for: $0, containerWidth: width)
         }
         let origin = textContainerOrigin
+        // テキスト行群の下端(フラグメント原点からの相対値)。予約領域はここから下に伸びる。
+        // textLineFragments が空(レイアウト未確定)のときは frame 高さにフォールバック。
+        let textLinesBottom = fragment.textLineFragments
+            .reduce(0) { max($0, $1.typographicBounds.maxY) }
         let items = ImagePreviewLayout.itemFrames(
             references: paragraphReferences,
             sizes: sizes,
             fragmentFrame: fragment.layoutFragmentFrame,
+            textLinesBottom: textLinesBottom,
             leadingInset: textContainer?.lineFragmentPadding ?? 0,
             padding: ImagePreviewController.padding)
         for item in items {
