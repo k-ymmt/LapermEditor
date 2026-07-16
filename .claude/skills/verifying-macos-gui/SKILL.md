@@ -38,5 +38,7 @@ Drive the real app with synthesized keystrokes and verify with screenshots. **Sc
 | Leaving state behind | Restore input source, undo document edits, quit the app — the user's machine is not a scratchpad. |
 | Separate tool calls for activate → type → capture | The terminal regains frontmost between calls; keystrokes silently hit the wrong window. Chain them in one invocation. |
 | Concluding "cursor doesn't render" from a cropped shot | The caret may be scrolled outside the viewport. Take a full-window screenshot (and scroll the caret into view) before judging rendering. |
+| `System Events click at` on an NSRulerView (line-number gutter) | Triggers macOS's built-in "Ruler marker type" sheet instead of the app's mouseDown. Synthesize a raw CGEvent click (small Swift script with `CGEvent(mouseEventSource:...)`) for gutter interactions. |
+| `click at` screen coordinates on a SwiftUI List row | May not register. Use AX `click <button>` on the List's button element instead (List rows are one place AX clicking works). |
 
 Esc is `key code 53` (it has no `keystroke` form). Modifier example: `keystroke "z" using command down`.
