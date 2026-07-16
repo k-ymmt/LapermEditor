@@ -216,7 +216,7 @@ public final class MarkdownTextView: NSTextView {
         }
         let origin = textContainerOrigin
         // テキスト行群の下端(フラグメント原点からの相対値)。予約領域はここから下に伸びる。
-        // textLineFragments が空(レイアウト未確定)のときは frame 高さにフォールバック。
+        // textLineFragments が空(レイアウト未確定)のときは reduce の初期値 0 のままになる。
         let textLinesBottom = fragment.textLineFragments
             .reduce(0) { max($0, $1.typographicBounds.maxY) }
         let items = ImagePreviewLayout.itemFrames(

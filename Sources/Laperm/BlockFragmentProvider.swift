@@ -71,6 +71,20 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) != nil
     }
 
+    /// 画像プレビューの予約が付いた段落について、`ReservingTextLayoutFragment` に
+    /// 設定すべき追加の高さ(= その段落の paragraphSpacing)を返す。
+    /// マーカーが無い場合(通常の段落・コードブロック・テーブルなど)は nil を返し、
+    /// フラグメントは通常の `NSTextLayoutFragment` と同じ高さ計算のままになる。
+    private func reservedBottomHeight(for textElement: NSTextElement) -> CGFloat? {
+        guard hasImageSpacing(textElement),
+              let paragraph = textElement as? NSTextParagraph,
+              paragraph.attributedString.length > 0,
+              let style = paragraph.attributedString.attribute(
+                .paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        else { return nil }
+        return style.paragraphSpacing
+    }
+
     private func decoration(at location: NSTextLocation, in contentManager: NSTextContentManager) -> BlockDecoration? {
         let offset = contentManager.offset(from: contentManager.documentRange.location, to: location)
         return decorations.first { NSLocationInRange(offset, $0.range) }?.kind
@@ -81,30 +95,35 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         textLayoutFragmentFor location: NSTextLocation,
         in textElement: NSTextElement
     ) -> NSTextLayoutFragment {
+        // 画像段落(spacing マーカー付き)は装飾の有無によらず、末尾でも予約領域を
+        // 確保できるよう `reservedBottomHeight` を設定する(下記いずれの分岐でも共通)。
+        let reservation = reservedBottomHeight(for: textElement)
         guard let contentManager = textLayoutManager.textContentManager,
               let kind = decoration(at: location, in: contentManager) else {
-            // 画像段落(spacing マーカー付き)は末尾でも予約領域を確保する専用フラグメントにする
-            if hasImageSpacing(textElement) {
-                return ImageParagraphFragment(textElement: textElement, range: textElement.elementRange)
-            }
-            return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+            let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+            fragment.reservedBottomHeight = reservation
+            return fragment
         }
         switch kind {
         case .codeBlock:
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.codeBlockBackgroundColor
+            fragment.reservedBottomHeight = reservation
             return fragment
         case .blockquote:
             let fragment = BlockquoteFragment(textElement: textElement, range: textElement.elementRange)
             fragment.barColor = theme.blockquoteBarColor
+            fragment.reservedBottomHeight = reservation
             return fragment
         case .thematicBreak:
             let fragment = ThematicBreakFragment(textElement: textElement, range: textElement.elementRange)
             fragment.lineColor = theme.thematicBreakLineColor
+            fragment.reservedBottomHeight = reservation
             return fragment
         case .table:
             let fragment = TableBackgroundFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.tableBackgroundColor
+            fragment.reservedBottomHeight = reservation
             return fragment
         }
     }

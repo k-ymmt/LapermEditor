@@ -78,3 +78,16 @@ private func textLineBottom(of textView: MarkdownTextView, at location: Int) -> 
     }
     #expect(entry.frame.minY >= lineBottom)
 }
+
+@Test @MainActor func lastLineImageInsideBlockquoteReservesSpaceInUsageBounds() throws {
+    // 回帰防止: 装飾(引用)フラグメントが返されるパスでも、末尾行の画像予約が
+    // usageBounds に含まれること(装飾が優先されて予約が消えるとクリップされる)。
+    let (textView, _) = try layoutTextView(string: "hello\n\n> ![sample](sample.png)")
+    guard let lm = textView.textLayoutManager else {
+        Issue.record("no layout manager")
+        return
+    }
+    // テキスト 3 行(17*3=51)+ 予約(50+8=58)= 109 相当。少なくともテキストのみより高い。
+    let height = lm.usageBoundsForTextContainer.height
+    #expect(height >= 51 + 50 + ImagePreviewController.padding)
+}
