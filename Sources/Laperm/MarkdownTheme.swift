@@ -72,6 +72,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         styles[.blockquote] = Style(foregroundColor: .secondaryLabelColor)
         styles[.listMarker] = Style(foregroundColor: .systemOrange)
         styles[.link] = Style(foregroundColor: .linkColor)
+        styles[.image] = Style(foregroundColor: .linkColor)
         styles[.thematicBreak] = Style(foregroundColor: .tertiaryLabelColor)
         styles[.strikethrough] = Style(foregroundColor: .secondaryLabelColor, strikethrough: true)
         styles[.taskChecked] = Style(foregroundColor: .tertiaryLabelColor)
