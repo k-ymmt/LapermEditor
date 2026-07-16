@@ -56,6 +56,9 @@ public final class MarkdownTextView: NSTextView {
     }
     private var barInsertionPointColor: NSColor?
     private let insertionPointOverlay = InsertionPointOverlayView()
+    private let imageOverlay = ImagePreviewOverlayView()
+    private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
+    private var lastImageContainerWidth: CGFloat = 0
 
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
@@ -99,6 +102,9 @@ public final class MarkdownTextView: NSTextView {
         // highlightNow() と同じガードをここでも効かせる。
         markdownHighlighter.shouldDeferApply = { [weak self] in self?.hasMarkedText() ?? false }
         markdownHighlighter.applyDeferred = { [weak self] in self?.scheduleHighlight() }
+
+        imageOverlay.autoresizingMask = [.width, .height]
+        addSubview(imageOverlay)
 
         imagePreviewController.onStateChange = { [weak self] in
             guard let self else { return }
@@ -163,6 +169,41 @@ public final class MarkdownTextView: NSTextView {
             contentStorage: contentStorage, containerWidth: imageContainerWidth)
     }
 
+    /// このフラグメント(1 テキスト段落)に属する画像のオーバーレイ配置を収集する。
+    private func collectImagePreviews(for fragment: NSTextLayoutFragment) {
+        let references = imagePreviewController.references
+        guard !references.isEmpty,
+              let contentManager = textLayoutManager?.textContentManager,
+              let elementRange = fragment.textElement?.elementRange
+        else { return }
+        let start = contentManager.offset(
+            from: contentManager.documentRange.location, to: elementRange.location)
+        let end = contentManager.offset(
+            from: contentManager.documentRange.location, to: elementRange.endLocation)
+        let paragraphReferences = references
+            .filter { $0.paragraphRange.location >= start && $0.paragraphRange.location < end }
+            .sorted { $0.range.location < $1.range.location }
+        guard !paragraphReferences.isEmpty else { return }
+        let width = imageContainerWidth
+        let sizes = paragraphReferences.map {
+            imagePreviewController.displaySize(for: $0, containerWidth: width)
+        }
+        let origin = textContainerOrigin
+        let items = ImagePreviewLayout.itemFrames(
+            references: paragraphReferences,
+            sizes: sizes,
+            fragmentFrame: fragment.layoutFragmentFrame,
+            leadingInset: textContainer?.lineFragmentPadding ?? 0,
+            padding: ImagePreviewController.padding)
+        for item in items {
+            guard let state = imagePreviewController.state(for: item.reference) else { continue }
+            collectedImageEntries.append(ImagePreviewOverlayEntry(
+                reference: item.reference,
+                frame: item.frame.offsetBy(dx: origin.x, dy: origin.y),
+                state: state))
+        }
+    }
+
     /// プレビューが使える幅 = テキストコンテナの実効幅(lineFragmentPadding を除く)
     var imageContainerWidth: CGFloat {
         guard let container = textContainer else { return max(0, bounds.width) }
@@ -182,6 +223,7 @@ public final class MarkdownTextView: NSTextView {
     ) {
         super.textViewportLayoutControllerWillLayout(textViewportLayoutController)
         collectedLines.removeAll(keepingCapacity: true)
+        collectedImageEntries.removeAll(keepingCapacity: true)
     }
 
     public override func textViewportLayoutController(
@@ -192,6 +234,7 @@ public final class MarkdownTextView: NSTextView {
             textViewportLayoutController,
             configureRenderingSurfaceFor: textLayoutFragment
         )
+        collectImagePreviews(for: textLayoutFragment)
         guard gutterView != nil,
             let contentManager = textLayoutManager?.textContentManager
         else { return }
@@ -213,6 +256,7 @@ public final class MarkdownTextView: NSTextView {
     ) {
         super.textViewportLayoutControllerDidLayout(textViewportLayoutController)
         gutterView?.lines = collectedLines
+        imageOverlay.update(entries: collectedImageEntries)
     }
 
     /// ガター付きの推奨構成。documentView は MarkdownTextView。
@@ -277,6 +321,12 @@ public final class MarkdownTextView: NSTextView {
     public override func layout() {
         super.layout()
         updateInsertionPointOverlay()
+        imageOverlay.frame = bounds
+        if imageContainerWidth != lastImageContainerWidth {
+            lastImageContainerWidth = imageContainerWidth
+            // 幅が変わると loaded 画像のフィット高さが変わるため spacing を再計算
+            updateImagePreviews()
+        }
     }
 
     private func updateInsertionPointOverlay() {
