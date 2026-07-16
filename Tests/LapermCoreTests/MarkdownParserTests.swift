@@ -231,3 +231,69 @@ private func ranges(of kind: SyntaxKind, in markdown: String) -> [NSRange] {
     // フェンス行以外にマーカーがないこと(パイプがマーカー化されていない)
     #expect(!ranges(of: .syntaxMarker, in: md).contains(NSRange(location: 4, length: 1)))
 }
+
+// MARK: - 画像
+
+private func imageReferences(in markdown: String) -> [ImageReference] {
+    MarkdownParser().highlightPlan(for: markdown).images
+}
+
+@Test func mapsImageSpanWithMarkers() {
+    let md = "![alt](a.png)"
+    #expect(ranges(of: .image, in: md) == [NSRange(location: 0, length: 13)])
+    let markers = ranges(of: .syntaxMarker, in: md)
+    #expect(markers.contains(NSRange(location: 0, length: 2)))   // "!["
+    #expect(markers.contains(NSRange(location: 5, length: 8)))   // "](a.png)"
+}
+
+@Test func collectsImageReference() {
+    let md = "before\n\n![結果](images/result.png)\n\nafter"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 1)
+    #expect(refs[0].altText == "結果")
+    #expect(refs[0].destination == "images/result.png")
+    #expect(refs[0].range == NSRange(location: 8, length: 24))
+    // paragraphRange は記法を含む行(末尾の改行込み)
+    #expect(refs[0].paragraphRange == NSRange(location: 8, length: 25))
+    #expect(refs[0].isInsideTable == false)
+}
+
+@Test func collectsEmptyAltImage() {
+    let md = "![](a.png)"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 1)
+    #expect(refs[0].altText.isEmpty)
+    #expect(refs[0].destination == "a.png")
+    // alt が空でも "![" と "](a.png)" はマーカー化される
+    let markers = ranges(of: .syntaxMarker, in: md)
+    #expect(markers.contains(NSRange(location: 0, length: 2)))
+    #expect(markers.contains(NSRange(location: 2, length: 8)))
+}
+
+@Test func collectsMultipleImagesInOneParagraph() {
+    let md = "![a](1.png) と ![b](2.png)"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 2)
+    #expect(refs.map(\.destination) == ["1.png", "2.png"])
+    #expect(refs[0].paragraphRange == refs[1].paragraphRange)
+}
+
+@Test func imageInsideCodeBlockIsNotCollected() {
+    let md = "```\n![a](1.png)\n```"
+    #expect(imageReferences(in: md).isEmpty)
+    #expect(ranges(of: .image, in: md).isEmpty)
+}
+
+@Test func imageInsideTableIsFlagged() {
+    let md = "| a |\n|---|\n| ![i](1.png) |"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 1)
+    #expect(refs[0].isInsideTable == true)
+}
+
+@Test func emptyDestinationImageIsCollected() {
+    let md = "![alt]()"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 1)
+    #expect(refs[0].destination.isEmpty)
+}

@@ -7,7 +7,10 @@ enum HighlightMapper {
         var visitor = Visitor(converter: SourceLocationConverter(text: text), text: text as NSString)
         visitor.visit(document)
         // 適用順: ブロック → インライン → マーカー
-        return HighlightPlan(spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans)
+        return HighlightPlan(
+            spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans,
+            images: visitor.imageReferences
+        )
     }
 
     private struct Visitor: MarkupWalker {
@@ -16,6 +19,8 @@ enum HighlightMapper {
         var blockSpans: [HighlightSpan] = []
         var inlineSpans: [HighlightSpan] = []
         var markerSpans: [HighlightSpan] = []
+        var imageReferences: [ImageReference] = []
+        private var tableDepth = 0
 
         private func nsRange(of markup: Markup) -> NSRange? {
             guard let sourceRange = markup.range else { return nil }
@@ -77,7 +82,9 @@ enum HighlightMapper {
                 }
                 appendTableMarkers(in: range)
             }
+            tableDepth += 1
             descendInto(table)
+            tableDepth -= 1
         }
 
         mutating func visitListItem(_ listItem: ListItem) {
@@ -141,6 +148,21 @@ enum HighlightMapper {
                 inlineSpans.append(HighlightSpan(range: range, kind: .link))
             }
             descendInto(link)
+        }
+
+        mutating func visitImage(_ image: Markdown.Image) {
+            if let range = nsRange(of: image), range.length >= 2 {
+                inlineSpans.append(HighlightSpan(range: range, kind: .image))
+                appendImageMarkers(in: range, image: image)
+                imageReferences.append(ImageReference(
+                    altText: plainAltText(of: image),
+                    destination: image.source ?? "",
+                    range: range,
+                    paragraphRange: text.paragraphRange(for: range),
+                    isInsideTable: tableDepth > 0
+                ))
+            }
+            descendInto(image)
         }
 
         mutating func visitStrikethrough(_ strikethrough: Strikethrough) {
@@ -329,5 +351,47 @@ enum HighlightMapper {
                   text.character(at: i + 2) == unichar(UnicodeScalar("]").value) else { return nil }
             return NSRange(location: i, length: 3)
         }
+
+        /// 画像記法のマーカー: 先頭の "![" と、alt 末尾から記法末尾まで
+        /// (インライン形式 "](url)" と参照形式 "][ref]" の両方をカバーする)。
+        private mutating func appendImageMarkers(in range: NSRange, image: Markdown.Image) {
+            markerSpans.append(HighlightSpan(
+                range: NSRange(location: range.location, length: 2),
+                kind: .syntaxMarker
+            ))
+            var altEnd = range.location + 2
+            for child in image.children {
+                if let childRange = nsRange(of: child) {
+                    altEnd = max(altEnd, NSMaxRange(childRange))
+                }
+            }
+            if altEnd < NSMaxRange(range) {
+                markerSpans.append(HighlightSpan(
+                    range: NSRange(location: altEnd, length: NSMaxRange(range) - altEnd),
+                    kind: .syntaxMarker
+                ))
+            }
+        }
+
+        /// alt テキストのプレーンテキスト化(強調などの装飾を剥がして連結)。
+        private func plainAltText(of image: Markdown.Image) -> String {
+            var result = ""
+            func collect(_ markup: Markup) {
+                if let textNode = markup as? Markdown.Text { result += textNode.string }
+                for child in markup.children { collect(child) }
+            }
+            collect(image)
+            return result
+        }
+    }
+}
+
+// MARK: - NSString 拡張
+
+private extension NSString {
+    /// range を含む行のレンジを返す(末尾の改行を含む)。
+    /// NSString.lineRange は既に末尾の改行を含むため、そのまま返す。
+    func paragraphRange(for range: NSRange) -> NSRange {
+        lineRange(for: NSRange(location: range.location, length: 0))
     }
 }
