@@ -14,12 +14,14 @@ struct ContentView: View {
     @State private var showsLineNumbers = true
     @State private var useAlternateTheme = false
     @State private var vim = VimController()
+    private let imageDirectory = makeSampleImageDirectory()
 
     var body: some View {
         MarkdownEditorView(text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default)
             .showsLineNumbers(showsLineNumbers)
             .inputInterceptor(vim.isEnabled ? vim : nil)
             .insertionPointStyle(vim.insertionPointStyle)
+            .imagePreviewOptions(.init(baseURL: imageDirectory))
             .frame(minWidth: 640, minHeight: 480)
             .toolbar {
                 ToolbarItem {
@@ -101,9 +103,51 @@ struct ContentView: View {
     - ツールバーの Vim トグルで簡易 Vim モード(hjkl / w b / 0 $ / x dd / i a o O / Esc)
 
     日本語も絵文字 🎉 も正しくハイライトされます。
+
+    ## 画像
+
+    ローカル画像(表示される):
+
+    ![サンプル](sample.png)
+
+    存在しないパス(エラー枠):
+
+    ![見つからない画像](missing.png)
+
+    リモート画像(デフォルト不許可 → エラー枠):
+
+    ![リモート](https://example.com/remote.png)
     """
 }
 
-#Preview {
-    ContentView()
+/// Example 用のサンプル画像(単色 PNG)を一時ディレクトリに生成して、
+/// そのディレクトリを imagePreviewOptions.baseURL として使う。
+/// ContentView の stored property 初期化子(非分離コンテキスト)から呼ぶため
+/// @MainActor は付けない(オフスクリーン描画のみでビュー階層に触れない)。
+func makeSampleImageDirectory() -> URL {
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("LapermExampleImages", isDirectory: true)
+    try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    let file = directory.appendingPathComponent("sample.png")
+    if !FileManager.default.fileExists(atPath: file.path) {
+        let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: 320, pixelsHigh: 180,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.systemTeal.setFill()
+        NSRect(x: 0, y: 0, width: 320, height: 180).fill()
+        NSColor.white.setStroke()
+        let path = NSBezierPath()
+        path.move(to: NSPoint(x: 0, y: 0))
+        path.line(to: NSPoint(x: 320, y: 180))
+        path.move(to: NSPoint(x: 320, y: 0))
+        path.line(to: NSPoint(x: 0, y: 180))
+        path.lineWidth = 4
+        path.stroke()
+        NSGraphicsContext.restoreGraphicsState()
+        try? rep.representation(using: .png, properties: [:])?.write(to: file)
+    }
+    return directory
 }
