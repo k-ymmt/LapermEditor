@@ -365,11 +365,30 @@ public final class MarkdownTextView: NSTextView {
         )
         let index = lineIndex ?? LineIndex(text: string)
         lineIndex = index
+        let endOffset = contentManager.offset(
+            from: contentManager.documentRange.location,
+            to: textLayoutFragment.rangeInElement.endLocation
+        )
         collectedLines.append(
             .init(
                 number: index.lineNumber(at: offset),
-                yInTextView: textLayoutFragment.layoutFragmentFrame.minY
+                yInTextView: textLayoutFragment.layoutFragmentFrame.minY,
+                foldMarker: foldMarker(inParagraphFrom: offset, to: endOffset)
             ))
+    }
+
+    /// [start, end) の段落にアウトラインの見出しがあればシェブロン情報を返す。
+    /// 本体のない見出し(折畳不可)にはシェブロンを出さない。
+    private func foldMarker(
+        inParagraphFrom start: Int, to end: Int
+    ) -> LineNumberGutterView.FoldMarker? {
+        guard isFoldingEnabled else { return nil }
+        guard let item = foldingController.outline.first(where: {
+            $0.headingLocation >= start && $0.headingLocation < end && $0.bodyRange.length > 0
+        }) else { return nil }
+        return .init(
+            headingLocation: item.headingLocation,
+            isFolded: foldingController.isFolded(headingLocation: item.headingLocation))
     }
 
     public override func textViewportLayoutControllerDidLayout(
@@ -401,6 +420,9 @@ public final class MarkdownTextView: NSTextView {
 
         let gutter = LineNumberGutterView(scrollView: scrollView)
         gutter.clientView = textView
+        gutter.onToggleFold = { [weak textView] headingLocation in
+            textView?.toggleFold(at: headingLocation)
+        }
         scrollView.verticalRulerView = gutter
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = textView.showsLineNumbers
