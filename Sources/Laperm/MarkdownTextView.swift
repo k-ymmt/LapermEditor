@@ -9,6 +9,7 @@ public final class MarkdownTextView: NSTextView {
     let markdownHighlighter: Highlighter
     private var highlightScheduled = false
     private var fragmentProvider: BlockFragmentProvider!
+    let imagePreviewController = ImagePreviewController()
     weak var gutterView: LineNumberGutterView?
     private var lineIndex: LineIndex?
     private var collectedLines: [LineNumberGutterView.Line] = []
@@ -98,6 +99,16 @@ public final class MarkdownTextView: NSTextView {
         // highlightNow() と同じガードをここでも効かせる。
         markdownHighlighter.shouldDeferApply = { [weak self] in self?.hasMarkedText() ?? false }
         markdownHighlighter.applyDeferred = { [weak self] in self?.scheduleHighlight() }
+
+        imagePreviewController.onStateChange = { [weak self] in
+            guard let self else { return }
+            if self.hasMarkedText() {
+                // IME 変換中は spacing 変更を遅延(highlightNow と同じガードに乗せる)
+                self.scheduleHighlight()
+            } else {
+                self.updateImagePreviews()
+            }
+        }
     }
 
     /// 全文を再ハイライトする。`string` をプログラムで差し替えた後に呼ぶこと。
@@ -107,6 +118,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.rehighlightAll(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        updateImagePreviews()
         updateInsertionPointOverlay()
     }
 
@@ -127,6 +139,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.flushPendingHighlight(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        updateImagePreviews()
         updateInsertionPointOverlay()
     }
 
@@ -138,6 +151,22 @@ public final class MarkdownTextView: NSTextView {
             contentManager: contentStorage,
             layoutManager: layoutManager
         )
+    }
+
+    /// 画像プレビューの状態を最新プランに同期し、スペーシングを適用する。
+    /// 注意: バックグラウンドパース経路では currentPlan の更新が非同期になるため、
+    /// ブロック装飾と同様に 1 サイクル遅延する(v1 で許容済みの設計)。
+    private func updateImagePreviews() {
+        guard let contentStorage = textContentStorage else { return }
+        imagePreviewController.update(references: markdownHighlighter.currentPlan.images)
+        imagePreviewController.applySpacings(
+            contentStorage: contentStorage, containerWidth: imageContainerWidth)
+    }
+
+    /// プレビューが使える幅 = テキストコンテナの実効幅(lineFragmentPadding を除く)
+    var imageContainerWidth: CGFloat {
+        guard let container = textContainer else { return max(0, bounds.width) }
+        return max(0, container.size.width - container.lineFragmentPadding * 2)
     }
 
     func scheduleHighlight() {

@@ -122,4 +122,45 @@ final class ImagePreviewController {
     func setStateForTesting(_ state: State, destination: String) {
         states[destination] = state
     }
+
+    /// 適用済みスペーシングの発見用マーカー属性。除去時に「どこに適用したか」を
+    /// 座標追跡なしで storage 自身から取り出せるようにする(属性は編集に自動追随する)。
+    static let spacingAttribute = NSAttributedString.Key("laperm.imageSpacing")
+
+    /// 予約高さを paragraphSpacing として textStorage に反映する。
+    /// 実属性編集なので TextKit2 の通常経路で再レイアウトされる
+    /// (BlockFragment のような recordEditAction ワークアラウンドは不要)。
+    /// 属性のみの編集は .editedAttributes しか発火しないため didProcessEditing の
+    /// 文字編集ガードと組み合わせて再入しない。
+    func applySpacings(contentStorage: NSTextContentStorage, containerWidth: CGFloat) {
+        guard let storage = contentStorage.textStorage else { return }
+        var wanted = reservedHeights(containerWidth: containerWidth)
+        // 文書外にはみ出た段落レンジは適用しない(パース結果と storage の不整合の防波堤)
+        wanted = wanted.filter { NSMaxRange($0.key) <= storage.length }
+        var stale: [NSRange] = []
+        var unchanged: Set<NSRange> = []
+        storage.enumerateAttribute(
+            Self.spacingAttribute, in: NSRange(location: 0, length: storage.length)
+        ) { value, range, _ in
+            guard let applied = value as? CGFloat else { return }
+            if wanted[range] == applied {
+                unchanged.insert(range)
+            } else {
+                stale.append(range)
+            }
+        }
+        guard !stale.isEmpty || wanted.count > unchanged.count else { return }
+        contentStorage.performEditingTransaction {
+            for range in stale {
+                storage.removeAttribute(.paragraphStyle, range: range)
+                storage.removeAttribute(Self.spacingAttribute, range: range)
+            }
+            for (range, height) in wanted where !unchanged.contains(range) {
+                let style = NSMutableParagraphStyle()
+                style.paragraphSpacing = height
+                storage.addAttribute(.paragraphStyle, value: style, range: range)
+                storage.addAttribute(Self.spacingAttribute, value: height, range: range)
+            }
+        }
+    }
 }

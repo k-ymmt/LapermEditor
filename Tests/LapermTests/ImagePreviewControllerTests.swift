@@ -232,3 +232,87 @@ func waitUntil(_ condition: () -> Bool) async throws {
     let heights = controller.reservedHeights(containerWidth: 500)
     #expect(heights == [ref1.paragraphRange: CGFloat(50 + 8 + 80 + 8)])
 }
+
+@Test @MainActor func applySpacingsSetsParagraphStyleAndMarker() {
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\nnext line")
+    contentStorage.textStorage = storage
+    let controller = ImagePreviewController()
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref = makeReference(destination: "a.png")
+    ref.paragraphRange = NSRange(location: 0, length: 12)  // "![a](a.png)\n"
+    controller.update(references: [ref])  // → loading (高さ 80 + 8)
+
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    let style = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+        as? NSParagraphStyle
+    #expect(style?.paragraphSpacing == 88)
+    let marker = storage.attribute(
+        ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) as? CGFloat
+    #expect(marker == 88)
+    // 隣の段落には付かない
+    #expect(storage.attribute(.paragraphStyle, at: 15, effectiveRange: nil) == nil)
+}
+
+@Test @MainActor func applySpacingsRemovesStaleSpacing() {
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\nnext line")
+    contentStorage.textStorage = storage
+    let controller = ImagePreviewController()
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref = makeReference(destination: "a.png")
+    ref.paragraphRange = NSRange(location: 0, length: 12)
+    controller.update(references: [ref])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    // 画像が消えたら spacing も消える
+    controller.update(references: [])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+    #expect(storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) == nil)
+    #expect(storage.attribute(
+        ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) == nil)
+}
+
+@Test @MainActor func applySpacingsIsIdempotentWhenUnchanged() {
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\nnext")
+    contentStorage.textStorage = storage
+    let controller = ImagePreviewController()
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref = makeReference(destination: "a.png")
+    ref.paragraphRange = NSRange(location: 0, length: 12)
+    controller.update(references: [ref])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    // 変化がなければ 2 回目は編集イベントを発生させない
+    var edited = false
+    let observer = NotificationCenter.default.addObserver(
+        forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
+    ) { _ in edited = true }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+    #expect(!edited)
+}
+
+@Test @MainActor func textViewAppliesSpacingForLocalImageEndToEnd() async throws {
+    let url = try writeTempPNG(name: "sample.png", width: 100, height: 50)
+    let textView = MarkdownTextView()
+    // ヘッドレスでは frame がゼロのまま。コンテナ幅がゼロだと loaded サイズが
+    // プレースホルダー扱いになるため、明示的に幅を与える。
+    textView.setFrameSize(NSSize(width: 500, height: 300))
+    textView.imagePreviewController.options =
+        ImagePreviewOptions(baseURL: url.deletingLastPathComponent())
+    textView.string = "![sample](sample.png)\n\nafter"
+    textView.highlightAll()
+    guard let storage = textView.textStorage else {
+        Issue.record("textStorage missing")
+        return
+    }
+    // 非同期ロード完了 → onStateChange → spacing 再適用を待つ
+    try await waitUntil {
+        let style = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+            as? NSParagraphStyle
+        return style?.paragraphSpacing == 50 + ImagePreviewController.padding
+    }
+}
