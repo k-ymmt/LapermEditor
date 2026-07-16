@@ -63,3 +63,33 @@ import Testing
     #expect(textView.inputInterceptor == nil)
     #expect(textView.insertionPointStyle == .bar)
 }
+
+@Test @MainActor func appliesImagePreviewOptionsAndLoader() {
+    let loader = DefaultImageLoader()
+    let options = ImagePreviewOptions(
+        baseURL: URL(filePath: "/docs/"), maxHeight: 200, allowsRemoteImages: true)
+    var text = "hello"
+    let view = MarkdownEditorView(text: .init(get: { text }, set: { text = $0 }))
+        .imagePreviewOptions(options)
+        .imageLoader(loader)
+    let textView = MarkdownTextView()
+    view.apply(to: textView)
+    #expect(textView.imagePreviewOptions == options)
+    #expect(textView.imageLoader === loader)
+}
+
+@Test @MainActor func changingOptionsResetsLoadStates() {
+    let textView = MarkdownTextView()
+    textView.string = "![a](a.png)"
+    textView.highlightAll()
+    // baseURL なし → 相対パスは failed
+    let ref = textView.imagePreviewController.references.first
+    #expect(ref != nil)
+    #expect(textView.imagePreviewController.state(for: ref!) == .failed)
+    // baseURL を設定すると再解決されて loading になる(実在パスなのでロード開始)
+    let dir = try! writeTempPNG(name: "a.png").deletingLastPathComponent()
+    textView.imagePreviewOptions = ImagePreviewOptions(baseURL: dir)
+    let newRef = textView.imagePreviewController.references.first
+    #expect(newRef != nil)
+    #expect(textView.imagePreviewController.state(for: newRef!) != .failed)
+}

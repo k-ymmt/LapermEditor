@@ -7,6 +7,8 @@ public struct MarkdownEditorView: NSViewRepresentable {
     private var showsLineNumbers = true
     private var inputInterceptor: (any TextInputInterceptor)?
     private var insertionPointStyle: InsertionPointStyle = .bar
+    private var imagePreviewOptions = ImagePreviewOptions()
+    private var imageLoader: (any ImageLoader)?
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
         self._text = text
@@ -34,10 +36,26 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
+    /// 画像プレビューの設定(baseURL・最大高さ・リモート許可など)。
+    public func imagePreviewOptions(_ options: ImagePreviewOptions) -> MarkdownEditorView {
+        var copy = self
+        copy.imagePreviewOptions = options
+        return copy
+    }
+
+    /// 画像ローダーを差し替える(キャッシュ戦略・認証付き取得などの注入点)。
+    public func imageLoader(_ loader: any ImageLoader) -> MarkdownEditorView {
+        var copy = self
+        copy.imageLoader = loader
+        return copy
+    }
+
     /// make / update 共通の反映処理(テストの継ぎ目)
     func apply(to textView: MarkdownTextView) {
         textView.inputInterceptor = inputInterceptor
         textView.insertionPointStyle = insertionPointStyle
+        textView.imagePreviewOptions = imagePreviewOptions
+        if let imageLoader { textView.imageLoader = imageLoader }
     }
 
     public func makeNSView(context: Context) -> NSScrollView {

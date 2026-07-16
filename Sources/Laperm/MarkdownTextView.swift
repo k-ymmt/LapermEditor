@@ -54,6 +54,29 @@ public final class MarkdownTextView: NSTextView {
             updateInsertionPointOverlay()
         }
     }
+
+    /// 画像プレビューの設定。baseURL / allowsRemoteImages の変更は全ロードをやり直す。
+    public var imagePreviewOptions: ImagePreviewOptions {
+        get { imagePreviewController.options }
+        set {
+            guard imagePreviewController.options != newValue else { return }
+            imagePreviewController.options = newValue
+            imagePreviewController.resetLoads()
+            updateImagePreviews()
+        }
+    }
+
+    /// 画像ローダー。差し替えると全ロードをやり直す。
+    public var imageLoader: any ImageLoader {
+        get { imagePreviewController.loader }
+        set {
+            guard imagePreviewController.loader !== newValue else { return }
+            imagePreviewController.loader = newValue
+            imagePreviewController.resetLoads()
+            updateImagePreviews()
+        }
+    }
+
     private var barInsertionPointColor: NSColor?
     private let insertionPointOverlay = InsertionPointOverlayView()
     private let imageOverlay = ImagePreviewOverlayView()
