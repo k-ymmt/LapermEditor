@@ -26,6 +26,8 @@ public final class DefaultImageLoader: ImageLoader {
     public func loadImage(for url: URL) async throws -> NSImage {
         if let cached = cache.object(forKey: url as NSURL) { return cached }
         let cgImage = try await Self.decode(url: url)
+        // ピクセル寸法をポイントとして扱う(高 DPI 画像は原寸の2倍で扱われるが
+        // maxHeight クランプで実害を抑える v1 の割り切り)
         let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: cgImage.width, height: cgImage.height))

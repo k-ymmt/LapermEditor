@@ -355,8 +355,14 @@ public final class MarkdownTextView: NSTextView {
         imageOverlay.frame = bounds
         if imageContainerWidth != lastImageContainerWidth {
             lastImageContainerWidth = imageContainerWidth
-            // 幅が変わると loaded 画像のフィット高さが変わるため spacing を再計算
-            updateImagePreviews()
+            // 幅が変わると loaded 画像のフィット高さが変わるため spacing を再計算する。
+            // ただし IME 変換中に直接 storage を触ると変換セッションを乱すため、
+            // onStateChange と同じガードに乗せて確定後に回す。
+            if hasMarkedText() {
+                scheduleHighlight()
+            } else {
+                updateImagePreviews()
+            }
         }
     }
 

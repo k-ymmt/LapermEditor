@@ -8,8 +8,10 @@ public enum ImageURLResolver {
     /// - 空文字列・未対応スキーム → nil
     public static func resolve(destination: String, baseURL: URL?) -> URL? {
         guard !destination.isEmpty else { return nil }
-        // スキーム判定は URL(string:) に頼らず自前で行う。日本語やスペースを含む
-        // 相対パスは URL(string:) が nil を返すため、そちらを先にすると誤判定する。
+        // スキーム判定は URL(string:) に頼らず自前で行う。URL(string:) はスキームなしの
+        // 相対パスでも(パーセントエンコードした上で)成功を返すため、それだけでは
+        // 「スキーム付きかどうか」を区別する材料にならない。また非対応スキームは nil に
+        // 落とす必要がある。コロンを自前で走査することで、この判定テーブルを明示的に保つ。
         if let colon = destination.firstIndex(of: ":") {
             let scheme = destination[..<colon].lowercased()
             switch scheme {

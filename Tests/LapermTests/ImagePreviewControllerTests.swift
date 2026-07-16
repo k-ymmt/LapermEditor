@@ -295,6 +295,63 @@ func waitUntil(_ condition: () -> Bool) async throws {
     #expect(!edited)
 }
 
+@Test @MainActor func applySpacingsIsIdempotentForAdjacentEqualHeightParagraphs() {
+    // 隣接する2つの画像段落がどちらも loading(高さ 88)のとき、
+    // enumerateAttribute は段落境界をまたいだ 1 レンジとして報告する。
+    // それでも「変化なし」と正しく判定され、2 回目の apply は編集イベントを発生させない。
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\n![b](b.png)\nnext")
+    contentStorage.textStorage = storage
+    let controller = ImagePreviewController()
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref1 = makeReference(destination: "a.png", location: 0)
+    ref1.paragraphRange = NSRange(location: 0, length: 12)
+    var ref2 = makeReference(destination: "b.png", location: 12)
+    ref2.paragraphRange = NSRange(location: 12, length: 12)
+    controller.update(references: [ref1, ref2])  // どちらも loading (高さ 88)
+
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    var edited = false
+    let observer = NotificationCenter.default.addObserver(
+        forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
+    ) { _ in edited = true }
+    defer { NotificationCenter.default.removeObserver(observer) }
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+    #expect(!edited)
+}
+
+@Test @MainActor func applySpacingsKeepsNeighborSpacingWhenMergedRunShrinks() {
+    // 同じ高さで結合されていたランのうち、片方の画像だけが消えたケース。
+    // 残った段落の spacing は保持されたまま、消えた段落側だけが取り除かれる必要がある。
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\n![b](b.png)\nnext")
+    contentStorage.textStorage = storage
+    let controller = ImagePreviewController()
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref1 = makeReference(destination: "a.png", location: 0)
+    ref1.paragraphRange = NSRange(location: 0, length: 12)
+    var ref2 = makeReference(destination: "b.png", location: 12)
+    ref2.paragraphRange = NSRange(location: 12, length: 12)
+    controller.update(references: [ref1, ref2])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    // 2枚目の画像が消えた
+    controller.update(references: [ref1])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+
+    let style1 = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil)
+        as? NSParagraphStyle
+    #expect(style1?.paragraphSpacing == 88)
+    let marker1 = storage.attribute(
+        ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) as? CGFloat
+    #expect(marker1 == 88)
+
+    #expect(storage.attribute(.paragraphStyle, at: 12, effectiveRange: nil) == nil)
+    #expect(storage.attribute(
+        ImagePreviewController.spacingAttribute, at: 12, effectiveRange: nil) == nil)
+}
+
 @Test @MainActor func textViewAppliesSpacingForLocalImageEndToEnd() async throws {
     let url = try writeTempPNG(name: "sample.png", width: 100, height: 50)
     let textView = MarkdownTextView()
