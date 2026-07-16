@@ -373,6 +373,7 @@ public final class MarkdownTextView: NSTextView {
             .init(
                 number: index.lineNumber(at: offset),
                 yInTextView: textLayoutFragment.layoutFragmentFrame.minY,
+                heightInTextView: textLayoutFragment.layoutFragmentFrame.height,
                 foldMarker: foldMarker(inParagraphFrom: offset, to: endOffset)
             ))
     }

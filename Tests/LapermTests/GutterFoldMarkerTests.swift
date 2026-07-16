@@ -49,6 +49,21 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
     #expect(toggled == [16])
 }
 
+// H1/H2 のように実フラグメント高がガター数字フォントの固定行高より大きい場合、
+// 従来は行下半分がデッドゾーンになりシェブロンをクリックできなかった。
+@MainActor @Test func hitTestCoversFullFragmentHeightForTallHeadings() {
+    let (gutter, textView) = makeGutterWithLines()
+    gutter.lines = [
+        .init(number: 1, yInTextView: 0, heightInTextView: 34,
+              foldMarker: .init(headingLocation: 0, isFolded: false)),
+    ]
+    let y0 = gutter.convert(NSPoint(x: 0, y: 0), from: textView).y
+    // 従来の固定行高(~17pt)では届かなかった行下部でもヒットする
+    #expect(gutter.foldMarkerHeadingLocation(atPoint: NSPoint(x: 8, y: y0 + 28)) == 0)
+    // フラグメント高を超えた位置はヒットしない
+    #expect(gutter.foldMarkerHeadingLocation(atPoint: NSPoint(x: 8, y: y0 + 40)) == nil)
+}
+
 // viewport 収集の統合確認: 見出し行に foldMarker が付く
 @MainActor @Test func viewportPassCollectsFoldMarkersForHeadingLines() {
     let scrollView = MarkdownTextView.scrollableMarkdownEditor()

@@ -14,6 +14,8 @@ final class LineNumberGutterView: NSRulerView {
         var number: Int
         /// テキストビュー座標系でのフラグメント上端 y
         var yInTextView: CGFloat
+        /// フラグメントの高さ(ヒット判定の行窓に使う)
+        var heightInTextView: CGFloat = 0
         var foldMarker: FoldMarker? = nil
     }
 
@@ -43,9 +45,13 @@ final class LineNumberGutterView: NSRulerView {
     /// point(ガター座標)がシェブロンに当たっていればその headingLocation を返す
     func foldMarkerHeadingLocation(atPoint point: NSPoint) -> Int? {
         guard point.x <= chevronColumnWidth, let textView = clientView else { return nil }
-        let lineHeight = numberFont.ascender - numberFont.descender + 6
+        // 見出し行はガター数字フォントより高くレイアウトされるため、固定行高では
+        // H1/H2 行の下半分がクリック不能になる。実フラグメント高で判定し、
+        // フィクスチャ等で高さが未指定(<= 0)の場合のみフォント由来の値にフォールバックする。
+        let fallbackLineHeight = numberFont.ascender - numberFont.descender + 6
         for line in lines {
             guard let marker = line.foldMarker else { continue }
+            let lineHeight = line.heightInTextView > 0 ? line.heightInTextView : fallbackLineHeight
             let y = convert(NSPoint(x: 0, y: line.yInTextView), from: textView).y
             if point.y >= y, point.y < y + lineHeight {
                 return marker.headingLocation
