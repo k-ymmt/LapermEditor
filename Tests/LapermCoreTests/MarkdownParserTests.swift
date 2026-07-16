@@ -297,3 +297,13 @@ private func imageReferences(in markdown: String) -> [ImageReference] {
     #expect(refs.count == 1)
     #expect(refs[0].destination.isEmpty)
 }
+
+@Test func multiLineImageParagraphRangeCoversWholeMarkup() {
+    // alt テキスト内のソフト改行で記法が複数行にまたがるケース。
+    // paragraphRange は記法全体を含む改行区切りブロックになる。
+    let md = "before\n![alt\ntext](a.png)\nafter\n"
+    let refs = imageReferences(in: md)
+    #expect(refs.count == 1)
+    #expect(refs[0].range == NSRange(location: 7, length: 18))
+    #expect(refs[0].paragraphRange == NSRange(location: 7, length: 19))
+}

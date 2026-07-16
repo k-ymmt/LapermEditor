@@ -385,13 +385,3 @@ enum HighlightMapper {
         }
     }
 }
-
-// MARK: - NSString 拡張
-
-private extension NSString {
-    /// range を含む行のレンジを返す(末尾の改行を含む)。
-    /// NSString.lineRange は既に末尾の改行を含むため、そのまま返す。
-    func paragraphRange(for range: NSRange) -> NSRange {
-        lineRange(for: NSRange(location: range.location, length: 0))
-    }
-}
