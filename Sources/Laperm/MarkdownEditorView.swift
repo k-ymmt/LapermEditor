@@ -82,7 +82,11 @@ public struct MarkdownEditorView: NSViewRepresentable {
         textView.insertionPointStyle = insertionPointStyle
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
-        textView.onOutlineChange = onOutlineChange
+        // SwiftUI のビュー更新中(makeNSView / updateNSView 内の highlightAll)に同期発火すると
+        // 利用側の @State 更新が破棄されるため、次のランループへ遅延して届ける
+        textView.onOutlineChange = onOutlineChange.map { callback in
+            { items in DispatchQueue.main.async { callback(items) } }
+        }
         textView.isFoldingEnabled = foldingEnabled
         proxy?.textView = textView
     }

@@ -108,6 +108,20 @@ import Testing
     #expect(proxy.textView === textView)
 }
 
+@MainActor @Test func outlineChangeIsDeliveredAsynchronously() async {
+    let textView = MarkdownTextView()
+    var received: [[OutlineItem]] = []
+    let view = MarkdownEditorView(text: .constant("# A\nbody"))
+        .onOutlineChange { received.append($0) }
+    view.apply(to: textView)
+    textView.string = "# A\nbody"
+    textView.highlightAll()
+    // 同期時点では未配信(ビュー更新中の @State 破棄を避けるための遅延)
+    #expect(received.isEmpty)
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    #expect(received.map { $0.map(\.title) } == [["A"]])
+}
+
 @MainActor @Test func proxyForwardsToTextView() {
     let proxy = MarkdownEditorProxy()
     let textView = MarkdownTextView()
