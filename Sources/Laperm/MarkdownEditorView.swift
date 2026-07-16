@@ -9,6 +9,9 @@ public struct MarkdownEditorView: NSViewRepresentable {
     private var insertionPointStyle: InsertionPointStyle = .bar
     private var imagePreviewOptions = ImagePreviewOptions()
     private var imageLoader: (any ImageLoader)?
+    private var onOutlineChange: (([OutlineItem]) -> Void)?
+    private var foldingEnabled = true
+    private var proxy: MarkdownEditorProxy?
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
         self._text = text
@@ -50,22 +53,48 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
+    /// アウトライン変化の通知を受け取る(パース確定時、実変化があったときだけ)。
+    public func onOutlineChange(
+        _ action: @escaping ([OutlineItem]) -> Void
+    ) -> MarkdownEditorView {
+        var copy = self
+        copy.onOutlineChange = action
+        return copy
+    }
+
+    /// セクション折りたたみの有効/無効(デフォルト有効)。
+    public func foldingEnabled(_ enabled: Bool) -> MarkdownEditorView {
+        var copy = self
+        copy.foldingEnabled = enabled
+        return copy
+    }
+
+    /// 命令的 API(scrollToHeading / fold 等)の呼び出し口を接続する。
+    public func editorProxy(_ proxy: MarkdownEditorProxy) -> MarkdownEditorView {
+        var copy = self
+        copy.proxy = proxy
+        return copy
+    }
+
     /// make / update 共通の反映処理(テストの継ぎ目)
     func apply(to textView: MarkdownTextView) {
         textView.inputInterceptor = inputInterceptor
         textView.insertionPointStyle = insertionPointStyle
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
+        textView.onOutlineChange = onOutlineChange
+        textView.isFoldingEnabled = foldingEnabled
+        proxy?.textView = textView
     }
 
     public func makeNSView(context: Context) -> NSScrollView {
         let scrollView = MarkdownTextView.scrollableMarkdownEditor(theme: theme)
         let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
+        apply(to: textView)
         textView.string = text
         textView.highlightAll()
         textView.showsLineNumbers = showsLineNumbers
-        apply(to: textView)
         return scrollView
     }
 

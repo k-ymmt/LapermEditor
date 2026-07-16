@@ -126,6 +126,7 @@ public func scrollToHeading(at headingLocation: Int) // 折畳中なら展開し
 // MarkdownEditorView(SwiftUI)ビルダーモディファイア
 func onOutlineChange(_ action: @escaping ([OutlineItem]) -> Void) -> Self
 func foldingEnabled(_ enabled: Bool) -> Self
+func editorProxy(_ proxy: MarkdownEditorProxy) -> Self  // 命令的 API(ジャンプ・折畳)の呼び出し口
 ```
 
 - `onOutlineChange` はパース確定時にアウトラインが**実際に変化したときだけ**発火(`[OutlineItem]` の Equatable 比較)

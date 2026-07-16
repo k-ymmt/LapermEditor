@@ -93,3 +93,29 @@ import Testing
     #expect(newRef != nil)
     #expect(textView.imagePreviewController.state(for: newRef!) != .failed)
 }
+
+@MainActor @Test func appliesOutlineAndFoldingModifiers() {
+    let textView = MarkdownTextView()
+    var received: [[OutlineItem]] = []
+    let proxy = MarkdownEditorProxy()
+    let view = MarkdownEditorView(text: .constant("# A\nbody"))
+        .onOutlineChange { received.append($0) }
+        .foldingEnabled(false)
+        .editorProxy(proxy)
+    view.apply(to: textView)
+    #expect(textView.isFoldingEnabled == false)
+    #expect(textView.onOutlineChange != nil)
+    #expect(proxy.textView === textView)
+}
+
+@MainActor @Test func proxyForwardsToTextView() {
+    let proxy = MarkdownEditorProxy()
+    let textView = MarkdownTextView()
+    textView.string = "# A\nbody"
+    textView.highlightAll()
+    proxy.textView = textView
+    proxy.fold(at: 0)
+    #expect(textView.isFolded(at: 0))
+    proxy.unfoldAll()
+    #expect(!textView.isFolded(at: 0))
+}
