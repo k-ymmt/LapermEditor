@@ -14,14 +14,34 @@ struct ContentView: View {
     @State private var showsLineNumbers = true
     @State private var useAlternateTheme = false
     @State private var vim = VimController()
+    @State private var outline: [OutlineItem] = []
+    @State private var editorProxy = MarkdownEditorProxy()
     private let imageDirectory = makeSampleImageDirectory()
 
     var body: some View {
-        MarkdownEditorView(text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default)
+        NavigationSplitView {
+            List(outline, id: \.headingLocation) { item in
+                Button {
+                    editorProxy.scrollToHeading(at: item.headingLocation)
+                } label: {
+                    Text(item.title)
+                        .lineLimit(1)
+                        .padding(.leading, CGFloat(item.level - 1) * 12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationSplitViewColumnWidth(min: 150, ideal: 200)
+        } detail: {
+            MarkdownEditorView(
+                text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default
+            )
             .showsLineNumbers(showsLineNumbers)
             .inputInterceptor(vim.isEnabled ? vim : nil)
             .insertionPointStyle(vim.insertionPointStyle)
             .imagePreviewOptions(.init(baseURL: imageDirectory))
+            .onOutlineChange { outline = $0 }
+            .editorProxy(editorProxy)
             .frame(minWidth: 640, minHeight: 480)
             .toolbar {
                 ToolbarItem {
@@ -44,6 +64,7 @@ struct ContentView: View {
                         .background(.bar)
                 }
             }
+        }
     }
 
     static let alternateTheme: MarkdownTheme = {
