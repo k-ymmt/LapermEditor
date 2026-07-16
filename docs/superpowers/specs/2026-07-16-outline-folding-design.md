@@ -94,6 +94,8 @@ final class FoldingController: NSObject, NSTextContentStorageDelegate {
 - **再パース同期**: `Highlighter` のフラッシュ時に `OutlineBuilder.build` を呼び `outline` を更新。折畳中の見出しオフセットが新アウトラインに存在しなければ(見出し行の削除等)その折畳を解除する
 - **編集追従**: `didProcessEditing` のタイミングで `state.shifted(...)` を適用。折畳セクション内部への編集は交差判定で自動展開される
 
+ネストした折畳(H2 折畳内の H3 も折畳)で親だけを `unfold` した場合、子の折畳状態は維持される(`foldedHeadingLocations` に残っているため、親展開後も子セクションは畳まれたまま表示される)。
+
 ### 自動展開(カーソル進入時)
 
 選択変更の監視箇所で、カーソル位置(または選択範囲)が折畳中セクションの**隠れている本体部分**と交差していたら `unfold` する。ネスト時(H2 折畳内の H3 も折畳)はカーソル位置を含むすべての折畳を解除する。IME 合成中(`hasMarkedText()`)は既存パターンに合わせて判定を遅延し、合成確定後に評価する。
