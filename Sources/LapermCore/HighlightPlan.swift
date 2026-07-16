@@ -14,9 +14,12 @@ public struct HighlightSpan: Hashable, Sendable {
 /// 文書全体のハイライト計画。spans は適用順(ブロック → インライン → マーカー)。
 public struct HighlightPlan: Equatable, Sendable {
     public var spans: [HighlightSpan]
+    /// 画像記法の出現一覧(プレビュー表示用)
+    public var images: [ImageReference]
 
-    public init(spans: [HighlightSpan] = []) {
+    public init(spans: [HighlightSpan] = [], images: [ImageReference] = []) {
         self.spans = spans
+        self.images = images
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -29,18 +32,39 @@ public struct HighlightPlan: Equatable, Sendable {
             location: editedRange.location,
             length: max(0, editedRange.length - delta)
         )
-        var result: [HighlightSpan] = []
-        result.reserveCapacity(spans.count)
+        var resultSpans: [HighlightSpan] = []
+        resultSpans.reserveCapacity(spans.count)
         for span in spans {
-            if NSMaxRange(span.range) <= preEditRange.location {
-                result.append(span)
-            } else if span.range.location >= NSMaxRange(preEditRange) {
-                var moved = span
-                moved.range.location += delta
-                result.append(moved)
-            }
-            // それ以外(編集と交差)は破棄
+            guard let range = Self.shift(span.range, preEditRange: preEditRange, delta: delta)
+            else { continue }
+            var moved = span
+            moved.range = range
+            resultSpans.append(moved)
         }
-        return HighlightPlan(spans: result)
+        var resultImages: [ImageReference] = []
+        resultImages.reserveCapacity(images.count)
+        for image in images {
+            // range と paragraphRange の両方が編集と交差しない場合のみ残す
+            guard let range = Self.shift(image.range, preEditRange: preEditRange, delta: delta),
+                  let paragraphRange = Self.shift(
+                      image.paragraphRange, preEditRange: preEditRange, delta: delta)
+            else { continue }
+            var moved = image
+            moved.range = range
+            moved.paragraphRange = paragraphRange
+            resultImages.append(moved)
+        }
+        return HighlightPlan(spans: resultSpans, images: resultImages)
+    }
+
+    /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。
+    private static func shift(_ range: NSRange, preEditRange: NSRange, delta: Int) -> NSRange? {
+        if NSMaxRange(range) <= preEditRange.location {
+            return range
+        }
+        if range.location >= NSMaxRange(preEditRange) {
+            return NSRange(location: range.location + delta, length: range.length)
+        }
+        return nil
     }
 }

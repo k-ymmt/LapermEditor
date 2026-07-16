@@ -37,3 +37,48 @@ import Testing
     let shifted = plan.shifted(byEditAt: NSRange(location: 5, length: 1), changeInLength: 1)
     #expect(shifted.spans.isEmpty)
 }
+
+@Test func shiftMovesImageReferenceAfterEdit() {
+    let image = ImageReference(
+        altText: "a", destination: "a.png",
+        range: NSRange(location: 20, length: 12),
+        paragraphRange: NSRange(location: 20, length: 13))
+    let plan = HighlightPlan(spans: [], images: [image])
+    // 位置 0 に 5 文字挿入(editedRange は編集後座標)
+    let shifted = plan.shifted(byEditAt: NSRange(location: 0, length: 5), changeInLength: 5)
+    #expect(shifted.images.count == 1)
+    #expect(shifted.images[0].range == NSRange(location: 25, length: 12))
+    #expect(shifted.images[0].paragraphRange == NSRange(location: 25, length: 13))
+}
+
+@Test func shiftDropsImageReferenceWhenEditIntersectsRange() {
+    let image = ImageReference(
+        altText: "a", destination: "a.png",
+        range: NSRange(location: 20, length: 12),
+        paragraphRange: NSRange(location: 20, length: 13))
+    let plan = HighlightPlan(spans: [], images: [image])
+    // 記法の内部に 1 文字挿入 → 参照は破棄(次のパースで再生成される)
+    let shifted = plan.shifted(byEditAt: NSRange(location: 22, length: 1), changeInLength: 1)
+    #expect(shifted.images.isEmpty)
+}
+
+@Test func shiftDropsImageReferenceWhenEditIntersectsParagraphRangeOnly() {
+    let image = ImageReference(
+        altText: "a", destination: "a.png",
+        range: NSRange(location: 20, length: 12),
+        paragraphRange: NSRange(location: 18, length: 20))
+    let plan = HighlightPlan(spans: [], images: [image])
+    // 記法の後ろ・同一行内に挿入 → paragraphRange が古くなるので破棄
+    let shifted = plan.shifted(byEditAt: NSRange(location: 34, length: 1), changeInLength: 1)
+    #expect(shifted.images.isEmpty)
+}
+
+@Test func shiftKeepsImageReferenceBeforeEdit() {
+    let image = ImageReference(
+        altText: "a", destination: "a.png",
+        range: NSRange(location: 0, length: 12),
+        paragraphRange: NSRange(location: 0, length: 13))
+    let plan = HighlightPlan(spans: [], images: [image])
+    let shifted = plan.shifted(byEditAt: NSRange(location: 30, length: 5), changeInLength: 5)
+    #expect(shifted.images == [image])
+}

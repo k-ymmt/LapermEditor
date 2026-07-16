@@ -8,6 +8,7 @@ public enum SyntaxKind: Hashable, Sendable {
     case blockquote
     case listMarker
     case link
+    case image
     case thematicBreak
     case strikethrough
     case taskChecked
