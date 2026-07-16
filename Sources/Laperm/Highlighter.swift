@@ -21,6 +21,11 @@ public final class Highlighter {
     /// ガード解除後の次の flush で確実に適用させること。
     public var applyDeferred: (() -> Void)?
 
+    /// バックグラウンドパース完了で applyFlush が非同期に走ったあとに呼ばれる。
+    /// view はこれを装飾・アウトライン・画像プレビューの再同期のきっかけにする
+    /// (同期経路では highlightNow が自分で再同期するため呼ばない)。
+    public var onBackgroundFlushApplied: (() -> Void)?
+
     private let parser = MarkdownParser()
     private var pendingEditedRanges: [NSRange] = []
     private var lastParseDuration: Duration = .zero
@@ -151,8 +156,10 @@ public final class Highlighter {
     ///
     /// 注意: MarkdownTextView.highlightNow() は flushPendingHighlight の直後に
     /// updateBlockDecorations() を呼ぶが、この経路では apply が非同期に完了するため
-    /// ブロック装飾の更新は今回のサイクルには間に合わない。装飾は次回の
-    /// flush/rehighlightAll で追いつく(巨大文書では 1 サイクル遅延することを許容する v1 の設計)。
+    /// ブロック装飾の更新は今回のサイクルには間に合わない。世代一致で applyFlush が
+    /// 走った直後に onBackgroundFlushApplied を呼ぶので、view 側はそこで装飾・
+    /// アウトライン・画像プレビューを再同期する(呼ばれるのは世代一致の適用時のみ。
+    /// 破棄経路や同期経路では呼ばない — 二重同期を避けるため)。
     private func startBackgroundFlush(
         text: String,
         contentStorage: NSTextContentStorage,
@@ -181,6 +188,7 @@ public final class Highlighter {
                 }
                 self.applyFlush(
                     newPlan: plan, contentStorage: contentStorage, layoutManager: layoutManager)
+                self.onBackgroundFlushApplied?()
             } else {
                 // 古い結果は破棄。パース中に来た編集の highlightNow は active ガードで
                 // 素通りしているため、ここで自分から再フラッシュしないと取りこぼす。

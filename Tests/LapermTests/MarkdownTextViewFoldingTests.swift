@@ -102,6 +102,27 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     #expect(!textView.isFolded(at: 0))
 }
 
+@MainActor @Test func outlineReflectsHeadingAddedDuringBackgroundParse() async {
+    // 巨大文書相当をバックグラウンド経路に強制し、非同期フラッシュ完了後に
+    // アウトラインが「次の編集を待たず」最新化されることを確認する
+    // (Highlighter.onBackgroundFlushApplied → MarkdownTextView の再同期フック回帰確認)。
+    let textView = MarkdownTextView()
+    textView.string = "plain"
+    textView.highlightAll()
+    textView.markdownHighlighter.backgroundParseThreshold = .zero
+
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 0), with: "# ")
+    textView.markdownHighlighter.noteEdit(
+        editedRange: NSRange(location: 0, length: 2), changeInLength: 2)
+    textView.markdownHighlighter.flushPendingHighlight(
+        contentStorage: textView.textContentStorage!, layoutManager: textView.textLayoutManager!)
+
+    #expect(textView.outline.isEmpty)  // 適用前はまだ古いプラン(見出しなし)のまま
+    await textView.markdownHighlighter.activeBackgroundParse?.value
+    // 次の編集を待たず、非同期フラッシュ完了の時点でアウトラインに新見出しが載る
+    #expect(textView.outline.map(\.title) == ["plain"])
+}
+
 @MainActor @Test func performCommandStillWorksWhileFolded() {
     // 折畳が undo 経路の編集(perform)を妨げないこと
     let textView = makeTextView()

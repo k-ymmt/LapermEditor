@@ -93,6 +93,15 @@ public final class MarkdownTextView: NSTextView {
             if !isFoldingEnabled { foldingController.unfoldAll() }
             foldingController.isEnabled = isFoldingEnabled
             applyFoldingChanges()
+            // 折畳の有無に関わらずビューポート再レイアウトを無条件で要求する。
+            // 折畳が 1 件もない(dirty レンジが空)場合 applyFoldingChanges は早期リターンし
+            // 再レイアウトが起きないため、ガターは古い collectedLines(旧有効状態の
+            // foldMarker)を描き続けてしまう(シェブロンが消えない/現れないバグ)。
+            if let layoutManager = textLayoutManager {
+                let controller = layoutManager.textViewportLayoutController
+                controller.delegate?.textViewportLayoutControllerReceivedSetNeedsLayout?(controller)
+            }
+            needsLayout = true
             gutterView?.needsDisplay = true
         }
     }
@@ -186,6 +195,17 @@ public final class MarkdownTextView: NSTextView {
         // highlightNow() と同じガードをここでも効かせる。
         markdownHighlighter.shouldDeferApply = { [weak self] in self?.hasMarkedText() ?? false }
         markdownHighlighter.applyDeferred = { [weak self] in self?.scheduleHighlight() }
+        // バックグラウンドパースの applyFlush は非同期に完了するため、highlightNow が
+        // その場で行う再同期(装飾・アウトライン・画像プレビュー)には間に合わない。
+        // 巨大文書で「次の編集までアウトラインが更新されない」問題を防ぐため、
+        // 完了通知を受けてここで同じ再同期を行う。
+        markdownHighlighter.onBackgroundFlushApplied = { [weak self] in
+            guard let self else { return }
+            self.updateBlockDecorations()
+            self.syncFolding()
+            self.updateImagePreviews()
+            self.updateInsertionPointOverlay()
+        }
 
         imageOverlay.autoresizingMask = [.width, .height]
         addSubview(imageOverlay)

@@ -109,7 +109,26 @@ private let sample = "# A\nbody1\nbody2\n# B\nafter"
 }
 
 @MainActor @Test func disabledControllerRejectsFoldAndEnumeratesAll() {
+    let contentStorage = NSTextContentStorage()
+    contentStorage.textStorage?.replaceCharacters(
+        in: NSRange(location: 0, length: 0), with: sample)
     let controller = makeController(text: sample)
+    contentStorage.delegate = controller
+    // 無効化前に折畳を作っておく(無効化後にちゃんと解除されているかは fold の拒否だけでは
+    // 分からないため、実際に列挙してすべてのパラグラフが出てくることまで確認する)
+    #expect(controller.fold(at: 0))
     controller.isEnabled = false
-    #expect(!controller.fold(at: 0))
+    #expect(!controller.fold(at: 0))  // 無効化中は新規折畳を拒否
+    var enumerated: [Int] = []
+    contentStorage.enumerateTextElements(from: contentStorage.documentRange.location) {
+        element in
+        if let location = element.elementRange?.location {
+            enumerated.append(contentStorage.offset(
+                from: contentStorage.documentRange.location, to: location))
+        }
+        return true
+    }
+    // 無効化中は既存の折畳があっても隠さず、全パラグラフを列挙する
+    #expect(enumerated.contains(4))   // body1
+    #expect(enumerated.contains(10))  // body2
 }

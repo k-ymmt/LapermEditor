@@ -38,6 +38,10 @@ public struct OutlineItem: Hashable, Sendable {
     public var title: String         // マーカー除去済みの見出しテキスト
     public var headingRange: NSRange // 見出し行の UTF-16 レンジ
     public var sectionRange: NSRange // 見出し行を含む、セクション全体のレンジ
+    public var bodyRange: NSRange    // 折畳時に隠す本体(見出し行の次行頭〜sectionRange 末尾)。本体がなければ length 0
+
+    /// 折畳操作のキー(= headingRange.location)
+    public var headingLocation: Int { headingRange.location }
 }
 
 /// HighlightPlan の heading スパン + 原文からアウトラインを構築する純関数
@@ -54,11 +58,19 @@ public enum OutlineBuilder {
 
 ```swift
 public struct FoldingState: Equatable, Sendable {
-    public var foldedHeadingLocations: Set<Int>  // 見出し行頭の UTF-16 オフセット
+    /// 折畳 1 件。bodyRange がレイアウトから隠す範囲(見出し行は含まない)。
+    public struct Fold: Hashable, Sendable {
+        public var headingLocation: Int  // 見出し行頭の UTF-16 オフセット(折畳のキー)
+        public var bodyRange: NSRange    // 折畳時に隠す本体レンジ
+    }
+
+    public private(set) var folds: [Fold]  // headingLocation 昇順
 
     /// HighlightPlan.shifted と同じ規則: 編集より前は不変、後は delta 平行移動、
-    /// 交差した折畳は解除(= 自動展開の一形態)
-    public func shifted(byEditAt editedRange: NSRange, changeInLength delta: Int) -> FoldingState
+    /// 交差した折畳は解除(= 自動展開の一形態)。dropped で解除された Fold を返す。
+    public func shifted(
+        byEditAt editedRange: NSRange, changeInLength delta: Int
+    ) -> (state: FoldingState, dropped: [Fold])
 }
 ```
 
@@ -136,7 +148,7 @@ func editorProxy(_ proxy: MarkdownEditorProxy) -> Self  // 命令的 API(ジャ�
 
 ## エラー処理・エッジケース
 
-- Setext 見出しも `heading` スパンとして同様に扱う
+- Setext 見出しも `heading` スパンとして同様に扱う(cmark が終端を次ブロックまで過大報告するため、HighlightMapper で下線行末尾にクランプ済み)
 - コードブロック内の `#` はパーサが見出し扱いしないため誤検出なし
 - 空文書・見出しゼロ → アウトライン空配列、折畳不可
 - 文書全体が 1 見出しのみ → セクション = 見出し以降全部

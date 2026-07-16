@@ -237,6 +237,72 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
         .attribute(.strikethroughStyle, at: 3, effectiveRange: nil) == nil)
 }
 
+@MainActor @Test func onBackgroundFlushAppliedFiresAfterAsyncApplyOnGenerationMatch() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("plain")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    highlighter.backgroundParseThreshold = .zero  // 常にバックグラウンド経路
+
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
+
+    let storage = contentStorage.textStorage!
+    storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "# ")
+    highlighter.noteEdit(editedRange: NSRange(location: 0, length: 2), changeInLength: 2)
+    highlighter.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    // 非同期タスクが完了するまではまだ呼ばれない
+    #expect(fired == 0)
+    await highlighter.activeBackgroundParse?.value
+    // 世代一致で applyFlush が走った直後に 1 回だけ呼ばれる
+    #expect(fired == 1)
+    let font = storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont
+    #expect(font == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
+}
+
+@MainActor @Test func onBackgroundFlushAppliedDoesNotFireOnStaleDiscard() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("plain")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    highlighter.backgroundParseThreshold = .zero
+
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
+
+    let storage = contentStorage.textStorage!
+    storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "# ")
+    highlighter.noteEdit(editedRange: NSRange(location: 0, length: 2), changeInLength: 2)
+    highlighter.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    // パース中に追加編集(世代が進む → 最初の結果は破棄され再フラッシュされる)
+    storage.replaceCharacters(in: NSRange(location: 7, length: 0), with: "!")
+    highlighter.noteEdit(editedRange: NSRange(location: 7, length: 1), changeInLength: 1)
+
+    while let task = highlighter.activeBackgroundParse {
+        await task.value
+    }
+    // 破棄経路では applyFlush 自体が呼ばれないので、フックも発火しない。
+    // 再フラッシュされた 2 回目(世代一致)の完了で 1 回だけ発火する。
+    #expect(fired == 1)
+}
+
+@MainActor @Test func onBackgroundFlushAppliedDoesNotFireOnSynchronousPath() {
+    let (contentStorage, layoutManager) = makeTextKitStack("plain")
+    let highlighter = Highlighter(theme: .default)  // 閾値はデフォルト 16ms → 同期経路
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
+
+    let storage = contentStorage.textStorage!
+    storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "# ")
+    highlighter.noteEdit(editedRange: NSRange(location: 0, length: 2), changeInLength: 2)
+    highlighter.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    #expect(highlighter.activeBackgroundParse == nil)
+    #expect(fired == 0)
+}
+
 @MainActor @Test func fastDocumentsStaySynchronous() {
     let (contentStorage, layoutManager) = makeTextKitStack("plain")
     let highlighter = Highlighter(theme: .default)  // 閾値はデフォルト 16ms

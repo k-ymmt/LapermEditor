@@ -78,3 +78,29 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
     #expect(markers.map(\.headingLocation) == [0, 16])
     #expect(markers.allSatisfy { !$0.isFolded })
 }
+
+// 回帰確認: 折畳が 1 件もない状態で isFoldingEnabled をトグルしても
+// (applyFoldingChanges の dirty レンジが空で早期リターンする状況でも)
+// ガターの foldMarker 収集(collectedLines)が現在の有効状態に追従すること。
+@MainActor @Test func togglingFoldingEnabledRefreshesGutterMarkersWithNoActiveFold() {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.string = "# A\nbody1\nbody2\n# B\nafter"
+    textView.highlightAll()
+    let controller = textView.textLayoutManager!.textViewportLayoutController
+    controller.layoutViewport()
+    let gutter = scrollView.verticalRulerView as! LineNumberGutterView
+    #expect(!gutter.lines.compactMap(\.foldMarker).isEmpty)
+
+    // 折畳を無効化(アクティブな折畳なし → dirty レンジは空のまま)
+    textView.isFoldingEnabled = false
+    controller.layoutViewport()
+    #expect(gutter.lines.compactMap(\.foldMarker).isEmpty)
+
+    // 再度有効化するとシェブロンが戻る
+    textView.isFoldingEnabled = true
+    controller.layoutViewport()
+    #expect(!gutter.lines.compactMap(\.foldMarker).isEmpty)
+}
