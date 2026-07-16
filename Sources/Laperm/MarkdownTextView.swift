@@ -10,6 +10,7 @@ public final class MarkdownTextView: NSTextView {
     private var highlightScheduled = false
     private var fragmentProvider: BlockFragmentProvider!
     let imagePreviewController = ImagePreviewController()
+    let foldingController = FoldingController()
     weak var gutterView: LineNumberGutterView?
     private var lineIndex: LineIndex?
     private var collectedLines: [LineNumberGutterView.Line] = []
@@ -77,6 +78,55 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    // MARK: - アウトライン / 折りたたみ
+
+    /// 現在のアウトライン(パース確定時に更新される)
+    public var outline: [OutlineItem] { foldingController.outline }
+
+    /// アウトラインが実際に変化したときだけ呼ばれる(Equatable 比較)
+    public var onOutlineChange: (([OutlineItem]) -> Void)?
+
+    /// 折りたたみ機能の有効/無効。無効化すると全折畳を解除し、以後の折畳操作を無視する
+    public var isFoldingEnabled: Bool = true {
+        didSet {
+            guard isFoldingEnabled != oldValue else { return }
+            if !isFoldingEnabled { foldingController.unfoldAll() }
+            foldingController.isEnabled = isFoldingEnabled
+            applyFoldingChanges()
+            gutterView?.needsDisplay = true
+        }
+    }
+
+    /// headingLocation(OutlineItem.headingLocation)のセクションを折りたたむ
+    public func fold(at headingLocation: Int) {
+        if foldingController.fold(at: headingLocation) { applyFoldingChanges() }
+    }
+
+    public func unfold(at headingLocation: Int) {
+        if foldingController.unfold(at: headingLocation) { applyFoldingChanges() }
+    }
+
+    public func toggleFold(at headingLocation: Int) {
+        if foldingController.toggleFold(at: headingLocation) { applyFoldingChanges() }
+    }
+
+    public func unfoldAll() {
+        if foldingController.unfoldAll() { applyFoldingChanges() }
+    }
+
+    public func isFolded(at headingLocation: Int) -> Bool {
+        foldingController.isFolded(headingLocation: headingLocation)
+    }
+
+    /// 見出しへスクロールする。祖先セクションが折畳中なら先に展開する
+    public func scrollToHeading(at headingLocation: Int) {
+        if foldingController.unfoldAll(
+            intersecting: NSRange(location: headingLocation, length: 0)) {
+            applyFoldingChanges()
+        }
+        scrollRangeToVisible(NSRange(location: headingLocation, length: 0))
+    }
+
     private var barInsertionPointColor: NSColor?
     private let insertionPointOverlay = InsertionPointOverlayView()
     private let imageOverlay = ImagePreviewOverlayView()
@@ -119,6 +169,14 @@ public final class MarkdownTextView: NSTextView {
         // delegate スロットは空いている
         textStorage?.delegate = self
 
+        // NSTextContentStorage の delegate は未使用なので折畳コントローラが使う。
+        // shouldEnumerate で折畳中の本体段落を列挙から除外する(ストレージ無変更)。
+        textContentStorage?.delegate = foldingController
+        foldingController.onOutlineChanged = { [weak self] in
+            guard let self else { return }
+            self.onOutlineChange?(self.foldingController.outline)
+        }
+
         let provider = BlockFragmentProvider(theme: markdownHighlighter.theme)
         provider.fallbackDelegate = textLayoutManager?.delegate
         textLayoutManager?.delegate = provider
@@ -150,6 +208,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.rehighlightAll(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        syncFolding()
         updateImagePreviews()
         updateInsertionPointOverlay()
     }
@@ -171,6 +230,7 @@ public final class MarkdownTextView: NSTextView {
         markdownHighlighter.flushPendingHighlight(
             contentStorage: contentStorage, layoutManager: layoutManager)
         updateBlockDecorations()
+        syncFolding()
         updateImagePreviews()
         updateInsertionPointOverlay()
     }
@@ -183,6 +243,36 @@ public final class MarkdownTextView: NSTextView {
             contentManager: contentStorage,
             layoutManager: layoutManager
         )
+    }
+
+    /// パース確定後にアウトライン・折畳状態を最新プランへ同期する。
+    /// バックグラウンドパース経路では currentPlan の更新が非同期のため、ブロック装飾と
+    /// 同様に 1 サイクル遅延する(v1 で許容済みの設計)。
+    private func syncFolding() {
+        foldingController.sync(plan: markdownHighlighter.currentPlan, text: string)
+        applyFoldingChanges()
+    }
+
+    /// 折畳状態の変化をレイアウトへ反映する。BlockFragmentProvider.update と同じく
+    /// recordEditAction で要素再生成を強制し、ビューポートへ再レイアウトを要求する。
+    private func applyFoldingChanges() {
+        let dirtyRanges = foldingController.takePendingDirtyRanges()
+        guard !dirtyRanges.isEmpty,
+              let contentStorage = textContentStorage,
+              let layoutManager = textLayoutManager else { return }
+        let textRanges = dirtyRanges.compactMap { contentStorage.textRange(for: $0) }
+        contentStorage.performEditingTransaction {
+            for textRange in textRanges {
+                contentStorage.recordEditAction(in: textRange, newTextRange: textRange)
+            }
+        }
+        for textRange in textRanges {
+            layoutManager.invalidateLayout(for: textRange)
+        }
+        let controller = layoutManager.textViewportLayoutController
+        controller.delegate?.textViewportLayoutControllerReceivedSetNeedsLayout?(controller)
+        gutterView?.needsDisplay = true
+        needsLayout = true
     }
 
     /// 画像プレビューの状態を最新プランに同期し、スペーシングを適用する。
@@ -342,6 +432,21 @@ public final class MarkdownTextView: NSTextView {
     ) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         updateInsertionPointOverlay()
+        autoExpandFoldsAtSelection()
+    }
+
+    /// カーソル(選択)が折畳の隠し領域に入ったら自動展開する。
+    /// IME 変換中は変換セッションを乱さないよう見送る(確定後の選択変更で再評価される)。
+    private func autoExpandFoldsAtSelection() {
+        guard isFoldingEnabled, !foldingController.state.isEmpty, !hasMarkedText()
+        else { return }
+        var changed = false
+        for value in selectedRanges {
+            if foldingController.unfoldAll(intersecting: value.rangeValue) {
+                changed = true
+            }
+        }
+        if changed { applyFoldingChanges() }
     }
 
     public override func didChangeText() {
@@ -548,6 +653,7 @@ extension MarkdownTextView: NSTextStorageDelegate {
         guard editedMask.contains(.editedCharacters) else { return }
         lineIndex = nil
         markdownHighlighter.noteEdit(editedRange: editedRange, changeInLength: delta)
+        foldingController.noteEdit(editedRange: editedRange, changeInLength: delta)
         scheduleHighlight()
     }
 }
