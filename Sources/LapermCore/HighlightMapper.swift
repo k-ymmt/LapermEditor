@@ -9,7 +9,8 @@ enum HighlightMapper {
         // 適用順: ブロック → インライン → マーカー
         return HighlightPlan(
             spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans,
-            images: visitor.imageReferences
+            images: visitor.imageReferences,
+            links: visitor.linkReferences
         )
     }
 
@@ -20,6 +21,7 @@ enum HighlightMapper {
         var inlineSpans: [HighlightSpan] = []
         var markerSpans: [HighlightSpan] = []
         var imageReferences: [ImageReference] = []
+        var linkReferences: [LinkReference] = []
         private var tableDepth = 0
 
         private func nsRange(of markup: Markup) -> NSRange? {
@@ -174,6 +176,10 @@ enum HighlightMapper {
         mutating func visitLink(_ link: Link) {
             if let range = nsRange(of: link), range.length > 0 {
                 inlineSpans.append(HighlightSpan(range: range, kind: .link))
+                linkReferences.append(LinkReference(
+                    text: plainText(of: link),
+                    destination: link.destination ?? "",
+                    range: range))
             }
             descendInto(link)
         }
@@ -183,7 +189,7 @@ enum HighlightMapper {
                 inlineSpans.append(HighlightSpan(range: range, kind: .image))
                 appendImageMarkers(in: range, image: image)
                 imageReferences.append(ImageReference(
-                    altText: plainAltText(of: image),
+                    altText: plainText(of: image),
                     destination: image.source ?? "",
                     range: range,
                     paragraphRange: text.paragraphRange(for: range),
@@ -401,14 +407,14 @@ enum HighlightMapper {
             }
         }
 
-        /// alt テキストのプレーンテキスト化(強調などの装飾を剥がして連結)。
-        private func plainAltText(of image: Markdown.Image) -> String {
+        /// 子孫の Text ノードを連結したプレーンテキスト(強調などの装飾を剥がす)。
+        private func plainText(of markup: Markup) -> String {
             var result = ""
             func collect(_ markup: Markup) {
                 if let textNode = markup as? Markdown.Text { result += textNode.string }
                 for child in markup.children { collect(child) }
             }
-            collect(image)
+            collect(markup)
             return result
         }
     }
