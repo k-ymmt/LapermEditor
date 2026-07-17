@@ -82,3 +82,24 @@ import Testing
     let shifted = plan.shifted(byEditAt: NSRange(location: 30, length: 5), changeInLength: 5)
     #expect(shifted.images == [image])
 }
+
+@Test func shiftMovesLinksAfterEdit() {
+    let link = LinkReference(
+        text: "a", destination: "https://example.com",
+        range: NSRange(location: 10, length: 5))
+    let plan = HighlightPlan(links: [link])
+    // 位置 0 に 3 文字挿入(editedRange は編集後座標)
+    let shifted = plan.shifted(byEditAt: NSRange(location: 0, length: 3), changeInLength: 3)
+    #expect(shifted.links == [LinkReference(
+        text: "a", destination: "https://example.com",
+        range: NSRange(location: 13, length: 5))])
+}
+
+@Test func shiftDropsLinksIntersectingEdit() {
+    let link = LinkReference(
+        text: "a", destination: "https://example.com",
+        range: NSRange(location: 10, length: 5))
+    let plan = HighlightPlan(links: [link])
+    let shifted = plan.shifted(byEditAt: NSRange(location: 12, length: 1), changeInLength: 1)
+    #expect(shifted.links.isEmpty)
+}

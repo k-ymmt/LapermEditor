@@ -16,10 +16,13 @@ public struct HighlightPlan: Equatable, Sendable {
     public var spans: [HighlightSpan]
     /// 画像記法の出現一覧(プレビュー表示用)
     public var images: [ImageReference]
+    /// リンクの出現一覧(クリック処理用)
+    public var links: [LinkReference]
 
-    public init(spans: [HighlightSpan] = [], images: [ImageReference] = []) {
+    public init(spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = []) {
         self.spans = spans
         self.images = images
+        self.links = links
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -54,7 +57,16 @@ public struct HighlightPlan: Equatable, Sendable {
             moved.paragraphRange = paragraphRange
             resultImages.append(moved)
         }
-        return HighlightPlan(spans: resultSpans, images: resultImages)
+        var resultLinks: [LinkReference] = []
+        resultLinks.reserveCapacity(links.count)
+        for link in links {
+            guard let range = Self.shift(link.range, preEditRange: preEditRange, delta: delta)
+            else { continue }
+            var moved = link
+            moved.range = range
+            resultLinks.append(moved)
+        }
+        return HighlightPlan(spans: resultSpans, images: resultImages, links: resultLinks)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。
