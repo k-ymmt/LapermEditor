@@ -284,3 +284,54 @@ private func deleteBackward(_ text: String, selection: NSRange) -> EditCommand? 
     #expect(deleteBackward("()", selection: NSRange(location: 2, length: 0)) == nil)
     #expect(deleteBackward("(]", selection: NSRange(location: 1, length: 0)) == nil)
 }
+
+// MARK: - linkifyPaste
+
+@Test func linkifiesURLPasteOverSelection() {
+    let command = EditingAssistant.linkifyPaste(
+        text: "see docs here", selection: NSRange(location: 4, length: 4),
+        pasted: "https://example.com")
+    let replacement = "[docs](https://example.com)"
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 4, length: 4),
+        replacementString: replacement,
+        selectedRange: NSRange(location: 4 + (replacement as NSString).length, length: 0)))
+}
+
+@Test func linkifyTrimsPastedWhitespace() {
+    let command = EditingAssistant.linkifyPaste(
+        text: "docs", selection: NSRange(location: 0, length: 4),
+        pasted: "https://example.com\n")
+    #expect(command?.replacementString == "[docs](https://example.com)")
+}
+
+@Test func linkifyRequiresSelection() {
+    #expect(EditingAssistant.linkifyPaste(
+        text: "docs", selection: NSRange(location: 0, length: 0),
+        pasted: "https://example.com") == nil)
+}
+
+@Test func linkifyRejectsMultilineSelection() {
+    #expect(EditingAssistant.linkifyPaste(
+        text: "a\nb", selection: NSRange(location: 0, length: 3),
+        pasted: "https://example.com") == nil)
+}
+
+@Test func linkifyRejectsNonURLPaste() {
+    #expect(EditingAssistant.linkifyPaste(
+        text: "docs", selection: NSRange(location: 0, length: 4),
+        pasted: "hello world") == nil)
+}
+
+@Test func linkifyRejectsURLShapedSelection() {
+    // URL を URL で潰す事故防止
+    #expect(EditingAssistant.linkifyPaste(
+        text: "https://old.example", selection: NSRange(location: 0, length: 19),
+        pasted: "https://new.example") == nil)
+}
+
+@Test func linkifyRejectsSchemeOnlyPaste() {
+    #expect(EditingAssistant.linkifyPaste(
+        text: "docs", selection: NSRange(location: 0, length: 4),
+        pasted: "https://") == nil)
+}

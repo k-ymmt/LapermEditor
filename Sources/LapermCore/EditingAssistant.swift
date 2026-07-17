@@ -187,6 +187,35 @@ public enum EditingAssistant {
             replacementString: isChecked ? " " : "x",
             selectedRange: NSRange(location: stateLocation, length: 1))
     }
+
+    /// ペースト: テキスト選択中に URL をペーストしたら [選択](URL) へ変換する。
+    /// 対象外なら nil(呼び出し側は通常のペーストへフォールバック)。
+    /// v1 の制限: 選択が既存リンク記法・コードスパン内かどうかの文脈判定は行わない。
+    public static func linkifyPaste(
+        text: NSString, selection: NSRange, pasted: String
+    ) -> EditCommand? {
+        guard selection.length > 0, NSMaxRange(selection) <= text.length else { return nil }
+        let selected = text.substring(with: selection)
+        // 単一行内の選択のみ(改行またぎのリンクは作らない)
+        guard !selected.contains("\n") else { return nil }
+        let url = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isURLShaped(url), !isURLShaped(selected) else { return nil }
+        let replacement = "[\(selected)](\(url))"
+        return EditCommand(
+            replacementRange: selection,
+            replacementString: replacement,
+            selectedRange: NSRange(
+                location: selection.location + (replacement as NSString).length, length: 0))
+    }
+
+    /// http(s) URL 形状か: スキームで始まり、空白を含まず、スキームより長い。
+    private static func isURLShaped(_ string: String) -> Bool {
+        let lower = string.lowercased()
+        let scheme = lower.hasPrefix("https://") ? "https://"
+            : lower.hasPrefix("http://") ? "http://" : nil
+        guard let scheme, string.count > scheme.count else { return false }
+        return string.rangeOfCharacter(from: .whitespacesAndNewlines) == nil
+    }
 }
 
 /// リスト項目行の解析結果。行頭のインデント・マーカー・チェックボックスを走査で検出する。
