@@ -8,16 +8,20 @@ public struct EditingOptions: Equatable, Sendable {
     public var indentsListItems: Bool
     /// 選択範囲の囲い込みと括弧系・バッククォートの自動閉じ
     public var completesPairs: Bool
+    /// テキスト選択中に URL をペーストしたら [選択](URL) へ変換する
+    public var linkifiesPastedURL: Bool
 
     public init(
         continuesLists: Bool = true,
         togglesCheckboxOnClick: Bool = true,
         indentsListItems: Bool = true,
-        completesPairs: Bool = true
+        completesPairs: Bool = true,
+        linkifiesPastedURL: Bool = true
     ) {
         self.continuesLists = continuesLists
         self.togglesCheckboxOnClick = togglesCheckboxOnClick
         self.indentsListItems = indentsListItems
         self.completesPairs = completesPairs
+        self.linkifiesPastedURL = linkifiesPastedURL
     }
 }

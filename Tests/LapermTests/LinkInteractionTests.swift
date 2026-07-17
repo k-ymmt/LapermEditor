@@ -110,6 +110,37 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     #expect(textView.debugHoveredLinkRange == nil)
 }
 
+@MainActor @Test func pasteURLOverSelectionLinkifies() {
+    let textView = makeTextView("see docs here")
+    textView.setSelectedRange(NSRange(location: 4, length: 4))
+    #expect(textView.applyLinkifiedPaste("https://example.com"))
+    #expect(textView.string == "see [docs](https://example.com) here")
+}
+
+@MainActor @Test func pasteURLWithoutSelectionFallsBack() {
+    let textView = makeTextView("see docs here")
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(!textView.applyLinkifiedPaste("https://example.com"))
+    #expect(textView.string == "see docs here")
+}
+
+@MainActor @Test func pasteLinkifyRespectsDisabledOption() {
+    let textView = makeTextView("see docs here")
+    textView.editingOptions.linkifiesPastedURL = false
+    textView.setSelectedRange(NSRange(location: 4, length: 4))
+    #expect(!textView.applyLinkifiedPaste("https://example.com"))
+}
+
+@MainActor @Test func pasteLinkifyUndoesInOneStep() {
+    let textView = makeTextView("see docs here")
+    let undoProvider = UndoManagerProvider()
+    textView.delegate = undoProvider
+    textView.setSelectedRange(NSRange(location: 4, length: 4))
+    #expect(textView.applyLinkifiedPaste("https://example.com"))
+    undoProvider.manager.undo()
+    #expect(textView.string == "see docs here")
+}
+
 @MainActor
 private func hasUnderlineRenderingAttribute(in textView: MarkdownTextView) -> Bool {
     let layoutManager = textView.textLayoutManager!

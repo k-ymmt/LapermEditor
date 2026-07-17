@@ -723,6 +723,24 @@ public final class MarkdownTextView: NSTextView {
         super.deleteBackward(sender)
     }
 
+    public override func paste(_ sender: Any?) {
+        if let pasted = NSPasteboard.general.string(forType: .string),
+            applyLinkifiedPaste(pasted) {
+            return
+        }
+        super.paste(sender)
+    }
+
+    /// ペースト文字列がリンク化条件を満たせば適用して true。
+    /// paste から分離してあるのはテストでペースト文字列を直接渡せるようにするため。
+    func applyLinkifiedPaste(_ pasted: String) -> Bool {
+        guard editingOptions.linkifiesPastedURL, !hasMarkedText(),
+            let command = EditingAssistant.linkifyPaste(
+                text: string as NSString, selection: selectedRange(), pasted: pasted)
+        else { return false }
+        return perform(command)
+    }
+
     public override func mouseDown(with event: NSEvent) {
         let point = convert(event.locationInWindow, from: nil)
         // deviceIndependentFlagsMask は capsLock を含み、Caps Lock 中は常時セットされるため
