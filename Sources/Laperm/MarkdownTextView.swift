@@ -471,7 +471,7 @@ public final class MarkdownTextView: NSTextView {
         if let area = linkTrackingArea { removeTrackingArea(area) }
         let area = NSTrackingArea(
             rect: .zero,
-            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
             owner: self)
         addTrackingArea(area)
         linkTrackingArea = area
@@ -491,6 +491,19 @@ public final class MarkdownTextView: NSTextView {
         refreshLinkHover(
             atPoint: convert(location, from: nil),
             commandHeld: event.modifierFlags.contains(.command))
+    }
+
+    public override func mouseExited(with event: NSEvent) {
+        super.mouseExited(with: event)
+        clearLinkHoverOnExit()
+    }
+
+    /// ポインタがビュー外へ出たときのホバー解除(下線とカーソル形状の両方を戻す)。
+    /// mouseExited から分離してあるのはテストで直接呼べるようにするため。
+    func clearLinkHoverOnExit() {
+        guard hoveredLinkRange != nil else { return }
+        clearLinkHover()
+        NSCursor.iBeam.set()
     }
 
     /// Cmd+ホバーの下線・カーソル形状を更新する。

@@ -93,6 +93,15 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     #expect(!hasUnderlineRenderingAttribute(in: textView))
 }
 
+@MainActor @Test func mouseExitClearsHoverAndUnderline() {
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    textView.clearLinkHoverOnExit()
+    #expect(textView.debugHoveredLinkRange == nil)
+    #expect(!hasUnderlineRenderingAttribute(in: textView))
+}
+
 @MainActor @Test func textChangeClearsHoveredRange() {
     let textView = makeTextView("See [site](https://example.com/a).")
     let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
