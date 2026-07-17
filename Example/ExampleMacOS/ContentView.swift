@@ -16,6 +16,7 @@ struct ContentView: View {
     @State private var vim = VimController()
     @State private var outline: [OutlineItem] = []
     @State private var editorProxy = MarkdownEditorProxy()
+    @State private var lastOpenedURL: URL?
     private let imageDirectory = makeSampleImageDirectory()
 
     var body: some View {
@@ -40,6 +41,12 @@ struct ContentView: View {
             .inputInterceptor(vim.isEnabled ? vim : nil)
             .insertionPointStyle(vim.insertionPointStyle)
             .imagePreviewOptions(.init(baseURL: imageDirectory))
+            .linkOptions(.init(baseURL: imageDirectory))
+            .onOpenLink { url in
+                lastOpenedURL = url
+                // デモではブラウザを起動せずステータスバーに表示するだけ
+                return true
+            }
             .onOutlineChange { outline = $0 }
             .editorProxy(editorProxy)
             .frame(minWidth: 640, minHeight: 480)
@@ -55,13 +62,23 @@ struct ContentView: View {
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                if let status = vim.statusText {
-                    Text(status)
-                        .font(.system(.caption, design: .monospaced).bold())
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(.bar)
+                VStack(spacing: 0) {
+                    if let status = vim.statusText {
+                        Text(status)
+                            .font(.system(.caption, design: .monospaced).bold())
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.bar)
+                    }
+                    if let url = lastOpenedURL {
+                        Text("開いたリンク: \(url.absoluteString)")
+                            .font(.system(.caption, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(.bar)
+                    }
                 }
             }
         }
@@ -124,6 +141,16 @@ struct ContentView: View {
     - ツールバーの Vim トグルで簡易 Vim モード(hjkl / w b / 0 $ / x dd / i a o O / Esc)
 
     日本語も絵文字 🎉 も正しくハイライトされます。
+
+    ## リンク
+
+    - [インラインリンク](https://example.com/inline) を Cmd+クリック
+    - 参照リンク: [Laperm リポジトリ][repo]
+    - ベア URL: https://example.com/bare も開けます
+    - 相対パス: [サンプル画像を開く](sample.png)
+    - 選択して URL をペーストするとリンク化されます
+
+    [repo]: https://example.com/repo
 
     ## 画像
 
