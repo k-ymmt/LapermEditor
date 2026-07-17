@@ -85,12 +85,15 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
 }
 
 @MainActor @Test func hoverAppliesAndRemovesUnderline() {
+    // NSTextLayoutManager.addRenderingAttribute(.underlineStyle, ...) は実機の GUI 検証で
+    // 描画に反映されないことが確認された(.backgroundColor 等は反映されるため下線特有の制約)。
+    // そのため下線は LinkHoverOverlayView への矩形計算で表現しており、ここではその矩形群を検証する。
     let textView = makeTextView("See [site](https://example.com/a).")
     let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
     textView.refreshLinkHover(atPoint: point, commandHeld: true)
-    #expect(hasUnderlineRenderingAttribute(in: textView))
+    #expect(!textView.debugLinkHoverUnderlineRects.isEmpty)
     textView.refreshLinkHover(atPoint: point, commandHeld: false)
-    #expect(!hasUnderlineRenderingAttribute(in: textView))
+    #expect(textView.debugLinkHoverUnderlineRects.isEmpty)
 }
 
 @MainActor @Test func mouseExitClearsHoverAndUnderline() {
@@ -99,7 +102,7 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     textView.refreshLinkHover(atPoint: point, commandHeld: true)
     textView.clearLinkHoverOnExit()
     #expect(textView.debugHoveredLinkRange == nil)
-    #expect(!hasUnderlineRenderingAttribute(in: textView))
+    #expect(textView.debugLinkHoverUnderlineRects.isEmpty)
 }
 
 @MainActor @Test func textChangeClearsHoveredRange() {
@@ -139,17 +142,4 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     #expect(textView.applyLinkifiedPaste("https://example.com"))
     undoProvider.manager.undo()
     #expect(textView.string == "see docs here")
-}
-
-@MainActor
-private func hasUnderlineRenderingAttribute(in textView: MarkdownTextView) -> Bool {
-    let layoutManager = textView.textLayoutManager!
-    var found = false
-    layoutManager.enumerateRenderingAttributes(
-        from: layoutManager.documentRange.location, reverse: false
-    ) { _, attributes, _ in
-        if attributes[.underlineStyle] != nil { found = true }
-        return !found
-    }
-    return found
 }

@@ -150,7 +150,11 @@ public final class MarkdownTextView: NSTextView {
     /// テスト用: 現在ホバー中のリンクレンジ。
     var debugHoveredLinkRange: NSRange? { hoveredLinkRange }
 
+    /// テスト用: ホバー下線オーバーレイに設定されている矩形群。空ならオーバーレイ非表示相当。
+    var debugLinkHoverUnderlineRects: [NSRect] { linkHoverOverlay.underlineRects }
+
     private let insertionPointOverlay = InsertionPointOverlayView()
+    private let linkHoverOverlay = LinkHoverOverlayView()
     private let imageOverlay = ImagePreviewOverlayView()
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
     private var lastImageContainerWidth: CGFloat = 0
@@ -466,6 +470,14 @@ public final class MarkdownTextView: NSTextView {
 
     // MARK: - リンクホバー
 
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // NSTrackingArea に .mouseMoved を指定していても、ウィンドウ側が
+        // mouseMoved イベントを受け取る設定になっていないと配送されないことがある
+        // (特に SwiftUI がホストするウィンドウ)。Cmd+ホバーの下線表示のために明示的に有効化する。
+        window?.acceptsMouseMovedEvents = true
+    }
+
     public override func updateTrackingAreas() {
         super.updateTrackingAreas()
         if let area = linkTrackingArea { removeTrackingArea(area) }
@@ -514,9 +526,8 @@ public final class MarkdownTextView: NSTextView {
             newRange = linkReference(at: characterIndexForInsertion(at: point))?.range
         }
         guard newRange != hoveredLinkRange else { return }
-        setLinkUnderline(hoveredLinkRange, enabled: false)
-        setLinkUnderline(newRange, enabled: true)
         hoveredLinkRange = newRange
+        updateLinkHoverOverlay()
         if newRange != nil {
             NSCursor.pointingHand.set()
         } else {
@@ -524,26 +535,56 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
-    /// ホバー下線の renderingAttributes を付け外しする(再レイアウトなし)。
-    /// テーマの .link スタイルは色のみで underline を使わないため衝突しない。
-    private func setLinkUnderline(_ range: NSRange?, enabled: Bool) {
-        guard let range,
-            let layoutManager = textLayoutManager,
-            let contentManager = layoutManager.textContentManager,
-            let textRange = contentManager.textRange(for: range)
-        else { return }
-        if enabled {
-            layoutManager.addRenderingAttribute(
-                .underlineStyle, value: NSUnderlineStyle.single.rawValue, for: textRange)
-        } else {
-            layoutManager.removeRenderingAttribute(.underlineStyle, for: textRange)
-        }
-    }
-
     /// 編集でレンジがずれるため、ホバー状態は編集のたびに破棄する。
     private func clearLinkHover() {
-        setLinkUnderline(hoveredLinkRange, enabled: false)
         hoveredLinkRange = nil
+        updateLinkHoverOverlay()
+    }
+
+    /// ホバー中リンクの下線オーバーレイを配置する。
+    ///
+    /// `NSTextLayoutManager.addRenderingAttribute(.underlineStyle, ...)` を使う実装を
+    /// 実機の GUI 検証で試したが、ビューポート再レイアウトを強制しても描画に反映されなかった
+    /// (`.backgroundColor` など他のレンダリング属性は同じ手順で反映されるため、TextKit2 の
+    /// 下線レンダリング属性特有の制約と判断した)。InsertionPointOverlayView と同じ
+    /// 「座標を計算してオーバーレイに描く」方式に置き換えている。
+    private func updateLinkHoverOverlay() {
+        guard let range = hoveredLinkRange,
+            let rects = linkHoverSegmentFrames(for: range),
+            !rects.isEmpty
+        else {
+            linkHoverOverlay.underlineRects = []
+            linkHoverOverlay.removeFromSuperview()
+            return
+        }
+        if linkHoverOverlay.superview !== self {
+            addSubview(linkHoverOverlay)
+        }
+        linkHoverOverlay.frame = bounds
+        linkHoverOverlay.color = theme.style(for: .link)?.foregroundColor ?? .linkColor
+        linkHoverOverlay.underlineRects = rects
+    }
+
+    /// range(NSRange)をこのビュー座標の矩形群に変換する。折返しがあれば行ごとに 1 矩形。
+    private func linkHoverSegmentFrames(for range: NSRange) -> [NSRect]? {
+        guard let layoutManager = textLayoutManager,
+            let contentManager = layoutManager.textContentManager,
+            let textRange = contentManager.textRange(for: range)
+        else { return nil }
+        layoutManager.ensureLayout(for: textRange)
+        var frames: [NSRect] = []
+        let origin = textContainerOrigin
+        layoutManager.enumerateTextSegments(
+            in: textRange, type: .standard, options: [.rangeNotRequired]
+        ) { _, frame, _, _ in
+            guard !frame.isNull else { return true }
+            frames.append(
+                NSRect(
+                    x: frame.minX + origin.x, y: frame.minY + origin.y,
+                    width: frame.width, height: frame.height))
+            return true
+        }
+        return frames
     }
 
     // MARK: - 入力インターセプト
@@ -596,6 +637,7 @@ public final class MarkdownTextView: NSTextView {
     public override func layout() {
         super.layout()
         updateInsertionPointOverlay()
+        updateLinkHoverOverlay()
         imageOverlay.frame = bounds
         if imageContainerWidth != lastImageContainerWidth {
             lastImageContainerWidth = imageContainerWidth
