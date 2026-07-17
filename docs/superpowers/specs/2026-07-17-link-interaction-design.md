@@ -124,8 +124,10 @@ public struct LinkOptions: Equatable, Sendable {
 
 既存モディファイアのパターンを踏襲:
 
-- `.markdownLinkOptions(_ options: LinkOptions)`
-- `.onMarkdownOpenLink(_ handler: @escaping (URL) -> Bool)`
+- `.linkOptions(_ options: LinkOptions)`
+- `.onOpenLink(_ handler: @escaping (URL) -> Bool)`
+
+*Note: モディファイア名は既存の慣例(`imagePreviewOptions`, `imageLoader` など)に合わせて接頭辞なしの unprefixed 形式に統一した。*
 
 ## Example アプリ
 

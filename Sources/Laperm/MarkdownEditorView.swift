@@ -9,6 +9,8 @@ public struct MarkdownEditorView: NSViewRepresentable {
     private var insertionPointStyle: InsertionPointStyle = .bar
     private var imagePreviewOptions = ImagePreviewOptions()
     private var imageLoader: (any ImageLoader)?
+    private var linkOptions = LinkOptions()
+    private var onOpenLink: ((URL) -> Bool)?
     private var onOutlineChange: (([OutlineItem]) -> Void)?
     private var foldingEnabled = true
     private var proxy: MarkdownEditorProxy?
@@ -53,6 +55,20 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
+    /// リンク操作の設定(Cmd+クリックで開く・相対パスの baseURL)。
+    public func linkOptions(_ options: LinkOptions) -> MarkdownEditorView {
+        var copy = self
+        copy.linkOptions = options
+        return copy
+    }
+
+    /// リンクを開く前のフック。true を返すと消費(デフォルトの NSWorkspace.open を行わない)。
+    public func onOpenLink(_ handler: @escaping (URL) -> Bool) -> MarkdownEditorView {
+        var copy = self
+        copy.onOpenLink = handler
+        return copy
+    }
+
     /// アウトライン変化の通知を受け取る(パース確定時、実変化があったときだけ)。
     public func onOutlineChange(
         _ action: @escaping ([OutlineItem]) -> Void
@@ -82,6 +98,8 @@ public struct MarkdownEditorView: NSViewRepresentable {
         textView.insertionPointStyle = insertionPointStyle
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
+        textView.linkOptions = linkOptions
+        textView.onOpenLink = onOpenLink
         // SwiftUI のビュー更新中(makeNSView / updateNSView 内の highlightAll)に同期発火すると
         // 利用側の @State 更新が破棄されるため、次のランループへ遅延して届ける
         textView.onOutlineChange = onOutlineChange.map { callback in

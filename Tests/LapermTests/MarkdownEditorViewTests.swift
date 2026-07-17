@@ -133,3 +133,16 @@ import Testing
     proxy.unfoldAll()
     #expect(!textView.isFolded(at: 0))
 }
+
+@MainActor @Test func linkModifiersApplyToTextView() {
+    let base = URL(filePath: "/docs/", directoryHint: .isDirectory)
+    var openedURLs: [URL] = []
+    let view = MarkdownEditorView(text: .constant("[a](b.md)"))
+        .linkOptions(LinkOptions(opensOnCommandClick: true, baseURL: base))
+        .onOpenLink { openedURLs.append($0); return true }
+    let textView = MarkdownTextView()
+    view.apply(to: textView)
+    #expect(textView.linkOptions == LinkOptions(opensOnCommandClick: true, baseURL: base))
+    #expect(textView.onOpenLink?(URL(string: "https://example.com")!) == true)
+    #expect(openedURLs == [URL(string: "https://example.com")!])
+}
