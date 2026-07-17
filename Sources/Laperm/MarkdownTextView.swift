@@ -33,6 +33,13 @@ public final class MarkdownTextView: NSTextView {
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
 
+    /// リンク操作の設定(デフォルト: Cmd+クリックで開く)
+    public var linkOptions = LinkOptions()
+
+    /// リンクを開く前のフック。true を返すと消費し、デフォルト動作
+    /// (NSWorkspace.shared.open)を行わない。
+    public var onOpenLink: ((URL) -> Bool)?
+
     /// キー入力のインターセプタ(weak 保持)。Vim モード等のモーダル編集の実装点。
     /// IME 変換中(marked text)は変換セッションを優先し、呼ばれない。
     public weak var inputInterceptor: (any TextInputInterceptor)?
@@ -628,12 +635,17 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        // deviceIndependentFlagsMask は capsLock を含み、Caps Lock 中は常時セットされるため
+        // 実際に押されうる修飾キーだけを見る
+        let modifiers = event.modifierFlags.intersection([.shift, .control, .option, .command])
+        if event.clickCount == 1, modifiers == [.command], openLink(atPoint: point) {
+            return
+        }
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,
-            // deviceIndependentFlagsMask は capsLock を含み、Caps Lock 中は常時セットされるため
-            // 実際に押されうる修飾キーだけを見る
-            event.modifierFlags.intersection([.shift, .control, .option, .command]).isEmpty,
-            toggleCheckbox(atPoint: convert(event.locationInWindow, from: nil)) {
+            modifiers.isEmpty,
+            toggleCheckbox(atPoint: point) {
             return
         }
         super.mouseDown(with: event)
@@ -650,6 +662,25 @@ public final class MarkdownTextView: NSTextView {
         guard perform(command) else { return false }
         selectedRanges = selectionBefore
         return true
+    }
+
+    /// point(ビュー座標)の Cmd+クリックでリンクを開く。開いたら true。
+    /// mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
+    func openLink(atPoint point: NSPoint) -> Bool {
+        guard linkOptions.opensOnCommandClick else { return false }
+        let offset = characterIndexForInsertion(at: point)
+        guard let reference = linkReference(at: offset),
+            let url = LinkURLResolver.resolve(
+                destination: reference.destination, baseURL: linkOptions.baseURL)
+        else { return false }
+        if onOpenLink?(url) == true { return true }
+        NSWorkspace.shared.open(url)
+        return true
+    }
+
+    /// offset を含むリンク参照(パース確定済みの currentPlan から検索)
+    private func linkReference(at offset: Int) -> LinkReference? {
+        markdownHighlighter.currentPlan.links.first { NSLocationInRange(offset, $0.range) }
     }
 
     /// EditCommand を undo 対応の経路で適用する。
