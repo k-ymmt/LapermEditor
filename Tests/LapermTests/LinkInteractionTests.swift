@@ -96,6 +96,30 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     #expect(textView.debugLinkHoverUnderlineRects.isEmpty)
 }
 
+@MainActor @Test func flagsChangedHoverPointOutsideVisibleRectClearsHover() {
+    // flagsChanged は window?.mouseLocationOutsideOfEventStream を使うため、ポインタが
+    // ビュー外(サイドバー等)にあっても呼ばれうる。その場合は新規ホバーを作らないこと。
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    #expect(textView.debugHoveredLinkRange != nil)
+    textView.refreshLinkHover(atPoint: NSPoint(x: -100, y: -100), commandHeld: true)
+    #expect(textView.debugHoveredLinkRange == nil)
+}
+
+@MainActor @Test func commandClickBelowLinkLineDoesNotOpen() {
+    // characterIndexForInsertion はクランプするため、リンクを含む行の下の余白を
+    // Cmd+クリックしてもヒットしないことを確認する(実際の描画矩形でのヒットテスト)。
+    let textView = makeTextView("[site](https://example.com)")
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 2000)
+    var opened: URL?
+    textView.onOpenLink = { opened = $0; return true }
+    var point = midpoint(of: NSRange(location: 1, length: 4), in: textView)
+    point.y += 100
+    #expect(!textView.openLink(atPoint: point))
+    #expect(opened == nil)
+}
+
 @MainActor @Test func mouseExitClearsHoverAndUnderline() {
     let textView = makeTextView("See [site](https://example.com/a).")
     let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)

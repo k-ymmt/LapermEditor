@@ -117,7 +117,8 @@ public struct LinkOptions: Equatable, Sendable {
 - `public var linkOptions: LinkOptions`
 - `public var onOpenLink: ((URL) -> Bool)?` — `true` を返したら消費。`false` / nil ならデフォルト動作(`NSWorkspace.shared.open`)
 - **mouseDown**: Cmd 押下+クリック位置が `LinkReference.range` 内なら `LinkURLResolver` で解決して開く。座標→オフセット変換はチェックボックストグルの既存経路を再利用し、テスト可能なよう `openLink(atPoint:) -> Bool` を分離する。イベントは消費してカーソル移動させない(VS Code と同様)
-- **ホバーフィードバック**: Cmd 押下中にリンク上へポインタが乗ったら `NSCursor.pointingHand` と下線の renderingAttributes を一時付与し、外れたら解除。`NSTrackingArea`(mouseMoved)+ `flagsChanged` で Cmd の押下/解放にも追従する
+- **ホバーフィードバック**: Cmd 押下中にリンク上へポインタが乗ったら `NSCursor.pointingHand` を設定し、外れたら解除。`NSTrackingArea`(mouseMoved)+ `flagsChanged` で Cmd の押下/解放にも追従する
+  - 下線は当初 `NSTextLayoutManager.addRenderingAttribute(.underlineStyle, ...)` で付与する設計だったが、実機の GUI 検証でビューポート再レイアウトを強制しても描画に反映されないことが判明した(`.backgroundColor` など他のレンダリング属性は同じ手順で反映されるため、TextKit2 の下線レンダリング属性特有の制約と判断)。そのため `InsertionPointOverlayView` と同じ「座標を計算してオーバーレイに描く」方式の `LinkHoverOverlayView` に置き換えている
 - **paste(_:)**: pasteboard の string と現在選択を `EditingAssistant.linkifyPaste` へ渡し、`EditCommand` が返れば undo 対応経路で適用。nil なら `super.paste(_:)`
 
 ### SwiftUI(MarkdownEditorView)

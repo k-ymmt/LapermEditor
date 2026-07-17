@@ -520,10 +520,15 @@ public final class MarkdownTextView: NSTextView {
 
     /// Cmd+ホバーの下線・カーソル形状を更新する。
     /// mouseMoved / flagsChanged から分離してあるのはテストで直接呼べるようにするため。
+    ///
+    /// `flagsChanged` は `window?.mouseLocationOutsideOfEventStream` を使ってポインタ位置を
+    /// 取得するが、この値はウィンドウ内のどこでもありうる(サイドバー・ガター・ウィンドウ外)。
+    /// そのためまずポイントが `visibleRect` 内かどうかを確認し、外なら新規ホバーを作らない
+    /// (既存ホバーの解除処理は下の共通パスで通す)。
     func refreshLinkHover(atPoint point: NSPoint, commandHeld: Bool) {
         var newRange: NSRange?
-        if commandHeld, linkOptions.opensOnCommandClick {
-            newRange = linkReference(at: characterIndexForInsertion(at: point))?.range
+        if commandHeld, linkOptions.opensOnCommandClick, visibleRect.contains(point) {
+            newRange = linkReference(atScreenPoint: point)?.range
         }
         guard newRange != hoveredLinkRange else { return }
         hoveredLinkRange = newRange
@@ -817,8 +822,7 @@ public final class MarkdownTextView: NSTextView {
     /// mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
     func openLink(atPoint point: NSPoint) -> Bool {
         guard linkOptions.opensOnCommandClick else { return false }
-        let offset = characterIndexForInsertion(at: point)
-        guard let reference = linkReference(at: offset),
+        guard let reference = linkReference(atScreenPoint: point),
             let url = LinkURLResolver.resolve(
                 destination: reference.destination, baseURL: linkOptions.baseURL)
         else { return false }
@@ -830,6 +834,20 @@ public final class MarkdownTextView: NSTextView {
     /// offset を含むリンク参照(パース確定済みの currentPlan から検索)
     private func linkReference(at offset: Int) -> LinkReference? {
         markdownHighlighter.currentPlan.links.first { NSLocationInRange(offset, $0.range) }
+    }
+
+    /// point(ビュー座標)にオンスクリーンで実際に重なっているリンク参照を返す。
+    /// `characterIndexForInsertion` は最寄りの文字へクランプするため、リンクを含む行の
+    /// 末尾より右や次行の余白をクリック/ホバーしても、そのままではリンクにヒットしてしまう。
+    /// そこで候補が見つかった後、`linkHoverSegmentFrames` で実際の描画矩形群を取得し、
+    /// point がそのいずれかに含まれる場合のみ採用する(取りこぼし防止に小さな許容誤差を持たせる)。
+    private func linkReference(atScreenPoint point: NSPoint) -> LinkReference? {
+        guard let reference = linkReference(at: characterIndexForInsertion(at: point)),
+            let rects = linkHoverSegmentFrames(for: reference.range)
+        else { return nil }
+        let tolerance: CGFloat = -2
+        return rects.contains { $0.insetBy(dx: tolerance, dy: tolerance).contains(point) }
+            ? reference : nil
     }
 
     /// EditCommand を undo 対応の経路で適用する。
