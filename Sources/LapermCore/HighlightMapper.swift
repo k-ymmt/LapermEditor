@@ -23,6 +23,8 @@ enum HighlightMapper {
         var imageReferences: [ImageReference] = []
         var linkReferences: [LinkReference] = []
         private var tableDepth = 0
+        /// リンク・画像の内側を走査中はベア URL 検出を止める(二重検出防止)
+        private var inlineLinkDepth = 0
 
         private func nsRange(of markup: Markup) -> NSRange? {
             guard let sourceRange = markup.range else { return nil }
@@ -181,7 +183,9 @@ enum HighlightMapper {
                     destination: link.destination ?? "",
                     range: range))
             }
+            inlineLinkDepth += 1
             descendInto(link)
+            inlineLinkDepth -= 1
         }
 
         mutating func visitImage(_ image: Markdown.Image) {
@@ -196,7 +200,9 @@ enum HighlightMapper {
                     isInsideTable: tableDepth > 0
                 ))
             }
+            inlineLinkDepth += 1
             descendInto(image)
+            inlineLinkDepth -= 1
         }
 
         mutating func visitStrikethrough(_ strikethrough: Strikethrough) {
@@ -416,6 +422,96 @@ enum HighlightMapper {
             }
             collect(markup)
             return result
+        }
+
+        // MARK: ベア URL 検出
+
+        /// swift-markdown は GFM autolink 拡張を有効化していないため、
+        /// 裸の http(s) URL は Text ノードのまま届く。ここで自前検出する。
+        mutating func visitText(_ node: Markdown.Text) {
+            guard inlineLinkDepth == 0, let range = nsRange(of: node), range.length > 0
+            else { return }
+            appendBareURLs(in: range)
+        }
+
+        private mutating func appendBareURLs(in range: NSRange) {
+            let end = NSMaxRange(range)
+            var i = range.location
+            while i < end {
+                guard let schemeLength = urlSchemeLength(at: i, end: end) else {
+                    i += 1
+                    continue
+                }
+                // 直前が ASCII 英数字なら単語の一部("xhttps://…")なのでスキップ
+                if i > 0, isASCIIAlphanumeric(text.character(at: i - 1)) {
+                    i += schemeLength
+                    continue
+                }
+                var j = i + schemeLength
+                while j < end, !isURLTerminator(text.character(at: j)) { j += 1 }
+                let urlEnd = trimTrailingPunctuation(from: i, to: j)
+                if urlEnd > i + schemeLength {
+                    let urlRange = NSRange(location: i, length: urlEnd - i)
+                    let destination = text.substring(with: urlRange)
+                    inlineSpans.append(HighlightSpan(range: urlRange, kind: .link))
+                    linkReferences.append(LinkReference(
+                        text: destination, destination: destination, range: urlRange))
+                }
+                i = j
+            }
+        }
+
+        /// location から "https://" / "http://" が始まっていればその長さ(UTF-16)。
+        private func urlSchemeLength(at location: Int, end: Int) -> Int? {
+            for scheme in ["https://", "http://"] {
+                let length = (scheme as NSString).length
+                guard location + length <= end else { continue }
+                let candidate = text.substring(
+                    with: NSRange(location: location, length: length))
+                if candidate.lowercased() == scheme { return length }
+            }
+            return nil
+        }
+
+        /// URL の終端文字: 空白・制御文字・"<"・非 ASCII(全角文字等)。
+        private func isURLTerminator(_ c: unichar) -> Bool {
+            c <= 0x20 || c == unichar(UnicodeScalar("<").value) || c >= 0x7F
+        }
+
+        private func isASCIIAlphanumeric(_ c: unichar) -> Bool {
+            let zero = unichar(UnicodeScalar("0").value), nine = unichar(UnicodeScalar("9").value)
+            let a = unichar(UnicodeScalar("a").value), z = unichar(UnicodeScalar("z").value)
+            let A = unichar(UnicodeScalar("A").value), Z = unichar(UnicodeScalar("Z").value)
+            return (zero...nine).contains(c) || (a...z).contains(c) || (A...Z).contains(c)
+        }
+
+        /// 末尾の約物をトリムする。")" は URL 内の括弧バランスを見て閉じ超過分のみ落とす。
+        private func trimTrailingPunctuation(from start: Int, to end: Int) -> Int {
+            let trailing: Set<unichar> = Set(".,;:!?'\"".utf16)
+            let open = unichar(UnicodeScalar("(").value)
+            let close = unichar(UnicodeScalar(")").value)
+            var end = end
+            while end > start {
+                let c = text.character(at: end - 1)
+                if trailing.contains(c) {
+                    end -= 1
+                    continue
+                }
+                if c == close {
+                    var opens = 0, closes = 0
+                    for k in start..<end {
+                        let ch = text.character(at: k)
+                        if ch == open { opens += 1 }
+                        if ch == close { closes += 1 }
+                    }
+                    if closes > opens {
+                        end -= 1
+                        continue
+                    }
+                }
+                break
+            }
+            return end
         }
     }
 }

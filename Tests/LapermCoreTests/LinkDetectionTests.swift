@@ -30,3 +30,68 @@ private func links(in markdown: String) -> [LinkReference] {
     #expect(result.count == 1)
     #expect(result[0].destination == "https://example.com")
 }
+
+@Test func detectsBareURL() {
+    let md = "See https://example.com/path now"
+    let result = links(in: md)
+    #expect(result.count == 1)
+    #expect(result[0].destination == "https://example.com/path")
+    #expect((md as NSString).substring(with: result[0].range) == "https://example.com/path")
+}
+
+@Test func bareURLGetsLinkSpan() {
+    let md = "See https://example.com now"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let expected = ((md as NSString).range(of: "https://example.com"))
+    #expect(plan.spans.contains(HighlightSpan(range: expected, kind: .link)))
+}
+
+@Test func trimsTrailingPunctuation() {
+    let result = links(in: "Read (https://example.com/a).")
+    #expect(result.count == 1)
+    #expect(result[0].destination == "https://example.com/a")
+}
+
+@Test func keepsBalancedParen() {
+    let md = "See https://en.wikipedia.org/wiki/Foo_(bar) now"
+    let result = links(in: md)
+    #expect(result[0].destination == "https://en.wikipedia.org/wiki/Foo_(bar)")
+}
+
+@Test func skipsBareURLInCodeSpan() {
+    #expect(links(in: "run `https://example.com` ok").isEmpty)
+}
+
+@Test func skipsBareURLInCodeBlock() {
+    #expect(links(in: "```\nhttps://example.com\n```").isEmpty)
+}
+
+@Test func skipsBareURLInsideLinkText() {
+    let result = links(in: "[https://inner.example](https://outer.example)")
+    #expect(result.count == 1)
+    #expect(result[0].destination == "https://outer.example")
+}
+
+@Test func skipsBareURLInsideImageAlt() {
+    let result = links(in: "![https://inner.example](img.png)")
+    #expect(result.isEmpty)
+}
+
+@Test func requiresBoundaryBeforeURL() {
+    #expect(links(in: "xhttps://example.com").isEmpty)
+}
+
+@Test func schemeOnlyIsNotALink() {
+    #expect(links(in: "prefix https:// suffix").isEmpty)
+}
+
+@Test func stopsAtNonASCII() {
+    let result = links(in: "リンクは https://example.com、です")
+    #expect(result.count == 1)
+    #expect(result[0].destination == "https://example.com")
+}
+
+@Test func httpSchemeAlsoDetected() {
+    let result = links(in: "See http://example.com now")
+    #expect(result[0].destination == "http://example.com")
+}
