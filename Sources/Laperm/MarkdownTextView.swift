@@ -144,6 +144,12 @@ public final class MarkdownTextView: NSTextView {
     }
 
     private var barInsertionPointColor: NSColor?
+    private var hoveredLinkRange: NSRange?
+    private var linkTrackingArea: NSTrackingArea?
+
+    /// テスト用: 現在ホバー中のリンクレンジ。
+    var debugHoveredLinkRange: NSRange? { hoveredLinkRange }
+
     private let insertionPointOverlay = InsertionPointOverlayView()
     private let imageOverlay = ImagePreviewOverlayView()
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
@@ -458,6 +464,75 @@ public final class MarkdownTextView: NSTextView {
         return scrollView
     }
 
+    // MARK: - リンクホバー
+
+    public override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let area = linkTrackingArea { removeTrackingArea(area) }
+        let area = NSTrackingArea(
+            rect: .zero,
+            options: [.mouseMoved, .activeInKeyWindow, .inVisibleRect],
+            owner: self)
+        addTrackingArea(area)
+        linkTrackingArea = area
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        super.mouseMoved(with: event)
+        refreshLinkHover(
+            atPoint: convert(event.locationInWindow, from: nil),
+            commandHeld: event.modifierFlags.contains(.command))
+    }
+
+    public override func flagsChanged(with event: NSEvent) {
+        super.flagsChanged(with: event)
+        // Cmd の押下/解放時はポインタが動かなくてもホバー状態を更新する
+        let location = window?.mouseLocationOutsideOfEventStream ?? .zero
+        refreshLinkHover(
+            atPoint: convert(location, from: nil),
+            commandHeld: event.modifierFlags.contains(.command))
+    }
+
+    /// Cmd+ホバーの下線・カーソル形状を更新する。
+    /// mouseMoved / flagsChanged から分離してあるのはテストで直接呼べるようにするため。
+    func refreshLinkHover(atPoint point: NSPoint, commandHeld: Bool) {
+        var newRange: NSRange?
+        if commandHeld, linkOptions.opensOnCommandClick {
+            newRange = linkReference(at: characterIndexForInsertion(at: point))?.range
+        }
+        guard newRange != hoveredLinkRange else { return }
+        setLinkUnderline(hoveredLinkRange, enabled: false)
+        setLinkUnderline(newRange, enabled: true)
+        hoveredLinkRange = newRange
+        if newRange != nil {
+            NSCursor.pointingHand.set()
+        } else {
+            NSCursor.iBeam.set()
+        }
+    }
+
+    /// ホバー下線の renderingAttributes を付け外しする(再レイアウトなし)。
+    /// テーマの .link スタイルは色のみで underline を使わないため衝突しない。
+    private func setLinkUnderline(_ range: NSRange?, enabled: Bool) {
+        guard let range,
+            let layoutManager = textLayoutManager,
+            let contentManager = layoutManager.textContentManager,
+            let textRange = contentManager.textRange(for: range)
+        else { return }
+        if enabled {
+            layoutManager.addRenderingAttribute(
+                .underlineStyle, value: NSUnderlineStyle.single.rawValue, for: textRange)
+        } else {
+            layoutManager.removeRenderingAttribute(.underlineStyle, for: textRange)
+        }
+    }
+
+    /// 編集でレンジがずれるため、ホバー状態は編集のたびに破棄する。
+    private func clearLinkHover() {
+        setLinkUnderline(hoveredLinkRange, enabled: false)
+        hoveredLinkRange = nil
+    }
+
     // MARK: - 入力インターセプト
 
     public override func keyDown(with event: NSEvent) {
@@ -501,6 +576,7 @@ public final class MarkdownTextView: NSTextView {
 
     public override func didChangeText() {
         super.didChangeText()
+        clearLinkHover()
         updateInsertionPointOverlay()
     }
 

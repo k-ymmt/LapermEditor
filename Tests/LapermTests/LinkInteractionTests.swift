@@ -66,3 +66,50 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     let point = midpoint(of: NSRange(location: 1, length: 3), in: textView)
     #expect(!textView.openLink(atPoint: point))
 }
+
+@MainActor @Test func hoverWithCommandOverLinkSetsHoveredRange() {
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    let md = "See [site](https://example.com/a)."
+    #expect(textView.debugHoveredLinkRange
+        == (md as NSString).range(of: "[site](https://example.com/a)"))
+}
+
+@MainActor @Test func hoverWithoutCommandClearsHoveredRange() {
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    textView.refreshLinkHover(atPoint: point, commandHeld: false)
+    #expect(textView.debugHoveredLinkRange == nil)
+}
+
+@MainActor @Test func hoverAppliesAndRemovesUnderline() {
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    #expect(hasUnderlineRenderingAttribute(in: textView))
+    textView.refreshLinkHover(atPoint: point, commandHeld: false)
+    #expect(!hasUnderlineRenderingAttribute(in: textView))
+}
+
+@MainActor @Test func textChangeClearsHoveredRange() {
+    let textView = makeTextView("See [site](https://example.com/a).")
+    let point = midpoint(of: NSRange(location: 5, length: 4), in: textView)
+    textView.refreshLinkHover(atPoint: point, commandHeld: true)
+    textView.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+    #expect(textView.debugHoveredLinkRange == nil)
+}
+
+@MainActor
+private func hasUnderlineRenderingAttribute(in textView: MarkdownTextView) -> Bool {
+    let layoutManager = textView.textLayoutManager!
+    var found = false
+    layoutManager.enumerateRenderingAttributes(
+        from: layoutManager.documentRange.location, reverse: false
+    ) { _, attributes, _ in
+        if attributes[.underlineStyle] != nil { found = true }
+        return !found
+    }
+    return found
+}
