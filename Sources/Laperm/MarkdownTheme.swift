@@ -1,44 +1,47 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 
 /// SyntaxKind を具体的なフォント・色に対応付けるテーマ。
-/// NSFont / NSColor はイミュータブルでスレッドセーフのため @unchecked Sendable。
+/// PlatformFont / PlatformColor(UIFont / UIColor)はイミュータブルでスレッドセーフのため @unchecked Sendable。
 public struct MarkdownTheme: Equatable, @unchecked Sendable {
     public struct Style: Equatable, @unchecked Sendable {
         /// レイアウトに影響する属性(textStorage へ適用)
-        public var font: NSFont?
+        public var font: PlatformFont?
         /// レイアウトに影響しない属性(renderingAttributes へ適用)
-        public var foregroundColor: NSColor?
+        public var foregroundColor: PlatformColor?
         /// 打ち消し線。レイアウトには影響しないが、TextKit2 の renderingAttributes では
         /// 描画されないため textStorage 側属性として適用する(実機検証で確認)
         public var strikethrough: Bool
 
-        public init(font: NSFont? = nil, foregroundColor: NSColor? = nil, strikethrough: Bool = false) {
+        public init(font: PlatformFont? = nil, foregroundColor: PlatformColor? = nil, strikethrough: Bool = false) {
             self.font = font
             self.foregroundColor = foregroundColor
             self.strikethrough = strikethrough
         }
     }
 
-    public var bodyFont: NSFont
-    public var bodyColor: NSColor
-    public var backgroundColor: NSColor
-    public var codeBlockBackgroundColor: NSColor
-    public var blockquoteBarColor: NSColor
-    public var thematicBreakLineColor: NSColor
+    public var bodyFont: PlatformFont
+    public var bodyColor: PlatformColor
+    public var backgroundColor: PlatformColor
+    public var codeBlockBackgroundColor: PlatformColor
+    public var blockquoteBarColor: PlatformColor
+    public var thematicBreakLineColor: PlatformColor
     public var styles: [SyntaxKind: Style]
-    public var tableBackgroundColor: NSColor
+    public var tableBackgroundColor: PlatformColor
 
     public init(
-        bodyFont: NSFont,
-        bodyColor: NSColor,
-        backgroundColor: NSColor,
-        codeBlockBackgroundColor: NSColor,
-        blockquoteBarColor: NSColor,
-        thematicBreakLineColor: NSColor,
+        bodyFont: PlatformFont,
+        bodyColor: PlatformColor,
+        backgroundColor: PlatformColor,
+        codeBlockBackgroundColor: PlatformColor,
+        blockquoteBarColor: PlatformColor,
+        thematicBreakLineColor: PlatformColor,
         styles: [SyntaxKind: Style],
-        tableBackgroundColor: NSColor = .quaternarySystemFill
+        tableBackgroundColor: PlatformColor = .quaternarySystemFill
     ) {
         self.bodyFont = bodyFont
         self.bodyColor = bodyColor
@@ -56,8 +59,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
 
     public static let `default`: MarkdownTheme = {
         let bodySize: CGFloat = 14
-        let body = NSFont.monospacedSystemFont(ofSize: bodySize, weight: .regular)
-        let italicBody = NSFontManager.shared.convert(body, toHaveTrait: .italicFontMask)
+        let body = PlatformFont.monospacedSystemFont(ofSize: bodySize, weight: .regular)
+        let italicBody = body.lapermItalic()
 
         var styles: [SyntaxKind: Style] = [:]
         let headingSizes: [CGFloat] = [26, 22, 19, 17, 15, 14]
@@ -69,24 +72,24 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         styles[.strong] = Style(font: .monospacedSystemFont(ofSize: bodySize, weight: .bold))
         styles[.emphasis] = Style(font: italicBody)
         styles[.inlineCode] = Style(foregroundColor: .systemPink)
-        styles[.codeBlock] = Style(foregroundColor: .textColor)
-        styles[.blockquote] = Style(foregroundColor: .secondaryLabelColor)
+        styles[.codeBlock] = Style(foregroundColor: .lapermLabel)
+        styles[.blockquote] = Style(foregroundColor: .lapermSecondaryLabel)
         styles[.listMarker] = Style(foregroundColor: .systemOrange)
-        styles[.link] = Style(foregroundColor: .linkColor)
-        styles[.image] = Style(foregroundColor: .linkColor)
-        styles[.thematicBreak] = Style(foregroundColor: .tertiaryLabelColor)
-        styles[.strikethrough] = Style(foregroundColor: .secondaryLabelColor, strikethrough: true)
-        styles[.taskChecked] = Style(foregroundColor: .tertiaryLabelColor)
-        styles[.syntaxMarker] = Style(foregroundColor: .tertiaryLabelColor)
+        styles[.link] = Style(foregroundColor: .lapermLink)
+        styles[.image] = Style(foregroundColor: .lapermLink)
+        styles[.thematicBreak] = Style(foregroundColor: .lapermTertiaryLabel)
+        styles[.strikethrough] = Style(foregroundColor: .lapermSecondaryLabel, strikethrough: true)
+        styles[.taskChecked] = Style(foregroundColor: .lapermTertiaryLabel)
+        styles[.syntaxMarker] = Style(foregroundColor: .lapermTertiaryLabel)
         styles[.tableHeader] = Style(font: .monospacedSystemFont(ofSize: bodySize, weight: .bold))
 
         return MarkdownTheme(
             bodyFont: body,
-            bodyColor: .textColor,
-            backgroundColor: .textBackgroundColor,
+            bodyColor: .lapermLabel,
+            backgroundColor: .lapermTextBackground,
             codeBlockBackgroundColor: .quaternarySystemFill,
             blockquoteBarColor: .systemGray,
-            thematicBreakLineColor: .separatorColor,
+            thematicBreakLineColor: .lapermSeparator,
             styles: styles
         )
     }()
@@ -97,7 +100,7 @@ extension MarkdownTheme {
         [.font: bodyFont]
     }
 
-    func layoutFont(for kind: SyntaxKind) -> NSFont? {
+    func layoutFont(for kind: SyntaxKind) -> PlatformFont? {
         style(for: kind)?.font
     }
 
@@ -115,7 +118,7 @@ extension MarkdownTheme {
         return attributes
     }
 
-    func renderingColor(for kind: SyntaxKind) -> NSColor? {
+    func renderingColor(for kind: SyntaxKind) -> PlatformColor? {
         style(for: kind)?.foregroundColor
     }
 
@@ -129,4 +132,4 @@ extension MarkdownTheme {
         return attributes
     }
 }
-#endif
+

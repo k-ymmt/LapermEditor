@@ -1,9 +1,13 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 
 /// パース結果(HighlightPlan)を TextKit2 スタックへ差分適用するエンジン。
-/// フォント(レイアウト属性)は textStorage へ、色は renderingAttributes へ適用する。
+/// フォント(レイアウト属性)は textStorage へ、色は macOS では renderingAttributes へ、
+/// iOS では描画位置ズレ回避のため textStorage へ適用する(apply 内のコメント参照)。
 @MainActor
 public final class Highlighter {
     public var theme: MarkdownTheme
@@ -234,6 +238,27 @@ public final class Highlighter {
             }
         }
 
+        #if canImport(UIKit) && !canImport(AppKit)
+        // 2) 色 — iOS では textStorage 側属性として適用する。
+        //    UITextView(TextKit2)は renderingAttributes の色を、CJK などフォールバックフォントが
+        //    混在する行で誤った文字位置に描画する(シミュレータ検証で確認。属性自体は正しい位置に
+        //    設定されている)。storage 属性なら通常のレイアウト経路で正しく描画される。
+        //    属性のみの編集なので .editedAttributes しか発火せず、再入しない。
+        contentStorage.performEditingTransaction {
+            for range in invalidated {
+                let clipped = clip(range, to: documentLength)
+                guard clipped.length > 0 else { continue }
+                storage.addAttributes([.foregroundColor: theme.bodyColor], range: clipped)
+            }
+            for span in spans {
+                let attributes = theme.renderingAttributes(for: span.kind)
+                guard !attributes.isEmpty else { continue }
+                let clipped = clip(span.range, to: documentLength)
+                guard clipped.length > 0 else { continue }
+                storage.addAttributes(attributes, range: clipped)
+            }
+        }
+        #else
         // 2) レイアウトに影響しない属性(色)— renderingAttributes へ。再レイアウトなし。
         for range in invalidated {
             let clipped = clip(range, to: documentLength)
@@ -251,6 +276,7 @@ public final class Highlighter {
                 layoutManager.addRenderingAttribute(key, value: value, for: textRange)
             }
         }
+        #endif
     }
 
     /// レンジを文書長にクリップする。パース結果と storage の不整合が起きた場合の防波堤。
@@ -262,4 +288,4 @@ public final class Highlighter {
         return NSRange(location: location, length: length)
     }
 }
-#endif
+

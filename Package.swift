@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Laperm",
+    defaultLocalization: "en",
     platforms: [
         .macOS(.v27),
         .iOS(.v27),
@@ -27,6 +28,7 @@ let package = Package(
         .target(
             name: "Laperm",
             dependencies: ["LapermCore"],
+            resources: [.process("Resources")],
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],

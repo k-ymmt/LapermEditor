@@ -1,4 +1,3 @@
-#if os(macOS)
 import Foundation
 
 /// 画像プレビューの設定。
@@ -24,4 +23,4 @@ public struct ImagePreviewOptions: Equatable, Sendable {
         self.allowsRemoteImages = allowsRemoteImages
     }
 }
-#endif
+

@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 
 /// SwiftUI(MarkdownEditorView)から MarkdownTextView の命令的 API
@@ -19,4 +22,4 @@ public final class MarkdownEditorProxy {
     public func toggleFold(at headingLocation: Int) { textView?.toggleFold(at: headingLocation) }
     public func unfoldAll() { textView?.unfoldAll() }
 }
-#endif
+

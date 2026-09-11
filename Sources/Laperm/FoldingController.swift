@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 
 /// セクション折りたたみの中核。NSTextContentStorageDelegate として折畳中の
@@ -157,4 +160,4 @@ extension FoldingController: NSTextContentStorageDelegate {
         return !state.hiddenRanges.contains { NSLocationInRange(offset, $0) }
     }
 }
-#endif
+

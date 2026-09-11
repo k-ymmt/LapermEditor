@@ -8,16 +8,29 @@
 
 /* Begin PBXBuildFile section */
 		C495DA1B3006506F00E91416 /* Laperm in Frameworks */ = {isa = PBXBuildFile; productRef = C495DA1A3006506F00E91416 /* Laperm */; };
+		C4A1B0013100000000000001 /* Laperm in Frameworks */ = {isa = PBXBuildFile; productRef = C4A1B0003100000000000001 /* Laperm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		C495D9F930064EE700E91416 /* ExampleMacOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExampleMacOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C4A1B0023100000000000001 /* ExampleiOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = ExampleiOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		C4A1B0203100000000000002 /* ExampleiOSUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = ExampleiOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		C495D9FB30064EE700E91416 /* ExampleMacOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = ExampleMacOS;
+			sourceTree = "<group>";
+		};
+		C4A1B0033100000000000001 /* ExampleiOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ExampleiOS;
+			sourceTree = "<group>";
+		};
+		C4A1B0213100000000000002 /* ExampleiOSUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = ExampleiOSUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -29,6 +42,17 @@
 				C495DA1B3006506F00E91416 /* Laperm in Frameworks */,
 			);
 		};
+		C4A1B0043100000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+				C4A1B0013100000000000001 /* Laperm in Frameworks */,
+			);
+		};
+		C4A1B0223100000000000002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			files = (
+			);
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -36,6 +60,8 @@
 			isa = PBXGroup;
 			children = (
 				C495D9FB30064EE700E91416 /* ExampleMacOS */,
+				C4A1B0033100000000000001 /* ExampleiOS */,
+				C4A1B0213100000000000002 /* ExampleiOSUITests */,
 				C495D9FA30064EE700E91416 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -44,6 +70,8 @@
 			isa = PBXGroup;
 			children = (
 				C495D9F930064EE700E91416 /* ExampleMacOS.app */,
+				C4A1B0023100000000000001 /* ExampleiOS.app */,
+				C4A1B0203100000000000002 /* ExampleiOSUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -72,7 +100,67 @@
 			productReference = C495D9F930064EE700E91416 /* ExampleMacOS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		C4A1B0053100000000000001 /* ExampleiOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C4A1B0063100000000000001 /* Build configuration list for PBXNativeTarget "ExampleiOS" */;
+			buildPhases = (
+				C4A1B0073100000000000001 /* Sources */,
+				C4A1B0043100000000000001 /* Frameworks */,
+				C4A1B0083100000000000001 /* Resources */,
+			);
+			buildRules = (
+			);
+			fileSystemSynchronizedGroups = (
+				C4A1B0033100000000000001 /* ExampleiOS */,
+			);
+			name = ExampleiOS;
+			packageProductDependencies = (
+				C4A1B0003100000000000001 /* Laperm */,
+			);
+			productName = ExampleiOS;
+			productReference = C4A1B0023100000000000001 /* ExampleiOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+		C4A1B0233100000000000002 /* ExampleiOSUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = C4A1B0243100000000000002 /* Build configuration list for PBXNativeTarget "ExampleiOSUITests" */;
+			buildPhases = (
+				C4A1B0253100000000000002 /* Sources */,
+				C4A1B0223100000000000002 /* Frameworks */,
+				C4A1B0263100000000000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				C4A1B0273100000000000002 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				C4A1B0213100000000000002 /* ExampleiOSUITests */,
+			);
+			name = ExampleiOSUITests;
+			productName = ExampleiOSUITests;
+			productReference = C4A1B0203100000000000002 /* ExampleiOSUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
+
+/* Begin PBXContainerItemProxy section */
+		C4A1B0283100000000000002 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = C495D9EF30064EC200E91416 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = C4A1B0053100000000000001;
+			remoteInfo = ExampleiOS;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXTargetDependency section */
+		C4A1B0273100000000000002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = C4A1B0053100000000000001 /* ExampleiOS */;
+			targetProxy = C4A1B0283100000000000002 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin PBXProject section */
 		C495D9EF30064EC200E91416 /* Project object */ = {
@@ -84,6 +172,13 @@
 				TargetAttributes = {
 					C495D9F830064EE700E91416 = {
 						CreatedOnToolsVersion = 27.0;
+					};
+					C4A1B0053100000000000001 = {
+						CreatedOnToolsVersion = 27.0;
+					};
+					C4A1B0233100000000000002 = {
+						CreatedOnToolsVersion = 27.0;
+						TestTargetID = C4A1B0053100000000000001;
 					};
 				};
 			};
@@ -105,6 +200,8 @@
 			projectRoot = "";
 			targets = (
 				C495D9F830064EE700E91416 /* ExampleMacOS */,
+				C4A1B0053100000000000001 /* ExampleiOS */,
+				C4A1B0233100000000000002 /* ExampleiOSUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -115,10 +212,30 @@
 			files = (
 			);
 		};
+		C4A1B0083100000000000001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
+		C4A1B0263100000000000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			files = (
+			);
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		C495D9F530064EE700E91416 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		C4A1B0073100000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			files = (
+			);
+		};
+		C4A1B0253100000000000002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			files = (
 			);
@@ -304,6 +421,145 @@
 			};
 			name = Release;
 		};
+		C4A1B0093100000000000001 /* Debug configuration for PBXNativeTarget "ExampleiOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kymmt.ExampleiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		C4A1B00A3100000000000001 /* Release configuration for PBXNativeTarget "ExampleiOS" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kymmt.ExampleiOS;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		C4A1B0293100000000000002 /* Debug configuration for PBXNativeTarget "ExampleiOSUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kymmt.ExampleiOSUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ExampleiOS;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ONLY_ACTIVE_ARCH = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		C4A1B02A3100000000000002 /* Release configuration for PBXNativeTarget "ExampleiOSUITests" */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 27.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = app.kymmt.ExampleiOSUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = ExampleiOS;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -323,6 +579,22 @@
 			);
 			defaultConfigurationName = Release;
 		};
+		C4A1B0063100000000000001 /* Build configuration list for PBXNativeTarget "ExampleiOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4A1B0093100000000000001 /* Debug configuration for PBXNativeTarget "ExampleiOS" */,
+				C4A1B00A3100000000000001 /* Release configuration for PBXNativeTarget "ExampleiOS" */,
+			);
+			defaultConfigurationName = Release;
+		};
+		C4A1B0243100000000000002 /* Build configuration list for PBXNativeTarget "ExampleiOSUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C4A1B0293100000000000002 /* Debug configuration for PBXNativeTarget "ExampleiOSUITests" */,
+				C4A1B02A3100000000000002 /* Release configuration for PBXNativeTarget "ExampleiOSUITests" */,
+			);
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
@@ -334,6 +606,10 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		C495DA1A3006506F00E91416 /* Laperm */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = Laperm;
+		};
+		C4A1B0003100000000000001 /* Laperm */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = Laperm;
 		};

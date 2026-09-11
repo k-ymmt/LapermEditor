@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 /// 予約領域(reservedBottomHeight)を layoutFragmentFrame に確実に含める共通基底クラス。
 /// TextKit2 は文書末尾の段落について trailing paragraphSpacing を
@@ -31,7 +34,7 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
 
 /// コードブロック: テキスト背面に角丸背景
 final class CodeBlockFragment: ReservingTextLayoutFragment {
-    var fillColor: NSColor = .quaternarySystemFill
+    var fillColor: PlatformColor = .quaternarySystemFill
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
@@ -47,7 +50,7 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
 
 /// 引用: 行頭側に縦のアクセントバー
 final class BlockquoteFragment: ReservingTextLayoutFragment {
-    var barColor: NSColor = .systemGray
+    var barColor: PlatformColor = .systemGray
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
@@ -61,7 +64,7 @@ final class BlockquoteFragment: ReservingTextLayoutFragment {
 
 /// 水平線: "---" テキストに重ねて罫線を描画
 final class ThematicBreakFragment: ReservingTextLayoutFragment {
-    var lineColor: NSColor = .separatorColor
+    var lineColor: PlatformColor = .lapermSeparator
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
@@ -78,7 +81,7 @@ final class ThematicBreakFragment: ReservingTextLayoutFragment {
 
 /// テーブル: テキスト背面に角丸背景(コードブロックと同型)
 final class TableBackgroundFragment: ReservingTextLayoutFragment {
-    var fillColor: NSColor = .quaternarySystemFill
+    var fillColor: PlatformColor = .quaternarySystemFill
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
@@ -91,4 +94,4 @@ final class TableBackgroundFragment: ReservingTextLayoutFragment {
         super.draw(at: point, in: context)
     }
 }
-#endif
+

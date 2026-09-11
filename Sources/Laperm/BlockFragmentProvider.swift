@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 
 enum BlockDecoration: Equatable {
@@ -142,4 +145,4 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return fallbackDelegate
     }
 }
-#endif
+

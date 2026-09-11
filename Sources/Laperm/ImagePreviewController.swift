@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import LapermCore
 import os
 
@@ -11,7 +14,7 @@ import os
 final class ImagePreviewController {
     enum State: Equatable {
         case loading
-        case loaded(NSImage)
+        case loaded(PlatformImage)
         case failed
     }
 
@@ -228,4 +231,4 @@ final class ImagePreviewController {
         return result
     }
 }
-#endif
+

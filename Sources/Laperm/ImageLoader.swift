@@ -1,14 +1,17 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 import ImageIO
 
 /// 画像の取得・デコードを差し替え可能にするプロトコル。
-/// NSImage は Sendable でないため @MainActor プロトコルとし、実装側は
+/// NSImage / UIImage は Sendable でないため @MainActor プロトコルとし、実装側は
 /// ダウンロード・デコードを Sendable な型(Data / CGImage)でバックグラウンド処理してから
-/// main で NSImage 化すること(DefaultImageLoader が参照実装)。
+/// main で PlatformImage 化すること(DefaultImageLoader が参照実装)。
 @MainActor
 public protocol ImageLoader: AnyObject {
-    func loadImage(for url: URL) async throws -> NSImage
+    func loadImage(for url: URL) async throws -> PlatformImage
 }
 
 public enum ImageLoadError: Error {
@@ -20,18 +23,22 @@ public enum ImageLoadError: Error {
 /// メインスレッドをブロックしない。
 @MainActor
 public final class DefaultImageLoader: ImageLoader {
-    private let cache = NSCache<NSURL, NSImage>()
+    private let cache = NSCache<NSURL, PlatformImage>()
 
     public init() {}
 
-    public func loadImage(for url: URL) async throws -> NSImage {
+    public func loadImage(for url: URL) async throws -> PlatformImage {
         if let cached = cache.object(forKey: url as NSURL) { return cached }
         let cgImage = try await Self.decode(url: url)
         // ピクセル寸法をポイントとして扱う(高 DPI 画像は原寸の2倍で扱われるが
         // maxHeight クランプで実害を抑える v1 の割り切り)
+        #if canImport(AppKit)
         let image = NSImage(
             cgImage: cgImage,
             size: NSSize(width: cgImage.width, height: cgImage.height))
+        #else
+        let image = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
+        #endif
         cache.setObject(image, forKey: url as NSURL)
         return image
     }
@@ -54,4 +61,4 @@ public final class DefaultImageLoader: ImageLoader {
         }.value
     }
 }
-#endif
+

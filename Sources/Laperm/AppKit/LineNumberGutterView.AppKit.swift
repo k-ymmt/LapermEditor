@@ -5,20 +5,10 @@ import AppKit
 /// 行情報は MarkdownTextView の viewport レイアウトパスから供給される。
 @MainActor
 final class LineNumberGutterView: NSRulerView {
-    /// 見出し行に表示する折畳インジケータ
-    struct FoldMarker: Equatable {
-        var headingLocation: Int
-        var isFolded: Bool
-    }
-
-    struct Line: Equatable {
-        var number: Int
-        /// テキストビュー座標系でのフラグメント上端 y
-        var yInTextView: CGFloat
-        /// フラグメントの高さ(ヒット判定の行窓に使う)
-        var heightInTextView: CGFloat = 0
-        var foldMarker: FoldMarker? = nil
-    }
+    /// 見出し行に表示する折畳インジケータ(両 OS 共通の GutterFoldMarker)
+    typealias FoldMarker = GutterFoldMarker
+    /// 1 行ぶんの描画情報(両 OS 共通の GutterLine)
+    typealias Line = GutterLine
 
     var lines: [Line] = [] {
         didSet { if lines != oldValue { needsDisplay = true } }

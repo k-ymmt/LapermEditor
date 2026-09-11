@@ -1,13 +1,14 @@
-#if os(macOS)
 import SwiftUI
 
-/// MarkdownTextView の SwiftUI ラッパー。
-public struct MarkdownEditorView: NSViewRepresentable {
+/// MarkdownTextView の SwiftUI ラッパー(macOS: NSViewRepresentable / iOS: UIViewRepresentable)。
+public struct MarkdownEditorView {
     @Binding private var text: String
     private var theme: MarkdownTheme
     private var showsLineNumbers = true
+    #if os(macOS)
     private var inputInterceptor: (any TextInputInterceptor)?
     private var insertionPointStyle: InsertionPointStyle = .bar
+    #endif
     private var imagePreviewOptions = ImagePreviewOptions()
     private var imageLoader: (any ImageLoader)?
     private var linkOptions = LinkOptions()
@@ -27,7 +28,8 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
-    /// キー入力のインターセプタを設定する。MarkdownTextView 側は weak 保持のため、
+    #if os(macOS)
+    /// キー入力のインターセプタを設定する(macOS のみ)。MarkdownTextView 側は weak 保持のため、
     /// 呼び出し側がインターセプタの所有権を持つこと(@State 等)。
     public func inputInterceptor(_ interceptor: (any TextInputInterceptor)?) -> MarkdownEditorView {
         var copy = self
@@ -35,12 +37,13 @@ public struct MarkdownEditorView: NSViewRepresentable {
         return copy
     }
 
-    /// カーソル形状を設定する。
+    /// カーソル形状を設定する(macOS のみ)。
     public func insertionPointStyle(_ style: InsertionPointStyle) -> MarkdownEditorView {
         var copy = self
         copy.insertionPointStyle = style
         return copy
     }
+    #endif
 
     /// 画像プレビューの設定(baseURL・最大高さ・リモート許可など)。
     public func imagePreviewOptions(_ options: ImagePreviewOptions) -> MarkdownEditorView {
@@ -94,9 +97,12 @@ public struct MarkdownEditorView: NSViewRepresentable {
     }
 
     /// make / update 共通の反映処理(テストの継ぎ目)
+    @MainActor
     func apply(to textView: MarkdownTextView) {
+        #if os(macOS)
         textView.inputInterceptor = inputInterceptor
         textView.insertionPointStyle = insertionPointStyle
+        #endif
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
         textView.linkOptions = linkOptions
@@ -109,7 +115,10 @@ public struct MarkdownEditorView: NSViewRepresentable {
         textView.isFoldingEnabled = foldingEnabled
         proxy?.textView = textView
     }
+}
 
+#if os(macOS)
+extension MarkdownEditorView: NSViewRepresentable {
     public func makeNSView(context: Context) -> NSScrollView {
         let scrollView = MarkdownTextView.scrollableMarkdownEditor(theme: theme)
         let textView = scrollView.documentView as! MarkdownTextView
@@ -154,6 +163,69 @@ public struct MarkdownEditorView: NSViewRepresentable {
             guard !isUpdatingFromSwiftUI,
                   let textView = notification.object as? NSTextView else { return }
             text.wrappedValue = textView.string
+        }
+    }
+}
+#elseif canImport(UIKit)
+extension MarkdownEditorView: UIViewRepresentable {
+    public func makeUIView(context: Context) -> MarkdownTextView {
+        let textView = MarkdownTextView(theme: theme)
+        textView.delegate = context.coordinator
+        apply(to: textView)
+        textView.text = text
+        textView.highlightAll()
+        textView.showsLineNumbers = showsLineNumbers
+        return textView
+    }
+
+    public func updateUIView(_ textView: MarkdownTextView, context: Context) {
+        context.coordinator.text = $text
+        if textView.text != text {
+            context.coordinator.isUpdatingFromSwiftUI = true
+            textView.text = text
+            textView.highlightAll()
+            context.coordinator.isUpdatingFromSwiftUI = false
+        }
+        if textView.theme != theme {
+            textView.theme = theme
+        }
+        textView.showsLineNumbers = showsLineNumbers
+        apply(to: textView)
+    }
+
+    /// UITextView.sizeThatFits は全文の高さを返すため、デフォルト実装のままだとテキストビューが
+    /// コンテンツ全体の高さに引き伸ばされて画面外にはみ出し、スクロールできなくなる。
+    /// スクロールビューとして提案サイズをそのまま使う。
+    public func sizeThatFits(
+        _ proposal: ProposedViewSize, uiView: MarkdownTextView, context: Context
+    ) -> CGSize? {
+        proposal.replacingUnspecifiedDimensions(by: CGSize(width: 320, height: 240))
+    }
+
+    public func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    @MainActor
+    public final class Coordinator: NSObject, UITextViewDelegate {
+        var text: Binding<String>
+        var isUpdatingFromSwiftUI = false
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        public func textViewDidChange(_ textView: UITextView) {
+            guard !isUpdatingFromSwiftUI else { return }
+            text.wrappedValue = textView.text
+        }
+
+        /// 編集メニューにリンク項目を足す(リンク上のときだけ)
+        public func textView(
+            _ textView: UITextView, editMenuForTextIn range: NSRange, suggestedActions: [UIMenuElement]
+        ) -> UIMenu? {
+            (textView as? MarkdownTextView)?
+                .editMenu(forTextIn: range, suggestedActions: suggestedActions)
         }
     }
 }

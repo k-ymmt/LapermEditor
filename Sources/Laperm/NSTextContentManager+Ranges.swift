@@ -1,5 +1,8 @@
-#if os(macOS)
+#if canImport(AppKit)
 import AppKit
+#elseif canImport(UIKit)
+import UIKit
+#endif
 
 extension NSTextContentManager {
     /// UTF-16 NSRange を NSTextRange に変換する。範囲外なら nil。
@@ -10,4 +13,4 @@ extension NSTextContentManager {
         return NSTextRange(location: start, end: end)
     }
 }
-#endif
+
