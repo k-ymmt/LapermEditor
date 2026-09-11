@@ -27,6 +27,10 @@ protocol MarkdownEditorHost: AnyObject {
     func editorTextDidChange()
     /// 折畳・装飾の変化でビューポート再レイアウトとガター再描画を求める
     func editorNeedsViewportRelayout()
+    /// 現在の選択範囲(キャレットは length 0)。複数選択は AppKit のみ
+    var editorSelectedRanges: [NSRange] { get }
+    /// 選択範囲を差し替える(折畳で隠れた領域からキャレットを退避させるために使う)
+    func editorSelect(_ range: NSRange)
 }
 
 /// AppKit / UIKit の MarkdownTextView が共有する編集ロジック。
@@ -174,7 +178,10 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     func fold(at headingLocation: Int) {
-        if foldingController.fold(at: headingLocation) { applyFoldingChanges() }
+        if foldingController.fold(at: headingLocation) {
+            applyFoldingChanges()
+            moveSelectionOutOfFold(at: headingLocation)
+        }
     }
 
     func unfold(at headingLocation: Int) {
@@ -182,7 +189,31 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     func toggleFold(at headingLocation: Int) {
-        if foldingController.toggleFold(at: headingLocation) { applyFoldingChanges() }
+        if foldingController.toggleFold(at: headingLocation) {
+            applyFoldingChanges()
+            moveSelectionOutOfFold(at: headingLocation)
+        }
+    }
+
+    /// 折畳の本体にキャレット(または選択)が含まれていたら見出し行末へ退避させる。
+    /// 隠れた位置に選択が残ると、レイアウトフラグメントのない場所にキャレットが描かれ、
+    /// 次のキー入力が見えないテキストへ挿入される(UIKit ではキーボードも出たまま)。
+    private func moveSelectionOutOfFold(at headingLocation: Int) {
+        guard let host,
+              let fold = foldingController.state.folds.first(where: { $0.headingLocation == headingLocation }),
+              fold.bodyRange.length > 0,
+              host.editorSelectedRanges.contains(where: { range in
+                  range.length == 0
+                      ? NSLocationInRange(range.location, fold.bodyRange)
+                      : NSIntersectionRange(range, fold.bodyRange).length > 0
+              })
+        else { return }
+        // bodyRange の直前は見出し(最終)行の改行。その行の contentsEnd = 見出し行末
+        let text = host.editorText as NSString
+        var contentsEnd = fold.bodyRange.location
+        let terminator = NSRange(location: max(0, fold.bodyRange.location - 1), length: 0)
+        text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: terminator)
+        host.editorSelect(NSRange(location: min(contentsEnd, text.length), length: 0))
     }
 
     func unfoldAll() {

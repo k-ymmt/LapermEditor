@@ -64,13 +64,22 @@ final class ExampleiOSUITests: XCTestCase {
         XCTAssertTrue(documentText.contains("- [x] タスク\n- [ ] abc"), documentText)
         saveScreenshot("03-list-continued")
 
-        // 3) 折畳: ガター左端のシェブロン(1 行目の見出し)をタップ → 本文が隠れる
+        // 3) 折畳: ガター左端のシェブロン(1 行目の見出し)をタップ → 本文が隠れる。
+        //    キャレットは本文("abc" の直後)にあるので見出し行末へ退避し、入力は見出しに入る
         tap(dx: 8, dy: 8 + 10)
         saveScreenshot("04-folded")
-        // 折り畳んでも文書は変わらない
-        XCTAssertTrue(documentText.contains("- [x] タスク"))
+        textView.typeText("X")
+        XCTAssertTrue(documentText.hasPrefix("# 見出しX\n- [x] タスク"), documentText)
+        //    H1 セクションは文書末尾まで(## は下位見出し)なので本文 0 行目の位置には何もない
+        tap(dx: 300, dy: bodyLineY(0))
+        textView.typeText("Y")
+        XCTAssertFalse(documentText.contains("タスクY"), documentText)
         tap(dx: 8, dy: 8 + 10)
         saveScreenshot("05-unfolded")
+        //    展開すると見出し直下は本文 0 行目に戻る
+        tap(dx: 300, dy: bodyLineY(0))
+        textView.typeText("Z")
+        XCTAssertTrue(documentText.contains("- [x] タスクZ\n- [ ] abc"), documentText)
 
         // 4) 編集メニュー「リンクを開く」: 本文 4 行目(タスク, abc, 空行, 本文, リンク)のリンク内に
         //    長押しでキャレットを置き、同じ位置をタップすると iOS 標準の編集メニューが出る

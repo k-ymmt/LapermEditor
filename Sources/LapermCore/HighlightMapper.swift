@@ -4,8 +4,9 @@ import Markdown
 /// swift-markdown の AST を歩いて HighlightPlan を生成する。
 enum HighlightMapper {
     static func plan(for document: Document, in text: String) -> HighlightPlan {
-        // 遅延継続行(リスト項目・引用の直後にインデントなしで続く行)ではインライン要素の
-        // 桁が過大報告されるため、Text ノードとの照合で行ごとの補正量を先に求めておく。
+        // 段落の 2 行目以降(特にリスト項目・引用の直後にインデントなしで続く遅延継続行)では
+        // インライン要素の桁がずれて報告されるため、cmark のコンテナ照合を再現して
+        // 行ごとの補正量を先に求めておく。
         let converter = SourceLocationConverter(text: text).applyingInlineColumnDeltas(for: document)
         var visitor = Visitor(converter: converter, text: text as NSString)
         visitor.visit(document)

@@ -601,5 +601,11 @@ extension MarkdownTextView: MarkdownEditorHost {
         gutterView?.needsDisplay = true
         needsLayout = true
     }
+
+    var editorSelectedRanges: [NSRange] { selectedRanges.map(\.rangeValue) }
+
+    func editorSelect(_ range: NSRange) {
+        setSelectedRange(range)
+    }
 }
 #endif

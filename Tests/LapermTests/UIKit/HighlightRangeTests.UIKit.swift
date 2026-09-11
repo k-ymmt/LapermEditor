@@ -44,13 +44,12 @@ import UIKit
 #endif
 
 #if canImport(UIKit)
-/// ExampleiOS の UI テスト文書(複数行 + CJK)で、3 行目以降の属性位置がずれないこと。
+/// 複数行 + CJK 文書で、3 行目以降の属性位置がずれないこと。
+/// 3 行目はリスト項目直後の遅延継続行(桁補正の対象)にしてある。
 @MainActor @Test func multiLineCJKDocumentKeepsAttributeRangesAligned() {
-    // 遅延継続行(リスト直後に空行なしで続く段落)の桁補正は LapermCoreTests 側で検証している
     let md = """
     # 見出し
     - [ ] タスク
-
     本文 **強調** `code`
     [インラインリンク](https://example.com/inline)
     > 引用

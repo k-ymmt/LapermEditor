@@ -89,3 +89,59 @@ private func assertAligned(_ md: String) {
     #expect(plan.spans.contains { $0.kind == .emphasis && NSIntersectionRange($0.range, emphasisRange) == emphasisRange },
             "\(plan.spans)")
 }
+
+// MARK: - 桁補正の決定性(Text ノード照合ヒューリスティックの誤判定に対する回帰テスト)
+
+private func spanRange(_ md: String, _ kind: SyntaxKind, covering fragment: String) -> NSRange? {
+    let target = (md as NSString).range(of: fragment)
+    return MarkdownParser().highlightPlan(for: md).spans
+        .first { $0.kind == kind && NSIntersectionRange($0.range, target) == target }?.range
+}
+
+/// 先頭がエスケープの通常行(Text "# Title " が原文の 1 バイト後ろに出現する)で補正が誤発動し、
+/// 行末のスパンが消えていた
+@Test func leadingEscapeOnNormalLineIsNotShifted() {
+    #expect(spanRange("\\# Title `code`", .inlineCode, covering: "`code`") == NSRange(location: 9, length: 6))
+    #expect(spanRange("- \\* `code`", .inlineCode, covering: "`code`") == NSRange(location: 5, length: 6))
+    #expect(spanRange("\\#hashtag `tag`", .inlineCode, covering: "`tag`") == NSRange(location: 10, length: 5))
+}
+
+/// 遅延継続行に原文と一致する Text ノードがなくても(コード・エスケープ・実体参照のみ)補正される
+@Test func lazyLineWithoutVerbatimTextIsCorrected() {
+    #expect(spanRange("- item\n`only code`", .inlineCode, covering: "`only code`") == NSRange(location: 7, length: 11))
+    #expect(spanRange("- item\n\\*a\\* `code` &amp;", .inlineCode, covering: "`code`") == NSRange(location: 13, length: 6))
+    #expect(spanRange("- item\n&amp; **bold**", .strong, covering: "**bold**") == NSRange(location: 13, length: 8))
+}
+
+/// 空白 1 文字の Text ノードが偶然一致しても行全体が「補正不要」扱いにならない
+@Test func coincidentalTextMatchDoesNotSuppressCorrection() {
+    let md = "- [ ] task\n`code` **b** x"
+    #expect(spanRange(md, .inlineCode, covering: "`code`") == NSRange(location: 11, length: 6))
+    #expect(spanRange(md, .strong, covering: "**b**") == NSRange(location: 18, length: 5))
+    #expect(spanRange("- x\na*a* text", .emphasis, covering: "*a*") == NSRange(location: 5, length: 3))
+    #expect(spanRange("1. x\n**ab** ab", .strong, covering: "**ab**") == NSRange(location: 5, length: 6))
+}
+
+/// 引用の遅延継続行で 4 桁以上インデントされた ">" は内容(接頭辞ではない)
+@Test func deeplyIndentedQuoteMarkerOnLazyLineIsContent() {
+    #expect(spanRange("> a\n    > b **c**", .strong, covering: "**c**") == NSRange(location: 12, length: 5))
+}
+
+/// ネストしたコンテナ(リスト > リスト > 引用)の通常継続行と、タブを含む接頭辞
+@Test func nestedContainersAndTabPrefixesAreAligned() {
+    #expect(spanRange("- - > a\n    > b **c**", .strong, covering: "**c**") == NSRange(location: 16, length: 5))
+    #expect(spanRange(">\tfoo **bar**\n>\tbaz **qux**", .strong, covering: "**qux**") == NSRange(location: 20, length: 7))
+    #expect(spanRange("-\titem\nlazy **b**", .strong, covering: "**b**") == NSRange(location: 12, length: 5))
+    #expect(spanRange("100. item\n     cont **b**\nlazy **c**", .strong, covering: "**c**") == NSRange(location: 31, length: 5))
+}
+
+/// 長い遅延継続行でもコストが行長の二乗にならない(旧実装は 80KB で 5 秒超)
+@Test func longLazyLineIsCorrectedInLinearTime() {
+    let line = String(repeating: "a*b*", count: 20_000)
+    let md = "- x\n" + line
+    let clock = ContinuousClock()
+    var plan: HighlightPlan?
+    let elapsed = clock.measure { plan = MarkdownParser().highlightPlan(for: md) }
+    #expect(plan!.spans.contains { $0.kind == .emphasis && $0.range == NSRange(location: 5, length: 3) })
+    #expect(elapsed < .seconds(2), "\(elapsed)")
+}

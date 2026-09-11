@@ -173,4 +173,28 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     controller.layoutViewport()
     #expect(!gutter.lines.compactMap(\.foldMarker).isEmpty)
 }
+
+/// 本体内にキャレットがある状態で折り畳むと、キャレットは見出し行末(隠れない位置)へ退避する。
+/// 隠れた位置に残るとキャレットがビュー左上に描かれ、次の入力が見えないテキストへ入る。
+@MainActor @Test func foldingWithCaretInsideBodyMovesCaretToHeadingLineEnd() {
+    let textView = makeLaidOutTextView(sample)
+    textView.selectedRange = NSRange(location: 12, length: 0)  // body2 内
+    textView.fold(at: 0)
+    #expect(textView.isFolded(at: 0))
+    #expect(textView.selectedRange == NSRange(location: 3, length: 0))  // "# A" の末尾
+}
+
+/// 本体の外にあるキャレットは動かさない。ガターのシェブロン経由(toggleFold)でも退避する
+@MainActor @Test func foldingKeepsCaretOutsideBodyUntouched() {
+    let textView = makeLaidOutTextView(sample)
+    textView.selectedRange = NSRange(location: 22, length: 0)  // after
+    textView.toggleFold(at: 0)
+    #expect(textView.isFolded(at: 0))
+    #expect(textView.selectedRange == NSRange(location: 22, length: 0))
+
+    textView.unfoldAll()
+    textView.selectedRange = NSRange(location: 6, length: 3)  // body1 内の選択
+    textView.toggleFold(at: 0)
+    #expect(textView.selectedRange == NSRange(location: 3, length: 0))
+}
 #endif

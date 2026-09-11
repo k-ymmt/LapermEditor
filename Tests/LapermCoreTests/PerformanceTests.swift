@@ -37,10 +37,11 @@ private func makeLargeDocument(lines: Int) -> String {
     #else
     let baseBudget: Duration = .milliseconds(100)
     #endif
-    // iOS シミュレータは実機・macOS ネイティブより 2〜3 倍遅い(実測 ~1.1s / 10k 行)。
-    // 桁違いの劣化を検知する目的は保ちつつ、環境差で誤検知しないよう緩める。
+    // iOS シミュレータは実機・macOS ネイティブより数倍遅く、同一マシンでも実測が
+    // 1.1〜2.3s / 10k 行と 2 倍以上ばらつく(×4 = 1.6s では 4 回に 1 回落ちた)。
+    // 回帰の実質的なゲートは macOS の閾値に任せ、シミュレータでは桁違いの劣化だけを検知する。
     #if targetEnvironment(simulator)
-    let budget = baseBudget * 4
+    let budget = baseBudget * 10
     #else
     let budget = baseBudget
     #endif

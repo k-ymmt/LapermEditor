@@ -567,6 +567,12 @@ extension MarkdownTextView: MarkdownEditorHost {
         gutter.setNeedsDisplay()
         setNeedsLayout()
     }
+
+    var editorSelectedRanges: [NSRange] { [selectedRange] }
+
+    func editorSelect(_ range: NSRange) {
+        selectedRange = range
+    }
 }
 
 // MARK: - タップ認識の delegate(チェックボックス / Cmd+タップ)
