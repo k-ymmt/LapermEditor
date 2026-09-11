@@ -4,7 +4,10 @@ import Markdown
 /// swift-markdown の AST を歩いて HighlightPlan を生成する。
 enum HighlightMapper {
     static func plan(for document: Document, in text: String) -> HighlightPlan {
-        var visitor = Visitor(converter: SourceLocationConverter(text: text), text: text as NSString)
+        // 遅延継続行(リスト項目・引用の直後にインデントなしで続く行)ではインライン要素の
+        // 桁が過大報告されるため、Text ノードとの照合で行ごとの補正量を先に求めておく。
+        let converter = SourceLocationConverter(text: text).applyingInlineColumnDeltas(for: document)
+        var visitor = Visitor(converter: converter, text: text as NSString)
         visitor.visit(document)
         // 適用順: ブロック → インライン → マーカー
         return HighlightPlan(
@@ -28,7 +31,8 @@ enum HighlightMapper {
 
         private func nsRange(of markup: Markup) -> NSRange? {
             guard let sourceRange = markup.range else { return nil }
-            return converter.nsRange(of: sourceRange)
+            // インライン要素だけ遅延継続行の桁補正を受ける(ブロック要素の桁は正しい)
+            return converter.nsRange(of: sourceRange, isInline: markup is InlineMarkup)
         }
 
         // MARK: ブロック要素

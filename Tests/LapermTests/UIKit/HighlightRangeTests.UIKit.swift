@@ -46,8 +46,7 @@ import UIKit
 #if canImport(UIKit)
 /// ExampleiOS の UI テスト文書(複数行 + CJK)で、3 行目以降の属性位置がずれないこと。
 @MainActor @Test func multiLineCJKDocumentKeepsAttributeRangesAligned() {
-    // 注: リスト直後に空行なしで段落を続けると遅延継続行になり、swift-markdown の列ずれ
-    //(LapermCoreTests.lazyContinuationLineSpansAreAligned 参照)で失敗する。ここでは空行を挟む。
+    // 遅延継続行(リスト直後に空行なしで続く段落)の桁補正は LapermCoreTests 側で検証している
     let md = """
     # 見出し
     - [ ] タスク
