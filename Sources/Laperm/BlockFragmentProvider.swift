@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -141,3 +142,4 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return fallbackDelegate
     }
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -48,3 +49,4 @@ import Testing
     // F1(0xF704)は対象外
     #expect(KeyInput(event: keyEvent("\u{F704}", keyCode: 122)) == nil)
 }
+#endif

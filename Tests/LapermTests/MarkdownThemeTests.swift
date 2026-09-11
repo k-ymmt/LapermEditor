@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -60,3 +61,4 @@ import Testing
     // テーブル全体はフォント変更なし(デフォルトテーマの本文は元から等幅)
     #expect(theme.layoutFont(for: .table) == nil)
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -318,3 +319,4 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     let font = storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont
     #expect(font == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
 }
+#endif

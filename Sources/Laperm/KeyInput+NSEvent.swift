@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -43,3 +44,4 @@ extension KeyInput {
         self.init(key: key, modifiers: modifiers)
     }
 }
+#endif

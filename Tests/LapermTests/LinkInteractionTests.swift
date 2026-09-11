@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -167,3 +168,4 @@ private func makeTextView(_ markdown: String) -> MarkdownTextView {
     undoProvider.manager.undo()
     #expect(textView.string == "see docs here")
 }
+#endif

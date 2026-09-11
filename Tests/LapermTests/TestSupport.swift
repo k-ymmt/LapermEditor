@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 @testable import Laperm
 
@@ -40,3 +41,4 @@ func keyEvent(
     let manager = UndoManager()
     func undoManager(for view: NSTextView) -> UndoManager? { manager }
 }
+#endif

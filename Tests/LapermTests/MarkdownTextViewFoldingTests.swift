@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -134,3 +135,4 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     #expect(done)
     #expect(textView.string.contains("!"))
 }
+#endif

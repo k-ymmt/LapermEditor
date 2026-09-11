@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 import Testing
 @testable import Laperm
@@ -146,3 +147,4 @@ import Testing
     #expect(textView.onOpenLink?(URL(string: "https://example.com")!) == true)
     #expect(openedURLs == [URL(string: "https://example.com")!])
 }
+#endif

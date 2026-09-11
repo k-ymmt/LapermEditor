@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -56,3 +57,4 @@ private final class RecordingInterceptor: TextInputInterceptor {
     interceptor = nil
     #expect(textView.inputInterceptor == nil)
 }
+#endif

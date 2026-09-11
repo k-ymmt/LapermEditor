@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 /// リンク操作の設定。
@@ -12,3 +13,4 @@ public struct LinkOptions: Equatable, Sendable {
         self.baseURL = baseURL
     }
 }
+#endif

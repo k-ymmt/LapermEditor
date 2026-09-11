@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// 予約領域(reservedBottomHeight)を layoutFragmentFrame に確実に含める共通基底クラス。
@@ -90,3 +91,4 @@ final class TableBackgroundFragment: ReservingTextLayoutFragment {
         super.draw(at: point, in: context)
     }
 }
+#endif

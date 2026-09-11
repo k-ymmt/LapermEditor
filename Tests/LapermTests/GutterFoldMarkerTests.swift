@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -104,3 +105,4 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
     controller.layoutViewport()
     #expect(!gutter.lines.compactMap(\.foldMarker).isEmpty)
 }
+#endif

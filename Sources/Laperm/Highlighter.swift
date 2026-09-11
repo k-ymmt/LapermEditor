@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -261,3 +262,4 @@ public final class Highlighter {
         return NSRange(location: location, length: length)
     }
 }
+#endif

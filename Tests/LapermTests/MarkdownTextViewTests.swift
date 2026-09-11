@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -154,3 +155,4 @@ import Testing
     textView.deleteBackward(nil)
     #expect(textView.string == ")")
 }
+#endif

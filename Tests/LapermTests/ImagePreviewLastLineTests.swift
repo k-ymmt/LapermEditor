@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -91,3 +92,4 @@ private func textLineBottom(of textView: MarkdownTextView, at location: Int) -> 
     let height = lm.usageBoundsForTextContainer.height
     #expect(height >= 51 + 50 + ImagePreviewController.padding)
 }
+#endif

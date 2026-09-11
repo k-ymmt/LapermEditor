@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -74,3 +75,4 @@ import Testing
     #expect(textView.string == "abc")
     #expect(textView.selectedRange() == NSRange(location: 2, length: 0))
 }
+#endif

@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -132,3 +133,4 @@ private let sample = "# A\nbody1\nbody2\n# B\nafter"
     #expect(enumerated.contains(4))   // body1
     #expect(enumerated.contains(10))  // body2
 }
+#endif

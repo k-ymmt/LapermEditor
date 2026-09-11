@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import ImageIO
 
@@ -53,3 +54,4 @@ public final class DefaultImageLoader: ImageLoader {
         }.value
     }
 }
+#endif

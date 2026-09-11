@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -123,3 +124,4 @@ final class ImagePreviewItemView: NSView {
             withAttributes: attributes)
     }
 }
+#endif

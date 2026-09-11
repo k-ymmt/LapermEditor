@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -98,3 +99,4 @@ private func overlay(in textView: MarkdownTextView) -> InsertionPointOverlayView
     // オーバーレイは行末キャレット位置("c" の右)にある
     #expect((view?.frame.minX ?? 0) >= mid.x)
 }
+#endif

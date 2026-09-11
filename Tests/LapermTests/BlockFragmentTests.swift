@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Testing
 @testable import Laperm
@@ -81,3 +82,4 @@ private func layoutFragments(in textView: MarkdownTextView) -> [NSTextLayoutFrag
     textView.highlightNow()
     #expect(!layoutFragments(in: textView).contains { $0 is TableBackgroundFragment })
 }
+#endif

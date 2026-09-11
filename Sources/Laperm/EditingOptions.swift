@@ -1,3 +1,4 @@
+#if os(macOS)
 /// 編集支援機能の個別 ON/OFF 設定。デフォルトは全機能有効。
 public struct EditingOptions: Equatable, Sendable {
     /// Enter でリスト項目を自動継続する(空項目では脱出)
@@ -25,3 +26,4 @@ public struct EditingOptions: Equatable, Sendable {
         self.linkifiesPastedURL = linkifiesPastedURL
     }
 }
+#endif

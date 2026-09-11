@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -9,3 +10,4 @@ import LapermCore
 public protocol TextInputInterceptor: AnyObject {
     func textView(_ textView: MarkdownTextView, handle input: KeyInput) -> KeyInputResult
 }
+#endif

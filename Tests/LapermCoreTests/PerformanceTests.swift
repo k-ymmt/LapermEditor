@@ -33,9 +33,16 @@ private func makeLargeDocument(lines: Int) -> String {
     // 「パースが桁で遅くなったら気付く」こと。debug ビルドは Swift の
     // 最適化なしで 2〜3 倍遅いため閾値を分ける。
     #if DEBUG
-    let budget: Duration = .milliseconds(400)
+    let baseBudget: Duration = .milliseconds(400)
     #else
-    let budget: Duration = .milliseconds(100)
+    let baseBudget: Duration = .milliseconds(100)
+    #endif
+    // iOS シミュレータは実機・macOS ネイティブより 2〜3 倍遅い(実測 ~1.1s / 10k 行)。
+    // 桁違いの劣化を検知する目的は保ちつつ、環境差で誤検知しないよう緩める。
+    #if targetEnvironment(simulator)
+    let budget = baseBudget * 4
+    #else
+    let budget = baseBudget
     #endif
     #expect(elapsed < budget, "全文パースが \(elapsed) かかった(閾値 \(budget))")
 }

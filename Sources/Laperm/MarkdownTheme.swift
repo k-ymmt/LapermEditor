@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -128,3 +129,4 @@ extension MarkdownTheme {
         return attributes
     }
 }
+#endif

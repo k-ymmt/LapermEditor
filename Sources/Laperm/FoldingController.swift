@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -156,3 +157,4 @@ extension FoldingController: NSTextContentStorageDelegate {
         return !state.hiddenRanges.contains { NSLocationInRange(offset, $0) }
     }
 }
+#endif

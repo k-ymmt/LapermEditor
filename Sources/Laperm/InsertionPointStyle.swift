@@ -1,3 +1,4 @@
+#if os(macOS)
 /// カーソル(挿入ポイント)の形状。
 public enum InsertionPointStyle: Equatable, Sendable {
     /// 標準の縦棒
@@ -7,3 +8,4 @@ public enum InsertionPointStyle: Equatable, Sendable {
     /// 文字下のアンダーライン(Vim replace モード等)
     case underline
 }
+#endif

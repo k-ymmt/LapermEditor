@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 /// UTF-16 オフセット → 1-based 行番号の変換。編集のたびに作り直す
@@ -34,3 +35,4 @@ struct LineIndex {
         return low + 1
     }
 }
+#endif

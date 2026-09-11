@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// スクロールビューの垂直ルーラーとして行番号と折畳シェブロンを描画する。
@@ -92,3 +93,4 @@ final class LineNumberGutterView: NSRulerView {
         }
     }
 }
+#endif

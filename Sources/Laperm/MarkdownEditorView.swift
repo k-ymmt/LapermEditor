@@ -1,3 +1,4 @@
+#if os(macOS)
 import SwiftUI
 
 /// MarkdownTextView の SwiftUI ラッパー。
@@ -156,3 +157,4 @@ public struct MarkdownEditorView: NSViewRepresentable {
         }
     }
 }
+#endif

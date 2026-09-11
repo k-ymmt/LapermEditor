@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 extension NSTextContentManager {
@@ -9,3 +10,4 @@ extension NSTextContentManager {
         return NSTextRange(location: start, end: end)
     }
 }
+#endif

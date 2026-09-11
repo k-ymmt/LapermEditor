@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -373,3 +374,4 @@ func waitUntil(_ condition: () -> Bool) async throws {
         return style?.paragraphSpacing == 50 + ImagePreviewController.padding
     }
 }
+#endif

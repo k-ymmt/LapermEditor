@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 
@@ -898,3 +899,4 @@ extension MarkdownTextView: NSTextStorageDelegate {
         scheduleHighlight()
     }
 }
+#endif

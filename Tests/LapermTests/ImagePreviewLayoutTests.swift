@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import Testing
@@ -80,3 +81,4 @@ private func ref(location: Int, destination: String) -> ImageReference {
     let overlay = ImagePreviewOverlayView()
     #expect(overlay.hitTest(NSPoint(x: 1, y: 1)) == nil)
 }
+#endif

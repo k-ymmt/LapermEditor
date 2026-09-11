@@ -1,3 +1,4 @@
+#if os(macOS)
 import Testing
 @testable import Laperm
 
@@ -6,3 +7,4 @@ import Testing
     let kind: SyntaxKind = .strong
     #expect(kind == .strong)
 }
+#endif

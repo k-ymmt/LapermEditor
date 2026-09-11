@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// bar 以外のカーソル形状を描く軽量オーバーレイ。ヒットテスト対象外。
@@ -22,3 +23,4 @@ final class InsertionPointOverlayView: NSView {
         }
     }
 }
+#endif

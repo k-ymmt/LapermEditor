@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import Testing
 
@@ -21,3 +22,4 @@ import Testing
     let index = LineIndex(text: "")
     #expect(index.lineNumber(at: 0) == 1)
 }
+#endif

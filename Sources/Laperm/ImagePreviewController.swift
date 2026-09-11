@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import LapermCore
 import os
@@ -227,3 +228,4 @@ final class ImagePreviewController {
         return result
     }
 }
+#endif

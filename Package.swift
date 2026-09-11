@@ -5,6 +5,7 @@ let package = Package(
     name: "Laperm",
     platforms: [
         .macOS(.v27),
+        .iOS(.v27),
     ],
     products: [
         .library(name: "Laperm", targets: ["Laperm"]),

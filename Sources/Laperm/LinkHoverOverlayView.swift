@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// Cmd+ホバー中のリンク下線を描く軽量オーバーレイ。ヒットテスト対象外。
@@ -21,3 +22,4 @@ final class LinkHoverOverlayView: NSView {
         }
     }
 }
+#endif
