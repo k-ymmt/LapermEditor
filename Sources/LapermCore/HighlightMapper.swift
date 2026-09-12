@@ -467,15 +467,46 @@ enum HighlightMapper {
         }
 
         /// location から "https://" / "http://" が始まっていればその長さ(UTF-16)。
+        ///
+        /// Text ノードの全文字位置から呼ばれる(10k 行文書で約 20 万回)ため、
+        /// 文字列生成・小文字化・配列確保を一切行わず UTF-16 コード単位を直接比較する。
+        /// 旧実装(`substring` + `lowercased()`)は URL を含まない文書でも 1 パースあたり
+        /// 約 150ms(debug)を消費していた。
+        ///
+        /// 検出対象は仕様どおり http(s) 固定。スキーム名は大文字小文字を区別しない
+        /// (RFC 3986 §3.1)ので ASCII 大文字だけを小文字に畳む。非 ASCII の見かけ上の
+        /// 同形文字(U+017F ſ 等)は Unicode 小文字化でも `s` にならないため、旧実装と
+        /// 一致結果は同じ。
         private func urlSchemeLength(at location: Int, end: Int) -> Int? {
-            for scheme in ["https://", "http://"] {
-                let length = (scheme as NSString).length
-                guard location + length <= end else { continue }
-                let candidate = text.substring(
-                    with: NSRange(location: location, length: length))
-                if candidate.lowercased() == scheme { return length }
+            // "http://" の 7 単位に満たなければスキームではない。ほぼ全位置は次の
+            // 先頭文字判定で抜ける。
+            guard location + 7 <= end else { return nil }
+            guard lowerASCII(text.character(at: location)) == 0x68 /* h */,
+                  lowerASCII(text.character(at: location + 1)) == 0x74 /* t */,
+                  lowerASCII(text.character(at: location + 2)) == 0x74 /* t */,
+                  lowerASCII(text.character(at: location + 3)) == 0x70 /* p */
+            else { return nil }
+            let colon: unichar = 0x3A, slash: unichar = 0x2F
+            // "http://"
+            if text.character(at: location + 4) == colon,
+               text.character(at: location + 5) == slash,
+               text.character(at: location + 6) == slash {
+                return 7
+            }
+            // "https://"
+            if location + 8 <= end,
+               lowerASCII(text.character(at: location + 4)) == 0x73 /* s */,
+               text.character(at: location + 5) == colon,
+               text.character(at: location + 6) == slash,
+               text.character(at: location + 7) == slash {
+                return 8
             }
             return nil
+        }
+
+        /// ASCII 大文字(A–Z)だけを小文字に畳む。それ以外はそのまま返す。
+        private func lowerASCII(_ c: unichar) -> unichar {
+            (c >= 0x41 && c <= 0x5A) ? c + 0x20 : c
         }
 
         /// URL の終端文字: 空白・制御文字・"<"・非 ASCII(全角文字等)。

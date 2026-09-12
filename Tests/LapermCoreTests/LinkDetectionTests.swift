@@ -95,3 +95,42 @@ private func links(in markdown: String) -> [LinkReference] {
     let result = links(in: "See http://example.com now")
     #expect(result[0].destination == "http://example.com")
 }
+
+// MARK: - スキーム判定の境界(割り当てゼロの手書き比較に置き換えた際の仕様固定)
+
+@Test func upperCaseSchemesAreDetected() {
+    #expect(links(in: "See HTTPS://EXAMPLE.COM now")[0].destination == "HTTPS://EXAMPLE.COM")
+    #expect(links(in: "See Https://example.com now")[0].destination == "Https://example.com")
+    #expect(links(in: "See hTtP://example.com now")[0].destination == "hTtP://example.com")
+}
+
+@Test func wordsStartingWithHAreNotSchemes() {
+    #expect(links(in: "hello http world https hat").isEmpty)
+    #expect(links(in: "h").isEmpty)
+    #expect(links(in: "https:/example.com").isEmpty)
+    #expect(links(in: "http:example.com").isEmpty)
+}
+
+@Test func schemeCutOffAtTextNodeEndIsNotDetected() {
+    // Text ノードが "http" の途中で終わる(後続が強調)ケースで範囲外を読まない
+    #expect(links(in: "htt*p*://example.com").isEmpty)
+    #expect(links(in: "text ending in h").isEmpty)
+    #expect(links(in: "http*s*://example.com").isEmpty)
+}
+
+@Test func nonASCIILookalikesAreNotSchemes() {
+    // U+017F LATIN SMALL LETTER LONG S: `lowercased()` では不変だが `.caseInsensitive`
+    // 検索は "s" と同一視する。ASCII 折り畳みのみという設計を固定する。
+    #expect(links(in: "see httpſ://example.com now").isEmpty)
+    // 全角コロン U+FF1A / 全角スラッシュ U+FF0F
+    #expect(links(in: "see https：//example.com now").isEmpty)
+    #expect(links(in: "see https:／/example.com now").isEmpty)
+}
+
+@Test func schemeInsideCJKTextIsDetectedAtCodeUnitBoundary() {
+    let md = "日本語https://example.com/路径 end"
+    let result = links(in: md)
+    #expect(result.count == 1)
+    #expect(result[0].destination == "https://example.com/")
+    #expect((md as NSString).substring(with: result[0].range) == "https://example.com/")
+}
