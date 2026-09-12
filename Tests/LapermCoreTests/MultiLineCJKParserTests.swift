@@ -143,5 +143,13 @@ private func spanRange(_ md: String, _ kind: SyntaxKind, covering fragment: Stri
     var plan: HighlightPlan?
     let elapsed = clock.measure { plan = MarkdownParser().highlightPlan(for: md) }
     #expect(plan!.spans.contains { $0.kind == .emphasis && $0.range == NSRange(location: 5, length: 3) })
-    #expect(elapsed < .seconds(2), "\(elapsed)")
+    // 実測は macOS debug 約 0.4 秒。iOS シミュレータは約 4 倍遅く(単独で 1.4 秒)、
+    // 並列実行される性能テストとの競合で 2 秒を超えることがあるため、二乗劣化
+    // (数十秒)だけを検知できる上限に緩める。
+    #if targetEnvironment(simulator)
+    let budget: Duration = .seconds(8)
+    #else
+    let budget: Duration = .seconds(2)
+    #endif
+    #expect(elapsed < budget, "\(elapsed)")
 }
