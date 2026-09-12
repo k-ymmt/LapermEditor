@@ -69,3 +69,43 @@ private func makeLargeDocument(lines: Int) -> String {
     #expect(changes.spansToApply.count < after.spans.count / 100,
             "再適用スパン \(changes.spansToApply.count) / 全 \(after.spans.count)")
 }
+
+// MARK: - 実運用経路の文字列表現
+
+/// `NSTextStorage.string` が返す Swift String は、非 ASCII を含むと NSString を包んだ
+/// 非連続(foreign)表現になり、UTF-8 インデックス操作のコストがネイティブ String と桁で違う。
+/// Foundation だけで同じ表現を作るには `NSMutableAttributedString.mutableString` を
+/// ブリッジする(`NSMutableString(string:)` は ASCII 連続バッファの高速経路に乗ってしまう)。
+private func makeForeignString(_ text: String) -> String {
+    let foreign = NSMutableAttributedString(string: text).mutableString as String
+    precondition(!foreign.isContiguousUTF8, "テストの前提: 非連続表現の文字列を再現できていない")
+    return foreign
+}
+
+/// 1 行に多数のインライン要素を並べた文書(非 ASCII を含めて foreign 表現を強制する)。
+/// 旧実装では foreign 文字列に対して行あたり「インラインノード数 × 行長」のコストになっていた
+/// (2,000 語で約 0.5〜1.7 秒、ネイティブは 0.03 秒)。
+private func makeInlineHeavyLine(words: Int) -> String {
+    "あ " + (0..<words).map { "*e\($0)*" }.joined(separator: " ")
+}
+
+@Test func foreignStringProducesSamePlanAsNative() {
+    let native = makeLargeDocument(lines: 2_000)
+    let foreign = makeForeignString(native)
+    let parser = MarkdownParser()
+    #expect(parser.highlightPlan(for: foreign) == parser.highlightPlan(for: native))
+}
+
+@Test func foreignStringParseIsNotQuadraticInLineLength() {
+    let native = makeInlineHeavyLine(words: 2_000)
+    let foreign = makeForeignString(native)
+    let parser = MarkdownParser()
+    _ = parser.highlightPlan(for: native)
+    let clock = ContinuousClock()
+    let nativeTime = (0..<3).map { _ in clock.measure { _ = parser.highlightPlan(for: native) } }.min()!
+    let foreignTime = (0..<3).map { _ in clock.measure { _ = parser.highlightPlan(for: foreign) } }.min()!
+    // foreign は「ネイティブへの 1 回のコピー + 同じ処理」なので数倍以内に収まる。
+    // 二乗劣化していると 2,000 語で 100 倍超になる。
+    #expect(foreignTime < nativeTime * 4 + .milliseconds(20),
+            "foreign \(foreignTime) vs native \(nativeTime)")
+}
