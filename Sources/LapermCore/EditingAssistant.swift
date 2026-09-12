@@ -196,8 +196,9 @@ public enum EditingAssistant {
     ) -> EditCommand? {
         guard selection.length > 0, NSMaxRange(selection) <= text.length else { return nil }
         let selected = text.substring(with: selection)
-        // 単一行内の選択のみ(改行またぎのリンクは作らない)
-        guard !selected.contains("\n") else { return nil }
+        // 単一行内の選択のみ(改行またぎのリンクは作らない)。
+        // "\r\n" は Swift では 1 Character なので contains("\n") では検出できない
+        guard selected.rangeOfCharacter(from: .newlines) == nil else { return nil }
         let url = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
         guard isURLShaped(url), !isURLShaped(selected) else { return nil }
         let replacement = "[\(selected)](\(url))"
@@ -246,11 +247,6 @@ struct ListItemLine {
 
         // マーカー: "-" / "*" / "+" または "数字列." / "数字列)"
         let markerText: String
-        let bullets: Set<unichar> = [
-            unichar(UnicodeScalar("-").value),
-            unichar(UnicodeScalar("*").value),
-            unichar(UnicodeScalar("+").value),
-        ]
         if bullets.contains(text.character(at: i)) {
             markerText = String(UnicodeScalar(text.character(at: i))!)
             i += 1
@@ -258,11 +254,13 @@ struct ListItemLine {
             var j = i
             var number = 0
             while j < contentsEnd, isDigit(text.character(at: j)) {
+                // CommonMark の番号は最大 9 桁。それを超える数字列(ID・電話番号など)は
+                // リストではないので、数値を組み立てる前に打ち切る(Int オーバーフロー防止)
+                guard j - i < 9 else { return nil }
                 number = number * 10 + Int(text.character(at: j) - 48)
                 j += 1
             }
-            // 桁数の異常な数字列はリストとして扱わない(オーバーフロー防止)
-            guard j - i <= 9, j < contentsEnd else { return nil }
+            guard j < contentsEnd else { return nil }
             let delimiter = text.character(at: j)
             guard delimiter == unichar(UnicodeScalar(".").value)
                 || delimiter == unichar(UnicodeScalar(")").value) else { return nil }
@@ -302,6 +300,12 @@ struct ListItemLine {
             checkboxLocation: checkboxLocation,
             contentStart: i)
     }
+
+    private static let bullets: Set<unichar> = [
+        unichar(UnicodeScalar("-").value),
+        unichar(UnicodeScalar("*").value),
+        unichar(UnicodeScalar("+").value),
+    ]
 
     private static func isDigit(_ character: unichar) -> Bool {
         character >= 48 && character <= 57

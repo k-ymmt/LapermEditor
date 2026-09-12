@@ -27,7 +27,7 @@ final class ImagePreviewController {
 
     var options = ImagePreviewOptions()
     var loader: any ImageLoader = DefaultImageLoader()
-    /// ロード完了・失敗で予約高さが変わりうるときに呼ばれる(view が spacing を再適用する)
+    /// ロード完了・失敗で予約高さが変わりうるときに呼ばれる(エンジンが spacing を再適用する)
     var onStateChange: (() -> Void)?
 
     private static let logger = Logger(subsystem: "Laperm", category: "ImagePreview")
@@ -186,14 +186,20 @@ final class ImagePreviewController {
         // ちょうど属さない部分を stale として集める。結合ランが unchanged な wanted
         // レンジを複数またぐ場合や、変化した/なくなった段落を含む場合はここで
         // 部分的に取り除かれる(= 隣の unchanged な段落の spacing は保持される)。
+        // unchanged は互いに重ならない段落レンジなので位置順に並べ、各ランについては
+        // 交差しうる区間だけ二分探索で引く(画像数の二乗にしない)。
+        let claimedSorted = unchanged.sorted { $0.location < $1.location }
         var stale: [NSRange] = []
         storage.enumerateAttribute(
             Self.spacingAttribute, in: NSRange(location: 0, length: storage.length)
         ) { value, range, _ in
             guard value != nil else { return }
             var remaining = [range]
-            for claimed in unchanged {
+            var index = Self.firstIndex(in: claimedSorted, endingAfter: range.location)
+            while index < claimedSorted.count, claimedSorted[index].location < NSMaxRange(range) {
+                let claimed = claimedSorted[index]
                 remaining = remaining.flatMap { Self.subtracting(claimed, from: $0) }
+                index += 1
             }
             stale.append(contentsOf: remaining)
         }
@@ -211,6 +217,21 @@ final class ImagePreviewController {
                 storage.addAttribute(Self.spacingAttribute, value: height, range: range)
             }
         }
+    }
+
+    /// 位置順・非重複の `ranges` のうち、終端が `location` より後にある最初の要素の添字。
+    private static func firstIndex(in ranges: [NSRange], endingAfter location: Int) -> Int {
+        var low = 0
+        var high = ranges.count
+        while low < high {
+            let mid = (low + high) / 2
+            if NSMaxRange(ranges[mid]) <= location {
+                low = mid + 1
+            } else {
+                high = mid
+            }
+        }
+        return low
     }
 
     /// `range` から `subtract` と重なる部分を取り除いた残り。

@@ -25,7 +25,7 @@ public enum TextMotions {
     /// 1 行上の preferredColumn 列へ(行が短ければ行末)。先頭行なら現在位置のまま
     public static func lineUp(text: NSString, at offset: Int, preferredColumn: Int) -> Int {
         let start = lineStart(text: text, at: offset)
-        guard start > 0 else { return clamp(offset, to: text) }
+        guard start > 0 else { return composedStart(text: text, at: offset) }
         return position(inLineContaining: start - 1, column: preferredColumn, text: text)
     }
 
@@ -36,7 +36,7 @@ public enum TextMotions {
         text.getLineStart(
             nil, end: &end, contentsEnd: &contentsEnd,
             for: NSRange(location: clamp(offset, to: text), length: 0))
-        guard end > contentsEnd else { return clamp(offset, to: text) }  // 次の行がない
+        guard end > contentsEnd else { return composedStart(text: text, at: offset) }  // 次の行がない
         return position(inLineContaining: end, column: preferredColumn, text: text)
     }
 
@@ -106,5 +106,13 @@ public enum TextMotions {
 
     private static func clamp(_ offset: Int, to text: NSString) -> Int {
         min(max(offset, 0), text.length)
+    }
+
+    /// クランプした上で、合成文字の途中にある offset をその文字の先頭へ丸める
+    /// (「戻り値は常に合成文字境界」の契約を、移動しない経路でも守る)
+    private static func composedStart(text: NSString, at offset: Int) -> Int {
+        let clamped = clamp(offset, to: text)
+        guard clamped < text.length else { return clamped }
+        return text.rangeOfComposedCharacterSequence(at: clamped).location
     }
 }

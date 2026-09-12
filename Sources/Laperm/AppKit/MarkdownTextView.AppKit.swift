@@ -131,7 +131,12 @@ public final class MarkdownTextView: NSTextView {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
         contentStorage.addTextLayoutManager(layoutManager)
-        let container = NSTextContainer(size: CGSize(width: 0, height: 1_000_000))
+        // 高さは Apple の NSTextView(usingTextLayoutManager:) と同じ 1e7 にする。これより小さい高さ
+        // (1,000,000 など)を与えると TextKit2 は
+        // ビューポート単位の遅延レイアウトをやめて全段落をレイアウトしてしまい、
+        // 初回表示・キーストロークごとの invalidateLayout が文書全体に比例するコストになる
+        // (10k 行で 1 キーストローク数秒 → 数十 ms。ベンチで確認)。
+        let container = NSTextContainer(size: CGSize(width: 0, height: 10_000_000))
         container.widthTracksTextView = true
         layoutManager.textContainer = container
         self.init(frame: .zero, textContainer: container, theme: theme)
@@ -372,6 +377,13 @@ public final class MarkdownTextView: NSTextView {
         super.didChangeText()
         clearLinkHover()
         updateInsertionPointOverlay()
+    }
+
+    /// IME 変換の終了。変換中に見送ったハイライト適用(highlightNow は marked text 中は
+    /// 何もしない)を、確定で文字が変化しなかった場合でも確実に再開する。
+    public override func unmarkText() {
+        super.unmarkText()
+        engine.scheduleHighlight()
     }
 
     public override func layout() {

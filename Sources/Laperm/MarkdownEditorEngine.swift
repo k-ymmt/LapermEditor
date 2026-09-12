@@ -116,20 +116,23 @@ final class MarkdownEditorEngine: NSObject {
 
     /// 保留中の編集を即時処理する(通常は didProcessEditing からの遅延実行で呼ばれる)。
     func highlightNow() {
-        // 日本語変換中(IME マークテキスト表示中)はフラッシュを遅延する。
-        // 変換中の下線付きテキストはまだ確定しておらず、ここで textStorage に
-        // 属性を適用すると変換セッションが乱れる恐れがあるため、確定(コミット)後に
-        // 改めてスケジュールし直す。
-        guard host?.editorHasMarkedText != true else {
-            highlightScheduled = false
-            scheduleHighlight()
-            return
-        }
         highlightScheduled = false
+        // 日本語変換中(IME マークテキスト表示中)はフラッシュを見送る。
+        // 変換中の下線付きテキストはまだ確定しておらず、ここで textStorage に
+        // 属性を適用すると変換セッションが乱れる恐れがあるため。
+        // ここで再スケジュールしてはいけない: DispatchQueue.main.async の即時再登録は
+        // 変換中ずっと highlightNow を回し続けるビジーループになる(メインキュー 100%)。
+        // 確定・取消は文字編集(didProcessEditing)か unmarkText を必ず伴い、
+        // そこで scheduleHighlight が呼ばれるので保留分は取りこぼさない。
+        guard host?.editorHasMarkedText != true else { return }
         guard let contentStorage = host?.editorContentStorage,
               let layoutManager = host?.editorLayoutManager else { return }
-        highlighter.flushPendingHighlight(
+        let outcome = highlighter.flushPendingHighlight(
             contentStorage: contentStorage, layoutManager: layoutManager)
+        // バックグラウンドパースへ回した場合、currentPlan はまだ編集分をシフトしただけの
+        // 旧計画なので、ここで再同期しても装飾・アウトラインは古いまま(見出しが一瞬欠ける等)
+        // で、パース完了時の onBackgroundFlushApplied で改めて同期される。二重の作業を省く。
+        guard outcome != .deferredToBackground else { return }
         resyncAfterHighlight()
     }
 
@@ -208,12 +211,13 @@ final class MarkdownEditorEngine: NSObject {
                       : NSIntersectionRange(range, fold.bodyRange).length > 0
               })
         else { return }
-        // bodyRange の直前は見出し(最終)行の改行。その行の contentsEnd = 見出し行末
+        // bodyRange の直前は見出し(最終)行の改行。その行の contentsEnd = 見出し行末。
+        // アウトラインは次の flush まで旧座標のことがある(IME 中の flush 遅延など)ので、
+        // 文書外を指していたら何もしない(getLineStart の NSRangeException 防止)。
         let text = host.editorText as NSString
-        var contentsEnd = fold.bodyRange.location
-        let terminator = NSRange(location: max(0, fold.bodyRange.location - 1), length: 0)
-        text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: terminator)
-        host.editorSelect(NSRange(location: min(contentsEnd, text.length), length: 0))
+        let terminatorLocation = fold.bodyRange.location - 1
+        guard terminatorLocation >= 0, terminatorLocation < text.length else { return }
+        host.editorSelect(NSRange(location: TextMotions.lineEnd(text: text, at: terminatorLocation), length: 0))
     }
 
     func unfoldAll() {
@@ -247,8 +251,7 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     /// パース確定後にアウトライン・折畳状態を最新プランへ同期する。
-    /// バックグラウンドパース経路では currentPlan の更新が非同期のため、ブロック装飾と
-    /// 同様に 1 サイクル遅延する(v1 で許容済みの設計)。
+    /// バックグラウンドパース経路ではパース完了(onBackgroundFlushApplied)後に呼ばれる。
     private func syncFolding() {
         foldingController.sync(plan: highlighter.currentPlan, text: host?.editorText ?? "")
         applyFoldingChanges()
@@ -303,8 +306,10 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     /// このフラグメント(1 テキスト段落)のガター行情報を返す。ビューポートレイアウトパスから呼ぶ。
+    /// フラグメント frame はテキストコンテナ座標なので、コンテナ原点(textContainerInset 等)
+    /// ぶんずらしてテキストビュー座標にする(AppKit / UIKit 共通)。
     func gutterLine(for fragment: NSTextLayoutFragment) -> GutterLine? {
-        guard let contentManager = host?.editorLayoutManager?.textContentManager else { return nil }
+        guard let host, let contentManager = host.editorLayoutManager?.textContentManager else { return nil }
         let offset = contentManager.offset(
             from: contentManager.documentRange.location,
             to: fragment.rangeInElement.location)
@@ -313,7 +318,7 @@ final class MarkdownEditorEngine: NSObject {
             to: fragment.rangeInElement.endLocation)
         return GutterLine(
             number: lineNumber(atOffset: offset),
-            yInTextView: fragment.layoutFragmentFrame.minY,
+            yInTextView: fragment.layoutFragmentFrame.minY + host.editorTextContainerOrigin.y,
             heightInTextView: fragment.layoutFragmentFrame.height,
             foldMarker: foldMarker(inParagraphFrom: offset, to: endOffset))
     }
@@ -341,8 +346,7 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     /// 画像プレビューの状態を最新プランに同期し、スペーシングを適用する。
-    /// 注意: バックグラウンドパース経路では currentPlan の更新が非同期になるため、
-    /// ブロック装飾と同様に 1 サイクル遅延する(v1 で許容済みの設計)。
+    /// バックグラウンドパース経路ではパース完了(onBackgroundFlushApplied)後に呼ばれる。
     func updateImagePreviews() {
         guard let host, let contentStorage = host.editorContentStorage else { return }
         imagePreviewController.update(references: highlighter.currentPlan.images)
@@ -472,6 +476,7 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         lineIndex = nil
         highlighter.noteEdit(editedRange: editedRange, changeInLength: delta)
         foldingController.noteEdit(editedRange: editedRange, changeInLength: delta)
+        fragmentProvider.noteEdit(editedRange: editedRange, changeInLength: delta)
         scheduleHighlight()
         host?.editorTextDidChange()
     }

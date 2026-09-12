@@ -112,9 +112,24 @@ enum HighlightMapper {
         }
 
         mutating func visitTable(_ table: Markdown.Table) {
-            if let range = nsRange(of: table), range.length > 0 {
+            if var range = nsRange(of: table), range.length > 0 {
+                var headRange = nsRange(of: table.head)
+                // cmark-gfm は段落の直後(空行なし)にテーブルが続くとき、段落の最終行を
+                // ヘッダー行として奪う一方で Table の sourcepos を段落の先頭にし、Head や
+                // 段落内インライン要素の位置も壊す。区切り行の位置からヘッダー行を特定し、
+                // テーブルレンジ(と Head)をそこへクランプして、飲み込まれた段落行を
+                // テーブル/マーカー扱いしないようにする(段落側のインライン装飾は失われる)。
+                if let delimiterLine = tableDelimiterLine(in: range),
+                   delimiterLine.lineIndex > 1 {
+                    let headerLine = text.lineRange(
+                        for: NSRange(location: delimiterLine.range.location - 1, length: 0))
+                    range = NSRange(
+                        location: headerLine.location,
+                        length: NSMaxRange(range) - headerLine.location)
+                    headRange = clippedLineRange(at: headerLine.location, within: range)
+                }
                 blockSpans.append(HighlightSpan(range: range, kind: .table))
-                if let headRange = nsRange(of: table.head), headRange.length > 0 {
+                if let headRange, headRange.length > 0 {
                     blockSpans.append(HighlightSpan(range: headRange, kind: .tableHeader))
                 }
                 appendTableMarkers(in: range)
@@ -122,6 +137,57 @@ enum HighlightMapper {
             tableDepth += 1
             descendInto(table)
             tableDepth -= 1
+        }
+
+        /// テーブルレンジ内で最初に現れる区切り行("|---|:--:|" 等)。
+        /// lineIndex はレンジ先頭行を 0 とする行番号。正常なテーブルでは 1 になる。
+        private func tableDelimiterLine(in range: NSRange) -> (range: NSRange, lineIndex: Int)? {
+            var location = range.location
+            let end = NSMaxRange(range)
+            var lineIndex = 0
+            while location < end {
+                let line = clippedLineRange(at: location, within: range)
+                if lineIndex > 0, isTableDelimiterLine(line) {
+                    return (line, lineIndex)
+                }
+                let fullLine = text.lineRange(for: NSRange(location: location, length: 0))
+                if NSMaxRange(fullLine) <= location { break }
+                location = NSMaxRange(fullLine)
+                lineIndex += 1
+            }
+            return nil
+        }
+
+        /// GFM の区切り行か: パイプ区切りの各セルが `:?-+:?`(空白は許容)で、"-" を 1 つ以上含む。
+        private func isTableDelimiterLine(_ line: NSRange) -> Bool {
+            var i = line.location
+            let end = NSMaxRange(line)
+            var sawDash = false
+            var cellHasDash = false
+            var cellHasColonAfterDash = false
+            var cells = 0
+            while i < end {
+                let c = text.character(at: i)
+                switch c {
+                case ASCII.space, ASCII.tab:
+                    break
+                case ASCII.dash:
+                    guard !cellHasColonAfterDash else { return false }
+                    cellHasDash = true
+                    sawDash = true
+                case ASCII.colon:
+                    if cellHasDash { cellHasColonAfterDash = true }
+                case ASCII.pipe:
+                    if cellHasDash { cells += 1 }
+                    cellHasDash = false
+                    cellHasColonAfterDash = false
+                default:
+                    return false
+                }
+                i += 1
+            }
+            if cellHasDash { cells += 1 }
+            return sawDash && cells > 0
         }
 
         mutating func visitListItem(_ listItem: ListItem) {
@@ -166,17 +232,9 @@ enum HighlightMapper {
             // CommonMark はパディングスペースを code から剥がすため、
             // (range.length - code.length) / 2 のような算術では
             // スペースまでマーカーに含めてしまう。
-            let delimiter = symmetricDelimiterLength(
-                in: range, character: unichar(UnicodeScalar("`").value))
+            let delimiter = symmetricDelimiterLength(in: range, character: ASCII.backtick)
             if delimiter > 0 {
-                markerSpans.append(HighlightSpan(
-                    range: NSRange(location: range.location, length: delimiter),
-                    kind: .syntaxMarker
-                ))
-                markerSpans.append(HighlightSpan(
-                    range: NSRange(location: NSMaxRange(range) - delimiter, length: delimiter),
-                    kind: .syntaxMarker
-                ))
+                appendSymmetricMarkers(in: range, length: delimiter)
             }
         }
 
@@ -215,17 +273,9 @@ enum HighlightMapper {
                 inlineSpans.append(HighlightSpan(range: range, kind: .strikethrough))
                 // cmark-gfm はチルダ 1 個も打ち消し線にするため、デリミタ長は
                 // 実テキストのチルダ列を走査して求める(インラインコードと同方式)。
-                let delimiter = symmetricDelimiterLength(
-                    in: range, character: unichar(UnicodeScalar("~").value))
+                let delimiter = symmetricDelimiterLength(in: range, character: ASCII.tilde)
                 if delimiter > 0 {
-                    markerSpans.append(HighlightSpan(
-                        range: NSRange(location: range.location, length: delimiter),
-                        kind: .syntaxMarker
-                    ))
-                    markerSpans.append(HighlightSpan(
-                        range: NSRange(location: NSMaxRange(range) - delimiter, length: delimiter),
-                        kind: .syntaxMarker
-                    ))
+                    appendSymmetricMarkers(in: range, length: delimiter)
                 }
             }
             descendInto(strikethrough)
@@ -236,12 +286,17 @@ enum HighlightMapper {
         private mutating func appendDelimited(_ markup: Markup, kind: SyntaxKind, delimiterLength: Int) {
             guard let range = nsRange(of: markup), range.length >= delimiterLength * 2 else { return }
             inlineSpans.append(HighlightSpan(range: range, kind: kind))
+            appendSymmetricMarkers(in: range, length: delimiterLength)
+        }
+
+        /// range の先頭と末尾 length 文字ずつを構文マーカーにする(強調・コード・打ち消し線で共用)。
+        private mutating func appendSymmetricMarkers(in range: NSRange, length: Int) {
             markerSpans.append(HighlightSpan(
-                range: NSRange(location: range.location, length: delimiterLength),
+                range: NSRange(location: range.location, length: length),
                 kind: .syntaxMarker
             ))
             markerSpans.append(HighlightSpan(
-                range: NSRange(location: NSMaxRange(range) - delimiterLength, length: delimiterLength),
+                range: NSRange(location: NSMaxRange(range) - length, length: length),
                 kind: .syntaxMarker
             ))
         }
@@ -264,29 +319,36 @@ enum HighlightMapper {
         }
 
         /// 行頭の "#…"(最大 6 個)+ 直後のスペース 1 個の長さ。ATX 見出しでなければ 0。
+        /// CommonMark の ATX 見出しは "#" 列の直後が空白か行末でなければならない
+        /// ("#hashtag\n===" は "#" で始まる Setext 見出し)。
         private func leadingHashMarkerLength(in range: NSRange) -> Int {
             let end = NSMaxRange(range)
             var i = range.location
             var count = 0
-            while i < end, count < 6, text.character(at: i) == UInt16(UnicodeScalar("#").value) {
+            while i < end, count < 6, text.character(at: i) == ASCII.hash {
                 count += 1
                 i += 1
             }
             guard count > 0 else { return 0 }
-            if i < end, text.character(at: i) == UInt16(UnicodeScalar(" ").value) {
-                count += 1
+            guard i < end else { return count }
+            switch text.character(at: i) {
+            case ASCII.space, ASCII.tab:
+                return count + 1
+            case ASCII.newline, ASCII.carriageReturn:
+                return count
+            default:
+                return 0
             }
-            return count
         }
 
-        /// location を含む行のレンジを range 内にクリップし、末尾の改行を除いて返す。
+        /// location を含む行のレンジを range 内にクリップし、末尾の改行(LF / CR / CRLF 等)を除いて返す。
         private func clippedLineRange(at location: Int, within range: NSRange) -> NSRange {
-            var line = text.lineRange(for: NSRange(location: location, length: 0))
-            // 末尾の改行を除く
-            while line.length > 0, text.character(at: NSMaxRange(line) - 1) == UInt16(UnicodeScalar("\n").value) {
-                line.length -= 1
-            }
-            return NSIntersectionRange(line, range)
+            var lineStart = 0
+            var contentsEnd = 0
+            text.getLineStart(
+                &lineStart, end: nil, contentsEnd: &contentsEnd,
+                for: NSRange(location: location, length: 0))
+            return NSIntersectionRange(NSRange(location: lineStart, length: contentsEnd - lineStart), range)
         }
 
         /// テーブルレンジ内のパイプ("\|" エスケープを除く)と区切り行をマーカー化する。
@@ -294,8 +356,8 @@ enum HighlightMapper {
         /// レンジ内の 2 行目を区切り行("---|---" 等)として行全体をマーカーにする
         /// (区切り行は AST の Head にも Body にも含まれない)。
         private mutating func appendTableMarkers(in range: NSRange) {
-            let pipe = unichar(UnicodeScalar("|").value)
-            let backslash = unichar(UnicodeScalar("\\").value)
+            let pipe = ASCII.pipe
+            let backslash = ASCII.backslash
             var location = range.location
             let end = NSMaxRange(range)
             var lineIndex = 0
@@ -323,28 +385,41 @@ enum HighlightMapper {
             }
         }
 
+        /// フェンス行か: 先頭の空白(CommonMark はフェンスの前に最大 3 個のスペースを許す)を
+        /// 読み飛ばした位置から "```" / "~~~" が始まる。line はコードブロックレンジで
+        /// クリップ済みなので、開始フェンスは range.location(インデント後)から始まる。
         private func isFenceLine(_ line: NSRange) -> Bool {
-            guard line.length >= 3 else { return false }
-            let first = text.character(at: line.location)
-            let backtick = UInt16(UnicodeScalar("`").value)
-            let tilde = UInt16(UnicodeScalar("~").value)
-            guard first == backtick || first == tilde else { return false }
-            return text.character(at: line.location + 1) == first
-                && text.character(at: line.location + 2) == first
+            var i = line.location
+            let end = NSMaxRange(line)
+            var leadingSpaces = 0
+            while i < end, text.character(at: i) == ASCII.space, leadingSpaces < 3 {
+                i += 1
+                leadingSpaces += 1
+            }
+            guard i + 3 <= end else { return false }
+            let first = text.character(at: i)
+            guard first == ASCII.backtick || first == ASCII.tilde else { return false }
+            return text.character(at: i + 1) == first && text.character(at: i + 2) == first
         }
 
         /// range 内の各行頭にある ">" を 1 文字ずつマーカーとして追加(ネスト分も拾う)。
+        /// 先頭行はレンジ先頭(外側コンテナの接頭辞の直後)から走査し、以降の行では
+        /// 外側コンテナぶんのインデント + 3 個までのスペースを読み飛ばす。
         private mutating func appendQuoteMarkers(in range: NSRange) {
-            let space = UInt16(UnicodeScalar(" ").value)
-            let gt = UInt16(UnicodeScalar(">").value)
+            let space = ASCII.space
+            let gt = ASCII.greaterThan
             var location = range.location
             let end = NSMaxRange(range)
+            let firstLine = text.lineRange(for: NSRange(location: range.location, length: 0))
+            let containerIndent = range.location - firstLine.location
+            var isFirstLine = true
             while location < end {
                 let line = text.lineRange(for: NSRange(location: location, length: 0))
                 let lineEnd = min(NSMaxRange(line), end)
-                var i = line.location
+                var i = isFirstLine ? range.location : line.location
+                let allowedSpaces = isFirstLine ? 3 : containerIndent + 3
                 var leadingSpaces = 0
-                while i < lineEnd, text.character(at: i) == space, leadingSpaces < 3 {
+                while i < lineEnd, text.character(at: i) == space, leadingSpaces < allowedSpaces {
                     i += 1
                     leadingSpaces += 1
                 }
@@ -355,6 +430,7 @@ enum HighlightMapper {
                 }
                 if NSMaxRange(line) <= location { break }
                 location = NSMaxRange(line)
+                isFirstLine = false
             }
         }
 
@@ -362,22 +438,17 @@ enum HighlightMapper {
         private func listMarkerRange(in range: NSRange) -> NSRange? {
             let end = NSMaxRange(range)
             var i = range.location
-            let space = UInt16(UnicodeScalar(" ").value)
-            while i < end, text.character(at: i) == space { i += 1 }
+            while i < end, text.character(at: i) == ASCII.space { i += 1 }
             guard i < end else { return nil }
             let start = i
             let c = text.character(at: i)
-            let bullets: [UInt16] = ["-", "*", "+"].map { UInt16(UnicodeScalar($0)!.value) }
-            if bullets.contains(c) {
+            if c == ASCII.dash || c == ASCII.asterisk || c == ASCII.plus {
                 i += 1
             } else {
-                let zero = UInt16(UnicodeScalar("0").value)
-                let nine = UInt16(UnicodeScalar("9").value)
-                while i < end, (zero...nine).contains(text.character(at: i)) { i += 1 }
+                while i < end, ASCII.isDigit(text.character(at: i)) { i += 1 }
                 guard i > start, i < end else { return nil }
-                let dot = UInt16(UnicodeScalar(".").value)
-                let paren = UInt16(UnicodeScalar(")").value)
-                guard text.character(at: i) == dot || text.character(at: i) == paren else { return nil }
+                guard text.character(at: i) == ASCII.period || text.character(at: i) == ASCII.rightParen
+                else { return nil }
                 i += 1
             }
             return NSRange(location: start, length: i - start)
@@ -388,12 +459,11 @@ enum HighlightMapper {
         /// (checkbox 非 nil ならパーサーが認めた実チェックボックスが必ず存在する)。
         private func checkboxRange(after marker: NSRange, within range: NSRange) -> NSRange? {
             let end = NSMaxRange(range)
-            let space = unichar(UnicodeScalar(" ").value)
             var i = NSMaxRange(marker)
-            while i < end, text.character(at: i) == space { i += 1 }
+            while i < end, text.character(at: i) == ASCII.space { i += 1 }
             guard i + 3 <= end,
-                  text.character(at: i) == unichar(UnicodeScalar("[").value),
-                  text.character(at: i + 2) == unichar(UnicodeScalar("]").value) else { return nil }
+                  text.character(at: i) == ASCII.leftBracket,
+                  text.character(at: i + 2) == ASCII.rightBracket else { return nil }
             return NSRange(location: i, length: 3)
         }
 
@@ -515,17 +585,17 @@ enum HighlightMapper {
         }
 
         private func isASCIIAlphanumeric(_ c: unichar) -> Bool {
-            let zero = unichar(UnicodeScalar("0").value), nine = unichar(UnicodeScalar("9").value)
-            let a = unichar(UnicodeScalar("a").value), z = unichar(UnicodeScalar("z").value)
-            let A = unichar(UnicodeScalar("A").value), Z = unichar(UnicodeScalar("Z").value)
-            return (zero...nine).contains(c) || (a...z).contains(c) || (A...Z).contains(c)
+            ASCII.isAlphanumeric(c)
         }
+
+        /// ベア URL 末尾から落とす約物
+        private static let trailingURLPunctuation: Set<unichar> = Set(".,;:!?'\"".utf16)
 
         /// 末尾の約物をトリムする。")" は URL 内の括弧バランスを見て閉じ超過分のみ落とす。
         private func trimTrailingPunctuation(from start: Int, to end: Int) -> Int {
-            let trailing: Set<unichar> = Set(".,;:!?'\"".utf16)
-            let open = unichar(UnicodeScalar("(").value)
-            let close = unichar(UnicodeScalar(")").value)
+            let trailing = Self.trailingURLPunctuation
+            let open = ASCII.leftParen
+            let close = ASCII.rightParen
             var end = end
             while end > start {
                 let c = text.character(at: end - 1)

@@ -68,9 +68,16 @@ public enum OutlineBuilder {
     /// ATX: 先頭の `#…`、および空白で区切られた末尾の閉じ `#…` を除去。
     /// Setext: 1 行目(テキスト行)をそのまま使う。
     private static func title(ofHeadingAt range: NSRange, in text: NSString) -> String {
-        let raw = text.substring(with: range)
-        let firstLine = raw.split(
-            separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        // 1 行目 = 見出しレンジ先頭を含む行の内容(改行を含まない)。
+        // String.split(separator: "\n") は "\r\n" を 1 Character として扱い分割できないため、
+        // NSString の行末判定(CR / LF / CRLF / U+2028 等)で切る。
+        var contentsEnd = 0
+        text.getLineStart(
+            nil, end: nil, contentsEnd: &contentsEnd,
+            for: NSRange(location: range.location, length: 0))
+        let firstLineEnd = min(contentsEnd, NSMaxRange(range))
+        let firstLine = text.substring(
+            with: NSRange(location: range.location, length: max(0, firstLineEnd - range.location)))
         var body = firstLine.drop(while: { $0 == "#" })
         let trailingHashes = body.reversed().prefix(while: { $0 == "#" }).count
         if trailingHashes > 0 {

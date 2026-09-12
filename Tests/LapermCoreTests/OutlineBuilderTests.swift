@@ -58,3 +58,8 @@ private func outline(for text: String) -> [OutlineItem] {
     #expect(outline(for: "").isEmpty)
     #expect(outline(for: "plain text only").isEmpty)
 }
+
+@Test func crlfSetextTitleExcludesLineBreak() {
+    let items = outline(for: "Title\r\n=====\r\nbody\r\n")
+    #expect(items.map(\.title) == ["Title"])
+}

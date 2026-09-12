@@ -12,7 +12,7 @@ enum BlockDecoration: Equatable {
     case table
 }
 
-struct Decoration: Equatable {
+struct Decoration: Hashable {
     var range: NSRange
     var kind: BlockDecoration
 }
@@ -31,6 +31,29 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         self.theme = theme
     }
 
+    /// didProcessEditing(.editedCharacters)からの座標追従。HighlightPlan.shifted と同じ規約で
+    /// 装飾レンジを平行移動し、編集と交差する装飾は落とす(次の update で再生成される)。
+    /// これを怠ると、装飾より前で長さの変わる編集(ほぼ全キーストローク)のたびに
+    /// 旧装飾と新装飾がすべて不一致になり、update が全装飾を無効化してしまう
+    /// (10k 行で 1 キーストローク 200ms 超)。
+    func noteEdit(editedRange: NSRange, changeInLength delta: Int) {
+        guard !decorations.isEmpty else { return }
+        let preEditRange = NSRange(
+            location: editedRange.location,
+            length: max(0, editedRange.length - delta))
+        decorations = decorations.compactMap { decoration in
+            if NSMaxRange(decoration.range) <= preEditRange.location {
+                return decoration
+            }
+            if decoration.range.location >= NSMaxRange(preEditRange) {
+                var moved = decoration
+                moved.range.location += delta
+                return moved
+            }
+            return nil
+        }
+    }
+
     /// 新しい計画から装飾リストを作り直し、変化したレンジのレイアウトを無効化する。
     func update(
         plan: HighlightPlan,
@@ -47,8 +70,12 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             }
         }
         guard new != decorations else { return }
-        // 旧・新の装飾レンジを無効化してフラグメントを再生成させる
-        let dirtyRanges = (decorations + new).map(\.range)
+        // 消えた装飾・増えた装飾のレンジだけ無効化してフラグメントを再生成させる
+        // (位置・種類が同じ装飾のフラグメントはそのまま使える)
+        let oldSet = Set(decorations)
+        let newSet = Set(new)
+        let dirtyRanges = decorations.filter { !newSet.contains($0) }.map(\.range)
+            + new.filter { !oldSet.contains($0) }.map(\.range)
         decorations = new
         let textRanges = dirtyRanges.compactMap { contentManager.textRange(for: $0) }
         // NSTextContentStorage は、実際に文字/属性が変化していないレンジについては
@@ -89,9 +116,20 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return style.paragraphSpacing
     }
 
-    private func decoration(at location: NSTextLocation, in contentManager: NSTextContentManager) -> BlockDecoration? {
-        let offset = contentManager.offset(from: contentManager.documentRange.location, to: location)
-        return decorations.first { NSLocationInRange(offset, $0.range) }?.kind
+    /// 段落(textElement)に適用する装飾。段落レンジと装飾レンジの交差で判定する。
+    /// 段落の先頭オフセットだけで判定すると、インデントされたコードブロック(`\tcode`)や
+    /// リスト項目内の引用(`- > quote`)のように装飾レンジがインデント後から始まる場合に
+    /// 先頭行だけ装飾されない。
+    private func decoration(
+        for textElement: NSTextElement, in contentManager: NSTextContentManager
+    ) -> BlockDecoration? {
+        guard let elementRange = textElement.elementRange else { return nil }
+        let start = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
+        let end = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.endLocation)
+        let paragraph = NSRange(location: start, length: max(0, end - start))
+        return decorations.first {
+            NSLocationInRange(start, $0.range) || NSIntersectionRange(paragraph, $0.range).length > 0
+        }?.kind
     }
 
     func textLayoutManager(
@@ -103,7 +141,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // 確保できるよう `reservedBottomHeight` を設定する(下記いずれの分岐でも共通)。
         let reservation = reservedBottomHeight(for: textElement)
         guard let contentManager = textLayoutManager.textContentManager,
-              let kind = decoration(at: location, in: contentManager) else {
+              let kind = decoration(for: textElement, in: contentManager) else {
             let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
             fragment.reservedBottomHeight = reservation
             return fragment

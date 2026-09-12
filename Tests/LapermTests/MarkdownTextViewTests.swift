@@ -38,10 +38,36 @@ import Testing
     let textView = scrollView.documentView as! MarkdownTextView
     textView.string = Array(repeating: "line", count: 100).joined(separator: "\n")
     textView.highlightAll()
-    textView.textLayoutManager!.ensureLayout(for: textView.textLayoutManager!.documentRange)
-    textView.sizeToFit()
+    // TextKit2 の NSTextView はビューポートレイアウト(表示時に走る)で frame を伸ばす。
+    // 旧実装はテキストコンテナの高さが有限(1,000,000)だったため全文レイアウトが走り
+    // ensureLayout + sizeToFit でも伸びていたが、遅延レイアウトに直した現在は実際の表示経路
+    // (layoutViewport)で検証する。
+    textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
     // 文書がクリップ領域より高い場合、documentView が伸びないとスクロールできない
     #expect(textView.frame.height > 200)
+}
+
+@MainActor @Test func textContainerKeepsViewportLayoutLazy() {
+    // コンテナ高さが小さい(1,000,000 以下)と TextKit2 は初回ビューポートレイアウトで
+    // 全段落をレイアウトしてしまい、キーストロークごとのコストが文書長に比例する。
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+    scrollView.layoutSubtreeIfNeeded()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.string = Array(repeating: "line", count: 2_000).joined(separator: "\n")
+    textView.highlightAll()
+    let layoutManager = textView.textLayoutManager!
+    layoutManager.textViewportLayoutController.layoutViewport()
+    var laidOut = 0
+    layoutManager.enumerateTextLayoutFragments(
+        from: layoutManager.documentRange.location, options: []
+    ) { fragment in
+        if fragment.state == .layoutAvailable { laidOut += 1 }
+        return true
+    }
+    // 200pt のビューポートに 2,000 行すべてがレイアウト済み(layoutAvailable)なら遅延が効いていない
+    // (コンテナ高さ 1,000,000 では 2,000 件、1e7 では十数件になる)
+    #expect(laidOut < 1_000)
 }
 
 @MainActor @Test func settingThemeRehighlights() {

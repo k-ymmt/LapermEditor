@@ -7,12 +7,9 @@ import UIKit
 /// viewport レイアウトパスから供給される。テキストは `textContainerInset.left` で右へ逃がす。
 @MainActor
 final class LineNumberGutterView: UIView {
-    typealias FoldMarker = GutterFoldMarker
-    typealias Line = GutterLine
-
     static let width: CGFloat = 44
 
-    var lines: [Line] = [] {
+    var lines: [GutterLine] = [] {
         didSet { if lines != oldValue { setNeedsDisplay() } }
     }
     /// 可視領域の上端(テキストビューのコンテンツ座標)。行 y からこれを引いてガター座標にする。

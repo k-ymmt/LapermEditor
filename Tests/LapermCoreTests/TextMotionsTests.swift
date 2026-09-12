@@ -77,3 +77,9 @@ private nonisolated(unsafe) let sample = "hello\nhi\nworld" as NSString
     let text = "foo_bar baz" as NSString
     #expect(TextMotions.wordForward(text: text, at: 0) == 8)
 }
+
+@Test func lineMotionsSnapMidCharacterOffsetsToComposedBoundary() {
+    let text = "😀" as NSString  // サロゲートペア(UTF-16 で 2 単位)
+    #expect(TextMotions.lineUp(text: text, at: 1, preferredColumn: 0) == 0)
+    #expect(TextMotions.lineDown(text: text, at: 1, preferredColumn: 0) == 0)
+}

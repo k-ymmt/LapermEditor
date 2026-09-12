@@ -9,7 +9,7 @@ import LapermCore
 /// 本体段落を列挙から除外し(= レイアウト対象から外れて非表示)、アウトラインの
 /// 同期と編集追従を管理する。テキストストレージは一切変更しない。
 /// レイアウト無効化はここでは行わず、pendingDirtyRanges として溜めて
-/// MarkdownTextView(takePendingDirtyRanges)に委ねる。
+/// MarkdownEditorEngine(takePendingDirtyRanges)に委ねる。
 @MainActor
 final class FoldingController: NSObject {
     private(set) var state = FoldingState()

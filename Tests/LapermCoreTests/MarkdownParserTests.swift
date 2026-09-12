@@ -313,3 +313,54 @@ private func imageReferences(in markdown: String) -> [ImageReference] {
     #expect(refs[0].range == NSRange(location: 7, length: 18))
     #expect(refs[0].paragraphRange == NSRange(location: 7, length: 19))
 }
+
+// MARK: - レビューで見つかった回帰
+
+@Test func smartPunctuationDoesNotBreakLazyLineInlineSpans() {
+    // cmark のスマート約物("..." → "…")が有効だと、遅延継続行の桁補正の検証で
+    // 原文と Text ノードが食い違い、補正が捨てられて強調が消えていた
+    let md = "- item\nlazy with... **bold**"
+    #expect(ranges(of: .strong, in: md) == [NSRange(location: 20, length: 8)])
+}
+
+@Test func smartPunctuationDoesNotAlterLinkText() {
+    let plan = MarkdownParser().highlightPlan(for: "[it's \"quoted\"](https://x.y)")
+    #expect(plan.links.map(\.text) == ["it's \"quoted\""])
+}
+
+@Test func loneCarriageReturnIsALineEnding() {
+    // cmark は単独 CR も行末として扱う。コンバータが LF しか数えないと以降の行がずれる
+    let md = "a\rb\n# Title\nmore **bold** here"
+    #expect(ranges(of: .heading(level: 1), in: md) == [NSRange(location: 4, length: 7)])
+    #expect(ranges(of: .strong, in: md) == [NSRange(location: 17, length: 8)])
+}
+
+@Test func tableAfterParagraphWithoutBlankLineIsClampedToHeaderRow() {
+    // cmark-gfm は段落直後のテーブルの sourcepos を段落の先頭にしてしまう
+    let md = "line1 *x*\nline2 **bold**\n| a | b |\n|---|---|\n| c | d |"
+    #expect(ranges(of: .table, in: md) == [NSRange(location: 25, length: 29)])
+    #expect(ranges(of: .tableHeader, in: md) == [NSRange(location: 25, length: 9)])
+    let markers = ranges(of: .syntaxMarker, in: md)
+    // 区切り行はレンジ内 2 行目として行全体がマーカーになる
+    #expect(markers.contains(NSRange(location: 35, length: 9)))
+    // 飲み込まれた段落行はマーカー扱いされない
+    #expect(!markers.contains { $0.location < 25 })
+}
+
+@Test func setextHeadingStartingWithHashIsNotATX() {
+    let md = "#hashtag\n=====\nbody"
+    #expect(ranges(of: .heading(level: 1), in: md) == [NSRange(location: 0, length: 14)])
+    #expect(ranges(of: .syntaxMarker, in: md).isEmpty)
+}
+
+@Test func indentedFenceLinesAreMarkers() {
+    let md = "  ```\n  x\n  ```"
+    let markers = ranges(of: .syntaxMarker, in: md)
+    #expect(markers.contains(NSRange(location: 2, length: 3)))
+    #expect(markers.contains(NSRange(location: 10, length: 5)))
+}
+
+@Test func crlfFenceMarkerExcludesCarriageReturn() {
+    let md = "```\r\ncode\r\n```"
+    #expect(ranges(of: .syntaxMarker, in: md).contains(NSRange(location: 0, length: 3)))
+}

@@ -5,7 +5,7 @@ import Markdown
 /// UTF-16 ベースの NSRange に変換する。1 文書につき 1 インスタンス生成して使う。
 struct SourceLocationConverter {
     private let text: String
-    /// 各行の先頭を指す String.Index(UTF-8 視点で "\n" の直後)
+    /// 各行の先頭を指す String.Index。cmark と同じく "\n" / "\r\n" / 単独 "\r" を行末とみなす
     private let lineStartIndices: [String.Index]
     /// 行番号(1-based)→ インライン要素の桁に加える補正(UTF-8 バイト)。
     /// cmark はインライン要素の桁を「段落の開始桁 + 段落内容行内のオフセット」で計算する。
@@ -21,10 +21,16 @@ struct SourceLocationConverter {
         let utf8 = text.utf8
         var i = utf8.startIndex
         while i < utf8.endIndex {
-            if utf8[i] == UInt8(ascii: "\n") {
-                starts.append(utf8.index(after: i))
+            let byte = utf8[i]
+            let next = utf8.index(after: i)
+            if byte == UInt8(ascii: "\n") {
+                starts.append(next)
+            } else if byte == UInt8(ascii: "\r"),
+                      next == utf8.endIndex || utf8[next] != UInt8(ascii: "\n") {
+                // 単独の CR も cmark は行末として扱う("\r\n" は "\n" 側で 1 回だけ数える)
+                starts.append(next)
             }
-            i = utf8.index(after: i)
+            i = next
         }
         self.lineStartIndices = starts
     }

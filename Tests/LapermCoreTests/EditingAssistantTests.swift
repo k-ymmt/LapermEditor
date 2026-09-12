@@ -335,3 +335,19 @@ private func deleteBackward(_ text: String, selection: NSRange) -> EditCommand? 
         text: "docs", selection: NSRange(location: 0, length: 4),
         pasted: "https://") == nil)
 }
+
+// MARK: - レビューで見つかった回帰
+
+@Test func hugeDigitRunAtLineStartIsNotAListItem() {
+    // 19 桁以上の数字列で Int オーバーフロー(トラップ)していた
+    let text = "12345678901234567890 foo" as NSString
+    #expect(EditingAssistant.newline(text: text, selection: NSRange(location: text.length, length: 0)) == nil)
+    #expect(EditingAssistant.indent(text: text, selection: NSRange(location: 0, length: 0)) == nil)
+    #expect(EditingAssistant.toggleCheckbox(text: text, at: 3) == nil)
+}
+
+@Test func linkifyRejectsCRLFSelection() {
+    let text = "ab\r\ncd" as NSString
+    #expect(EditingAssistant.linkifyPaste(
+        text: text, selection: NSRange(location: 0, length: 6), pasted: "https://x.y") == nil)
+}

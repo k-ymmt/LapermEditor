@@ -105,4 +105,19 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
     controller.layoutViewport()
     #expect(!gutter.lines.compactMap(\.foldMarker).isEmpty)
 }
+
+@MainActor @Test func gutterLinesAccountForTextContainerInset() {
+    // フラグメント frame はコンテナ座標なので、textContainerInset ぶんずらしてビュー座標にする
+    // (UIKit 版と同じ扱い。以前は AppKit 版だけ無視していた)
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.textContainerInset = NSSize(width: 0, height: 12)
+    textView.string = "one\ntwo"
+    textView.highlightAll()
+    textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
+    let gutter = scrollView.verticalRulerView as! LineNumberGutterView
+    #expect(gutter.lines.first?.yInTextView == 12)
+}
 #endif

@@ -10,37 +10,71 @@ import LapermCore
 /// iOS では描画位置ズレ回避のため textStorage へ適用する(apply 内のコメント参照)。
 @MainActor
 public final class Highlighter {
-    public var theme: MarkdownTheme
+    public var theme: MarkdownTheme {
+        didSet {
+            storageAttributeCache = [:]
+            renderingAttributeCache = [:]
+        }
+    }
     public private(set) var currentPlan = HighlightPlan()
 
     /// 直近のパース所要時間がこれを超えていたら、次回の flush はバックグラウンド経路を使う。
     /// spec: 「パースが 16ms を超える巨大文書ではパースをバックグラウンドキューで行う」
     public var backgroundParseThreshold: Duration = .milliseconds(16)
 
-    /// バックグラウンドパース完了時、今すぐ属性適用してよいかを呼び出し側(view)に問い合わせる。
-    /// true を返すと適用を見送る(IME 変換中など)。view 側の highlightNow() が持つ
-    /// hasMarkedText() ガードと同じ判断をここでも効かせるためのフック。
+    /// バックグラウンドパース完了時、今すぐ属性適用してよいかを呼び出し側(エンジン)に問い合わせる。
+    /// true を返すと適用を見送る(IME 変換中など)。MarkdownEditorEngine.highlightNow() が持つ
+    /// marked text ガードと同じ判断をここでも効かせるためのフック。
     public var shouldDeferApply: (() -> Bool)?
     /// shouldDeferApply が true だった場合に呼ばれる。pendingEditedRanges は
-    /// クリアされていないので、view はこれをきっかけに再スケジュールし、
+    /// クリアされていないので、呼び出し側はこれをきっかけに再スケジュールし、
     /// ガード解除後の次の flush で確実に適用させること。
     public var applyDeferred: (() -> Void)?
 
     /// バックグラウンドパース完了で applyFlush が非同期に走ったあとに呼ばれる。
-    /// view はこれを装飾・アウトライン・画像プレビューの再同期のきっかけにする
+    /// 呼び出し側はこれを装飾・アウトライン・画像プレビューの再同期のきっかけにする
     /// (同期経路では highlightNow が自分で再同期するため呼ばない)。
     public var onBackgroundFlushApplied: (() -> Void)?
+
+    /// flushPendingHighlight の結果。
+    public enum FlushOutcome: Equatable, Sendable {
+        /// 保留中の編集がなく、何もしなかった
+        case nothingPending
+        /// 同期でパース・適用まで完了した
+        case applied
+        /// バックグラウンドパースへ回した(適用は onBackgroundFlushApplied で通知される)
+        case deferredToBackground
+    }
 
     private let parser = MarkdownParser()
     private var pendingEditedRanges: [NSRange] = []
     private var lastParseDuration: Duration = .zero
     private var generation = 0
-    /// テスト用: 進行中のバックグラウンドパース。世代が一致すれば完了時に適用、
-    /// 不一致(その間に編集が入った)なら破棄して再フラッシュする。
+    /// 進行中のバックグラウンドパース(同時実行を 1 本に絞る排他にも使う)。
+    /// 世代が一致すれば完了時に適用、不一致(その間に編集が入った)なら破棄して再フラッシュする。
     var activeBackgroundParse: Task<Void, Never>?
+
+    /// kind ごとの属性辞書。スパンごとに辞書を組み立て直すコスト(10k 行の全文適用で
+    /// 6 万回)を避けるため、テーマが変わるまでキャッシュする。
+    private var storageAttributeCache: [SyntaxKind: [NSAttributedString.Key: Any]] = [:]
+    private var renderingAttributeCache: [SyntaxKind: [NSAttributedString.Key: Any]] = [:]
 
     public init(theme: MarkdownTheme) {
         self.theme = theme
+    }
+
+    private func storageAttributes(for kind: SyntaxKind) -> [NSAttributedString.Key: Any] {
+        if let cached = storageAttributeCache[kind] { return cached }
+        let attributes = theme.storageAttributes(for: kind)
+        storageAttributeCache[kind] = attributes
+        return attributes
+    }
+
+    private func renderingAttributes(for kind: SyntaxKind) -> [NSAttributedString.Key: Any] {
+        if let cached = renderingAttributeCache[kind] { return cached }
+        let attributes = theme.renderingAttributes(for: kind)
+        renderingAttributeCache[kind] = attributes
+        return attributes
     }
 
     /// 全文を再ハイライトする(初期表示・テーマ変更・プログラムによる全文置換時)。
@@ -118,20 +152,24 @@ public final class Highlighter {
     }
 
     /// 保留中の編集をまとめて処理する(ランループの次サイクルで呼ぶ)。
+    @discardableResult
     public func flushPendingHighlight(
         contentStorage: NSTextContentStorage,
         layoutManager: NSTextLayoutManager
-    ) {
-        guard !pendingEditedRanges.isEmpty, let storage = contentStorage.textStorage else { return }
+    ) -> FlushOutcome {
+        guard !pendingEditedRanges.isEmpty, let storage = contentStorage.textStorage else {
+            return .nothingPending
+        }
         if lastParseDuration > backgroundParseThreshold {
             startBackgroundFlush(
                 text: storage.string, contentStorage: contentStorage, layoutManager: layoutManager)
-            return
+            return .deferredToBackground
         }
         let clock = ContinuousClock()
         var newPlan = HighlightPlan()
         lastParseDuration = clock.measure { newPlan = parser.highlightPlan(for: storage.string) }
         applyFlush(newPlan: newPlan, contentStorage: contentStorage, layoutManager: layoutManager)
+        return .applied
     }
 
     /// 差分計算〜適用〜状態更新の共通経路(同期・バックグラウンド完了の両方から呼ぶ)。
@@ -159,10 +197,9 @@ public final class Highlighter {
     /// 同時実行は 1 本のみ(完了時に世代を再チェックし、必要ならこの関数から
     /// 再度 flushPendingHighlight を呼ぶことで取りこぼしを防ぐ)。
     ///
-    /// 注意: MarkdownTextView.highlightNow() は flushPendingHighlight の直後に
-    /// updateBlockDecorations() を呼ぶが、この経路では apply が非同期に完了するため
-    /// ブロック装飾の更新は今回のサイクルには間に合わない。世代一致で applyFlush が
-    /// 走った直後に onBackgroundFlushApplied を呼ぶので、view 側はそこで装飾・
+    /// 注意: この経路では apply が非同期に完了するため、MarkdownEditorEngine.highlightNow() は
+    /// `.deferredToBackground` を受けて再同期をスキップする。世代一致で applyFlush が
+    /// 走った直後に onBackgroundFlushApplied を呼ぶので、エンジン側はそこで装飾・
     /// アウトライン・画像プレビューを再同期する(呼ばれるのは世代一致の適用時のみ。
     /// 破棄経路や同期経路では呼ばない — 二重同期を避けるため)。
     private func startBackgroundFlush(
@@ -219,55 +256,54 @@ public final class Highlighter {
         //    リセットは addAttributes(= .font キーのみ上書き)で行う。setAttributes だと
         //    IME の変換下線やスペルチェックなど自前で管理していない属性まで消してしまう
         //    (計画の例コードからの意図的逸脱 — IME 属性保護のため)。
+        let bodyLayoutAttributes = theme.bodyLayoutAttributes
+        let bodyColorAttributes: [NSAttributedString.Key: Any] = [.foregroundColor: theme.bodyColor]
         contentStorage.performEditingTransaction {
             for range in invalidated {
                 let clipped = clip(range, to: documentLength)
                 guard clipped.length > 0 else { continue }
-                storage.addAttributes(theme.bodyLayoutAttributes, range: clipped)
+                storage.addAttributes(bodyLayoutAttributes, range: clipped)
                 // addAttributes では古い打ち消し線を消せないため、自前で管理する
                 // キーだけ明示的に取り除く(setAttributes を避けて IME 属性は保護したまま)。
                 storage.removeAttribute(.strikethroughStyle, range: clipped)
                 storage.removeAttribute(.strikethroughColor, range: clipped)
+                #if canImport(UIKit) && !canImport(AppKit)
+                storage.addAttributes(bodyColorAttributes, range: clipped)
+                #endif
             }
             for span in spans {
-                let attributes = theme.storageAttributes(for: span.kind)
-                guard !attributes.isEmpty else { continue }
                 let clipped = clip(span.range, to: documentLength)
                 guard clipped.length > 0 else { continue }
-                storage.addAttributes(attributes, range: clipped)
+                let attributes = storageAttributes(for: span.kind)
+                if !attributes.isEmpty {
+                    storage.addAttributes(attributes, range: clipped)
+                }
+                #if canImport(UIKit) && !canImport(AppKit)
+                // 2) 色 — iOS では textStorage 側属性として、フォントと同じ 1 トランザクションで適用する。
+                //    UITextView(TextKit2)は renderingAttributes の色を、CJK などフォールバックフォントが
+                //    混在する行で誤った文字位置に描画する(シミュレータ検証で確認。属性自体は正しい位置に
+                //    設定されている)。storage 属性なら通常のレイアウト経路で正しく描画される。
+                //    属性のみの編集なので .editedAttributes しか発火せず、再入しない。
+                //    トランザクションを 1 つにまとめるのは processEditing → レイアウト無効化を
+                //    フラッシュごとに 2 回走らせないため。
+                let colors = renderingAttributes(for: span.kind)
+                if !colors.isEmpty {
+                    storage.addAttributes(colors, range: clipped)
+                }
+                #endif
             }
         }
 
-        #if canImport(UIKit) && !canImport(AppKit)
-        // 2) 色 — iOS では textStorage 側属性として適用する。
-        //    UITextView(TextKit2)は renderingAttributes の色を、CJK などフォールバックフォントが
-        //    混在する行で誤った文字位置に描画する(シミュレータ検証で確認。属性自体は正しい位置に
-        //    設定されている)。storage 属性なら通常のレイアウト経路で正しく描画される。
-        //    属性のみの編集なので .editedAttributes しか発火せず、再入しない。
-        contentStorage.performEditingTransaction {
-            for range in invalidated {
-                let clipped = clip(range, to: documentLength)
-                guard clipped.length > 0 else { continue }
-                storage.addAttributes([.foregroundColor: theme.bodyColor], range: clipped)
-            }
-            for span in spans {
-                let attributes = theme.renderingAttributes(for: span.kind)
-                guard !attributes.isEmpty else { continue }
-                let clipped = clip(span.range, to: documentLength)
-                guard clipped.length > 0 else { continue }
-                storage.addAttributes(attributes, range: clipped)
-            }
-        }
-        #else
+        #if canImport(AppKit)
         // 2) レイアウトに影響しない属性(色)— renderingAttributes へ。再レイアウトなし。
         for range in invalidated {
             let clipped = clip(range, to: documentLength)
             guard clipped.length > 0,
                   let textRange = contentStorage.textRange(for: clipped) else { continue }
-            layoutManager.setRenderingAttributes([.foregroundColor: theme.bodyColor], for: textRange)
+            layoutManager.setRenderingAttributes(bodyColorAttributes, for: textRange)
         }
         for span in spans {
-            let attributes = theme.renderingAttributes(for: span.kind)
+            let attributes = renderingAttributes(for: span.kind)
             guard !attributes.isEmpty else { continue }
             let clipped = clip(span.range, to: documentLength)
             guard clipped.length > 0,

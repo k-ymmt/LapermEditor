@@ -23,9 +23,18 @@ public enum ImageLoadError: Error {
 /// メインスレッドをブロックしない。
 @MainActor
 public final class DefaultImageLoader: ImageLoader {
+    /// デコード後の長辺の上限(ピクセル)。プレビューは maxHeight(既定 320pt)以下に
+    /// 縮小表示されるため、原寸(12MP 写真で約 48MB)を保持・再サンプリングし続ける必要はない。
+    /// Retina でコンテナ幅いっぱいに表示しても足りる程度に取る。
+    public nonisolated static let maxPixelSize = 2048
+    /// メモリキャッシュの上限(デコード済みピクセルのバイト数換算)
+    public nonisolated static let cacheCostLimit = 128 * 1024 * 1024
+
     private let cache = NSCache<NSURL, PlatformImage>()
 
-    public init() {}
+    public init() {
+        cache.totalCostLimit = Self.cacheCostLimit
+    }
 
     public func loadImage(for url: URL) async throws -> PlatformImage {
         if let cached = cache.object(forKey: url as NSURL) { return cached }
@@ -39,11 +48,13 @@ public final class DefaultImageLoader: ImageLoader {
         #else
         let image = UIImage(cgImage: cgImage, scale: 1, orientation: .up)
         #endif
-        cache.setObject(image, forKey: url as NSURL)
+        cache.setObject(image, forKey: url as NSURL, cost: cgImage.bytesPerRow * cgImage.height)
         return image
     }
 
     /// 取得とデコードをバックグラウンドで行い、Sendable な CGImage で受け渡す。
+    /// デコードは maxPixelSize に収まるサムネイルとして行う(ImageIO がダウンサンプリング
+    /// しながらデコードするため、原寸を一度メモリに展開しない)。EXIF の向きも適用する。
     private static func decode(url: URL) async throws -> CGImage {
         let data: Data
         if url.isFileURL {
@@ -54,8 +65,14 @@ public final class DefaultImageLoader: ImageLoader {
             (data, _) = try await URLSession.shared.data(from: url)
         }
         return try await Task.detached(priority: .utility) {
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCacheImmediately: true,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            ]
             guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                  let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                  let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
             else { throw ImageLoadError.decodingFailed }
             return image
         }.value

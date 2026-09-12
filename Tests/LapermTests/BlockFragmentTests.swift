@@ -83,3 +83,36 @@ private func layoutFragments(in textView: MarkdownTextView) -> [NSTextLayoutFrag
     #expect(!layoutFragments(in: textView).contains { $0 is TableBackgroundFragment })
 }
 #endif
+
+#if os(macOS)
+@MainActor @Test func indentedCodeBlockFirstLineGetsCodeBlockFragment() {
+    // インデント型コードブロックの装飾レンジはインデント後から始まる。段落先頭オフセットだけで
+    // 判定すると先頭行のフラグメントが装飾されない
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.string = "para\n\n\tcode\n\tmore\n"
+    textView.highlightAll()
+    let fragments = layoutFragments(in: textView)
+    // 段落: "para\n", "\n", "\tcode\n", "\tmore\n", ""
+    #expect(fragments.count >= 4)
+    #expect(fragments[2] is CodeBlockFragment)
+    #expect(fragments[3] is CodeBlockFragment)
+    #expect(!(fragments[0] is CodeBlockFragment))
+}
+
+@MainActor @Test func editBeforeDecorationsKeepsThemWithoutInvalidatingAll() {
+    // 装飾より前の編集で装飾レンジは平行移動するだけなので、update は差分なし扱いになる
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.string = "x\n\n```\ncode\n```\n\n> quote"
+    textView.highlightAll()
+    let before = layoutFragments(in: textView)
+    #expect(before.contains { $0 is CodeBlockFragment })
+    #expect(before.contains { $0 is BlockquoteFragment })
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 0), with: "yy")
+    textView.highlightNow()
+    let after = layoutFragments(in: textView)
+    #expect(after.contains { $0 is CodeBlockFragment })
+    #expect(after.contains { $0 is BlockquoteFragment })
+}
+#endif

@@ -120,7 +120,9 @@ public final class MarkdownTextView: UITextView {
         let contentStorage = NSTextContentStorage()
         let layoutManager = NSTextLayoutManager()
         contentStorage.addTextLayoutManager(layoutManager)
-        let container = NSTextContainer(size: CGSize(width: 0, height: 1_000_000))
+        // 高さは 1e7 にする(AppKit 版と同じ理由: 小さい高さは TextKit2 の
+        // ビューポート遅延レイアウトを無効化して全段落をレイアウトさせる)。
+        let container = NSTextContainer(size: CGSize(width: 0, height: 10_000_000))
         container.widthTracksTextView = true
         layoutManager.textContainer = container
         self.init(frame: .zero, textContainer: container, theme: theme)
@@ -196,6 +198,13 @@ public final class MarkdownTextView: UITextView {
         didSet { engine.autoExpandFolds(atSelectedRanges: [selectedRange]) }
     }
 
+    /// IME 変換の終了。変換中に見送ったハイライト適用(highlightNow は marked text 中は
+    /// 何もしない)を、確定で文字が変化しなかった場合でも確実に再開する。
+    public override func unmarkText() {
+        super.unmarkText()
+        engine.scheduleHighlight()
+    }
+
     // MARK: - レイアウト
 
     /// プレビューが使える幅 = テキストコンテナの実効幅(lineFragmentPadding を除く)
@@ -247,9 +256,7 @@ public final class MarkdownTextView: UITextView {
             configureRenderingSurfaceFor: textLayoutFragment
         )
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
-        guard showsLineNumbers, var line = engine.gutterLine(for: textLayoutFragment) else { return }
-        // フラグメント frame はテキストコンテナ座標なので、コンテナ原点ぶんずらしてビュー座標にする
-        line.yInTextView += textContainerInset.top
+        guard showsLineNumbers, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
 

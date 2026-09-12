@@ -1,20 +1,45 @@
 import Foundation
 
-/// UTF-16 オフセット → 1-based 行番号の変換。編集のたびに作り直す
-/// (10k 行でも数ミリ秒。ボトルネックになったら差分更新に切り替える)。
+/// UTF-16 オフセット → 1-based 行番号の変換。編集のたびに作り直す。
+/// 行の定義はガターが行情報を得るレイアウトフラグメント(= NSTextParagraph)に合わせ、
+/// NSString の段落区切り("\n" / "\r" / "\r\n" / U+2029)で数える。
 struct LineIndex {
     /// 各行の先頭 UTF-16 オフセット(昇順)
     private let lineStarts: [Int]
 
     init(text: String) {
         let ns = text as NSString
+        let length = ns.length
         var starts = [0]
-        var i = 0
-        while i < ns.length {
-            if ns.character(at: i) == 10 {  // "\n"
-                starts.append(i + 1)
+        // character(at:) の 1 文字ずつの呼び出し(ネイティブ String をブリッジした場合は
+        // breadcrumbs 経由で特に遅い)を避け、チャンク単位で取り出して走査する
+        let chunkSize = 4096
+        var buffer = [unichar](repeating: 0, count: chunkSize)
+        var location = 0
+        var previousWasCR = false
+        while location < length {
+            let count = min(chunkSize, length - location)
+            buffer.withUnsafeMutableBufferPointer { pointer in
+                ns.getCharacters(pointer.baseAddress!, range: NSRange(location: location, length: count))
             }
-            i += 1
+            for i in 0..<count {
+                let c = buffer[i]
+                let offset = location + i
+                switch c {
+                case 0x0A:  // LF("\r\n" の LF は行頭を 1 回だけ登録する)
+                    if previousWasCR { starts[starts.count - 1] = offset + 1 } else { starts.append(offset + 1) }
+                    previousWasCR = false
+                case 0x0D:  // CR
+                    starts.append(offset + 1)
+                    previousWasCR = true
+                case 0x2029:  // PARAGRAPH SEPARATOR
+                    starts.append(offset + 1)
+                    previousWasCR = false
+                default:
+                    previousWasCR = false
+                }
+            }
+            location += count
         }
         self.lineStarts = starts
     }
@@ -34,4 +59,3 @@ struct LineIndex {
         return low + 1
     }
 }
-

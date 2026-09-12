@@ -5,12 +5,7 @@ import AppKit
 /// 行情報は MarkdownTextView の viewport レイアウトパスから供給される。
 @MainActor
 final class LineNumberGutterView: NSRulerView {
-    /// 見出し行に表示する折畳インジケータ(両 OS 共通の GutterFoldMarker)
-    typealias FoldMarker = GutterFoldMarker
-    /// 1 行ぶんの描画情報(両 OS 共通の GutterLine)
-    typealias Line = GutterLine
-
-    var lines: [Line] = [] {
+    var lines: [GutterLine] = [] {
         didSet { if lines != oldValue { needsDisplay = true } }
     }
     var numberFont: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
