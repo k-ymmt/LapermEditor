@@ -192,7 +192,7 @@
 			mainGroup = C495D9EE30064EC200E91416;
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
-				C495DA193006506F00E91416 /* XCLocalSwiftPackageReference "../../Laperm" */,
+				C495DA193006506F00E91416 /* XCLocalSwiftPackageReference "../../LapermEditor" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = C495D9FA30064EE700E91416 /* Products */;
@@ -598,9 +598,9 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		C495DA193006506F00E91416 /* XCLocalSwiftPackageReference "../../Laperm" */ = {
+		C495DA193006506F00E91416 /* XCLocalSwiftPackageReference "../../LapermEditor" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = ../../Laperm;
+			relativePath = ../../LapermEditor;
 		};
 /* End XCLocalSwiftPackageReference section */
 
