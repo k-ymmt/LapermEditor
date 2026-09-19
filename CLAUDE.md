@@ -1,4 +1,4 @@
-# Laperm
+# LapermEditor
 
 TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
 
@@ -20,7 +20,7 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     two source files with the same basename in one target.
 - Tests: `Tests/LapermEditorTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermEditorTests/UIKit/` are iOS
   (`#if canImport(UIKit)`). Run iOS tests with:
-  `xcodebuild test -scheme Laperm-Package -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.0'`
+  `xcodebuild test -scheme LapermEditor-Package -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.0'`
 - Example apps: `ExampleMacOS` and `ExampleiOS` schemes in `Example/Example.xcodeproj`.
 
 ## Verification

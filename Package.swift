@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "Laperm",
+    name: "LapermEditor",
     defaultLocalization: "en",
     platforms: [
         .macOS(.v27),
