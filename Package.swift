@@ -13,7 +13,7 @@ let package = Package(
         .library(name: "LapermCore", targets: ["LapermCore"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.4.0"),
+        .package(url: "https://github.com/swiftlang/swift-markdown.git", from: "0.8.0"),
     ],
     targets: [
         .target(
