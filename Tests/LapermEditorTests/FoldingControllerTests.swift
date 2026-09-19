@@ -2,7 +2,7 @@
 import AppKit
 import Foundation
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 /// controller に plan/text を同期させるヘルパ

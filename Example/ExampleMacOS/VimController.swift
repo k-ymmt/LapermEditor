@@ -1,5 +1,5 @@
 import AppKit
-import Laperm
+import LapermEditor
 import Observation
 
 /// VimEngine と MarkdownTextView をつなぐインターセプタ。

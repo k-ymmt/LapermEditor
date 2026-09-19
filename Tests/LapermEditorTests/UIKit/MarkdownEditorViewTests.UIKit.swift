@@ -1,7 +1,7 @@
 #if canImport(UIKit)
 import SwiftUI
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 @MainActor @Test func textViewDidChangeUpdatesBinding() {

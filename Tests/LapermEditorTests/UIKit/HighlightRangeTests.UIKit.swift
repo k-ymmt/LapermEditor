@@ -1,7 +1,7 @@
 #if canImport(UIKit)
 import Testing
 import UIKit
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 /// CJK 文字がマークアップより前にある行で、フォント(storage)と色(rendering)が

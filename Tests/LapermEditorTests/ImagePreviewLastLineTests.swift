@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import Testing
 import LapermCore
-@testable import Laperm
+@testable import LapermEditor
 
 /// 画像記法が文書の最終行(末尾に改行なし)にあるとき、プレビューがテキスト行の
 /// 上ではなく下に描かれ、かつ予約領域が usageBounds に含まれてクリップされないことを検証する。

@@ -2,7 +2,7 @@
 import Foundation
 import Testing
 
-@testable import Laperm
+@testable import LapermEditor
 
 @Test func lineNumbersForSimpleText() {
     let index = LineIndex(text: "one\ntwo\nthree")

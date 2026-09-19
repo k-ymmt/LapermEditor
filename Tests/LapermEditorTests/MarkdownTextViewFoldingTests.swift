@@ -2,7 +2,7 @@
 import AppKit
 import Foundation
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 // テキスト: "# A\n"(0-3) "body1\n"(4-9) "body2\n"(10-15) "# B\n"(16-19) "after"(20-24)

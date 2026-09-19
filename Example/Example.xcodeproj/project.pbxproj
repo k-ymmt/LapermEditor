@@ -7,8 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C495DA1B3006506F00E91416 /* Laperm in Frameworks */ = {isa = PBXBuildFile; productRef = C495DA1A3006506F00E91416 /* Laperm */; };
-		C4A1B0013100000000000001 /* Laperm in Frameworks */ = {isa = PBXBuildFile; productRef = C4A1B0003100000000000001 /* Laperm */; };
+		C495DA1B3006506F00E91416 /* LapermEditor in Frameworks */ = {isa = PBXBuildFile; productRef = C495DA1A3006506F00E91416 /* LapermEditor */; };
+		C4A1B0013100000000000001 /* LapermEditor in Frameworks */ = {isa = PBXBuildFile; productRef = C4A1B0003100000000000001 /* LapermEditor */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -39,13 +39,13 @@
 		C495D9F630064EE700E91416 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
-				C495DA1B3006506F00E91416 /* Laperm in Frameworks */,
+				C495DA1B3006506F00E91416 /* LapermEditor in Frameworks */,
 			);
 		};
 		C4A1B0043100000000000001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			files = (
-				C4A1B0013100000000000001 /* Laperm in Frameworks */,
+				C4A1B0013100000000000001 /* LapermEditor in Frameworks */,
 			);
 		};
 		C4A1B0223100000000000002 /* Frameworks */ = {
@@ -94,7 +94,7 @@
 			);
 			name = ExampleMacOS;
 			packageProductDependencies = (
-				C495DA1A3006506F00E91416 /* Laperm */,
+				C495DA1A3006506F00E91416 /* LapermEditor */,
 			);
 			productName = ExampleMacOS;
 			productReference = C495D9F930064EE700E91416 /* ExampleMacOS.app */;
@@ -115,7 +115,7 @@
 			);
 			name = ExampleiOS;
 			packageProductDependencies = (
-				C4A1B0003100000000000001 /* Laperm */,
+				C4A1B0003100000000000001 /* LapermEditor */,
 			);
 			productName = ExampleiOS;
 			productReference = C4A1B0023100000000000001 /* ExampleiOS.app */;
@@ -605,13 +605,13 @@
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
-		C495DA1A3006506F00E91416 /* Laperm */ = {
+		C495DA1A3006506F00E91416 /* LapermEditor */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = Laperm;
+			productName = LapermEditor;
 		};
-		C4A1B0003100000000000001 /* Laperm */ = {
+		C4A1B0003100000000000001 /* LapermEditor */ = {
 			isa = XCSwiftPackageProductDependency;
-			productName = Laperm;
+			productName = LapermEditor;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

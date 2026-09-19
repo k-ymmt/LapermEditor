@@ -3,7 +3,7 @@ import Foundation
 import Testing
 import UIKit
 import LapermCore
-@testable import Laperm
+@testable import LapermEditor
 
 @MainActor
 private func layoutTextView(string: String, imageHeight: CGFloat = 50) throws

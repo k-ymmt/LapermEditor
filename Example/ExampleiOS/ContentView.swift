@@ -1,4 +1,4 @@
-import Laperm
+import LapermEditor
 import SwiftUI
 import UIKit
 

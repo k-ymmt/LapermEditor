@@ -5,20 +5,20 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
 ## Platforms
 
 - `LapermCore` (parser / highlight model, Foundation-only) supports macOS 27+ and iOS 27+.
-- `Laperm` (UI layer) supports macOS 27+ (AppKit) and iOS 27+ (UIKit).
-  - `Sources/Laperm/*.swift`: shared code. `MarkdownEditorEngine` holds the highlight / folding /
+- `LapermEditor` (UI layer) supports macOS 27+ (AppKit) and iOS 27+ (UIKit).
+  - `Sources/LapermEditor/*.swift`: shared code. `MarkdownEditorEngine` holds the highlight / folding /
     image-preview logic and talks to the view through the `MarkdownEditorHost` protocol.
     `Platform.swift` defines `PlatformFont` / `PlatformColor` / `PlatformImage` (NSFont/UIFont etc.)
     used by the public `MarkdownTheme` API.
-  - `Sources/Laperm/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
+  - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
-  - `Sources/Laperm/UIKit/`: `MarkdownTextView: UITextView`, gutter as a viewport-pinned subview
+  - `Sources/LapermEditor/UIKit/`: `MarkdownTextView: UITextView`, gutter as a viewport-pinned subview
     (text is inset via `textContainerInset.left`), overlays. Links open via the long-press edit menu
     ("Open Link", localized in `Resources/Localizable.xcstrings`) or Cmd+tap; Cmd+hover underlines
     on iPad pointer. No input interceptor / insertion point style on iOS.
   - Platform-specific files carry a `.AppKit.swift` / `.UIKit.swift` suffix because Xcode rejects
     two source files with the same basename in one target.
-- Tests: `Tests/LapermTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermTests/UIKit/` are iOS
+- Tests: `Tests/LapermEditorTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermEditorTests/UIKit/` are iOS
   (`#if canImport(UIKit)`). Run iOS tests with:
   `xcodebuild test -scheme Laperm-Package -destination 'platform=iOS Simulator,name=iPhone 17,OS=27.0'`
 - Example apps: `ExampleMacOS` and `ExampleiOS` schemes in `Example/Example.xcodeproj`.

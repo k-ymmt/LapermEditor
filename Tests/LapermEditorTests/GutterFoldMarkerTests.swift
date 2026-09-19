@@ -2,7 +2,7 @@
 import AppKit
 import Foundation
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 
 @MainActor
 private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {

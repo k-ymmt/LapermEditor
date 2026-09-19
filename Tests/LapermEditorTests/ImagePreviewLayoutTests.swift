@@ -3,7 +3,7 @@ import AppKit
 import Foundation
 import Testing
 import LapermCore
-@testable import Laperm
+@testable import LapermEditor
 
 private func ref(location: Int, destination: String) -> ImageReference {
     ImageReference(

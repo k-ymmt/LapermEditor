@@ -1,7 +1,7 @@
 #if os(macOS)
 import AppKit
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 
 @Test func defaultThemeStylesAllHeadingLevels() {
     let theme = MarkdownTheme.default

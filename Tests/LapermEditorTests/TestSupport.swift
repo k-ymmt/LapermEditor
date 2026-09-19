@@ -1,6 +1,6 @@
 #if os(macOS)
 import AppKit
-@testable import Laperm
+@testable import LapermEditor
 
 /// characterRange の表示フレーム中心点(textView 座標)を求める
 @MainActor

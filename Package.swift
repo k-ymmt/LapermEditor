@@ -9,7 +9,7 @@ let package = Package(
         .iOS(.v27),
     ],
     products: [
-        .library(name: "Laperm", targets: ["Laperm"]),
+        .library(name: "LapermEditor", targets: ["LapermEditor"]),
         .library(name: "LapermCore", targets: ["LapermCore"]),
     ],
     dependencies: [
@@ -26,7 +26,7 @@ let package = Package(
             ],
         ),
         .target(
-            name: "Laperm",
+            name: "LapermEditor",
             dependencies: ["LapermCore"],
             resources: [.process("Resources")],
             swiftSettings: [
@@ -41,8 +41,8 @@ let package = Package(
             ],
         ),
         .testTarget(
-            name: "LapermTests",
-            dependencies: ["Laperm"],
+            name: "LapermEditorTests",
+            dependencies: ["LapermEditor"],
             swiftSettings: [
                 .enableUpcomingFeature("ApproachableConcurrency"),
             ],

@@ -1,7 +1,7 @@
 #if os(macOS)
 import SwiftUI
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 // NSViewRepresentable.Context は外部から構築できないため、makeNSView 経路は

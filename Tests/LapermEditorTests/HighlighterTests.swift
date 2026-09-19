@@ -1,7 +1,7 @@
 #if os(macOS)
 import AppKit
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 /// ビューなしで TextKit2 スタックを組むテストヘルパー

@@ -2,7 +2,7 @@
 import SwiftUI
 import Testing
 import UIKit
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 @MainActor @Test func commandTapOnLinkCallsOnOpenLink() {

@@ -2,7 +2,7 @@
 import AppKit
 import Foundation
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 
 /// テスト用の PNG データ(width×height の単色画像)
 func makePNGData(width: Int, height: Int) -> Data {
@@ -21,7 +21,7 @@ func makePNGData(width: Int, height: Int) -> Data {
 /// 一時ディレクトリに PNG を書き出して URL を返す
 func writeTempPNG(name: String, width: Int = 100, height: Int = 50) throws -> URL {
     let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("LapermTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("LapermEditorTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let url = dir.appendingPathComponent(name)
     try makePNGData(width: width, height: height).write(to: url)
@@ -37,7 +37,7 @@ func writeTempPNG(name: String, width: Int = 100, height: Int = 50) throws -> UR
 
 @Test @MainActor func defaultLoaderThrowsOnBrokenData() async throws {
     let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("LapermTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("LapermEditorTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let url = dir.appendingPathComponent("broken.png")
     try Data([0x00, 0x01, 0x02]).write(to: url)

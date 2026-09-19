@@ -1,7 +1,7 @@
 #if canImport(UIKit)
 import Testing
 import UIKit
-@testable import Laperm
+@testable import LapermEditor
 @testable import LapermCore
 
 @MainActor @Test func usesTextKit2Stack() {

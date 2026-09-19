@@ -2,7 +2,7 @@
 import Foundation
 import Testing
 import UIKit
-@testable import Laperm
+@testable import LapermEditor
 
 /// レイアウト済みの MarkdownTextView を作る(ヘッドレスでも TextKit2 のレイアウトは動く)
 @MainActor
@@ -52,7 +52,7 @@ func makePNGData(width: Int, height: Int) -> Data {
 /// 一時ディレクトリに PNG を書き出して URL を返す
 func writeTempPNG(name: String, width: Int = 100, height: Int = 50) throws -> URL {
     let dir = FileManager.default.temporaryDirectory
-        .appendingPathComponent("LapermTests-\(UUID().uuidString)", isDirectory: true)
+        .appendingPathComponent("LapermEditorTests-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let url = dir.appendingPathComponent(name)
     try makePNGData(width: width, height: height).write(to: url)

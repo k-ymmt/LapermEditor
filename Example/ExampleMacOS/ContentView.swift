@@ -6,7 +6,7 @@
 //
 
 import AppKit
-import Laperm
+import LapermEditor
 import SwiftUI
 
 struct ContentView: View {

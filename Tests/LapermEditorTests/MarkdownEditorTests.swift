@@ -1,6 +1,6 @@
 #if os(macOS)
 import Testing
-@testable import Laperm
+@testable import LapermEditor
 
 @Test func moduleLoads() {
     // Laperm が LapermCore を再エクスポートしていること

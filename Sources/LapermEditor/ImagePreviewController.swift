@@ -30,7 +30,7 @@ final class ImagePreviewController {
     /// ロード完了・失敗で予約高さが変わりうるときに呼ばれる(エンジンが spacing を再適用する)
     var onStateChange: (() -> Void)?
 
-    private static let logger = Logger(subsystem: "Laperm", category: "ImagePreview")
+    private static let logger = Logger(subsystem: "LapermEditor", category: "ImagePreview")
 
     /// 現在プレビュー対象の参照(isEnabled かつテーブル外のみ)
     private(set) var references: [ImageReference] = []
