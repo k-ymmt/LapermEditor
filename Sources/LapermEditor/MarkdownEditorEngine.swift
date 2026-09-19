@@ -111,7 +111,9 @@ final class MarkdownEditorEngine: NSObject {
     func highlightAll() {
         guard let contentStorage = host?.editorContentStorage,
               let layoutManager = host?.editorLayoutManager else { return }
-        highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+        // バックグラウンドへ回った場合、currentPlan は「パース待ちの空」であって「見出しの無い文書」ではない。
+        // ここで再同期すると折りたたみが全部消え、画像のロード状態も捨てられるので、完了通知まで待つ。
+        guard highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager) != .deferredToBackground else { return }
         resyncAfterHighlight()
     }
 

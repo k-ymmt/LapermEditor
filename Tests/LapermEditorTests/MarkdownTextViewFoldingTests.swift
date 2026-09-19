@@ -159,3 +159,21 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     #expect(textView.selectedRange() == NSRange(location: 22, length: 0))
 }
 #endif
+
+#if os(macOS)
+@MainActor @Test func highlightAllOfLongTextKeepsFoldsUntilParseCompletes() async {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.string = "# A\n\nbody a\n\n# B\n\nbody b\n"
+    textView.highlightAll()
+    textView.fold(at: 0)
+    #expect(textView.isFolded(at: 0))
+
+    textView.engine.highlighter.backgroundParseLengthThreshold = 4
+    textView.highlightAll()  // 文字は変わっていない: パース待ちの間も折りたたみは消えない
+    #expect(textView.isFolded(at: 0))
+    while let task = textView.engine.highlighter.activeBackgroundParse { await task.value }
+    #expect(textView.isFolded(at: 0))
+    #expect(textView.outline.count == 2)
+}
+#endif

@@ -319,7 +319,6 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     let font = storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont
     #expect(font == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
 }
-#endif
 
 // MARK: - 初回表示のバックグラウンドパース
 
@@ -358,6 +357,8 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     let (contentStorage, layoutManager) = makeTextKitStack("# Title\n\nbody")
     let highlighter = Highlighter(theme: .default)
     highlighter.backgroundParseLengthThreshold = 4
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
     highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
     #expect(highlighter.activeBackgroundParse != nil)
 
@@ -370,6 +371,45 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     #expect(highlighter.currentPlan == MarkdownParser().highlightPlan(for: storage.string))
     let font = storage.attribute(.font, at: storage.length - 3, effectiveRange: nil) as? NSFont
     #expect(font == MarkdownTheme.default.style(for: .strong)?.font)
+    // 古い結果の破棄からの再試行でも、エンジンへの完了通知は必ず届く(再同期の取りこぼし防止)。
+    #expect(fired >= 1)
+}
+
+@MainActor @Test func staleInitialParseRetriesInBackgroundAndNotifies() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title\n\nbody")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.backgroundParseLengthThreshold = 4
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    let storage = contentStorage.textStorage!
+    // 進行中の初回パースを世代更新で無効化する(短い文書なのでパースは 16ms 未満で終わる)。
+    storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "**b** ")
+    highlighter.noteEdit(editedRange: NSRange(location: 0, length: 6), changeInLength: 6)
+    await highlighter.activeBackgroundParse?.value
+    // 破棄経路の再試行も長文判定に従ってバックグラウンドへ回る(メインスレッドで同期パースしない)。
+    #expect(highlighter.activeBackgroundParse != nil)
+    while let task = highlighter.activeBackgroundParse { await task.value }
+    #expect(fired == 1)
+    #expect(highlighter.currentPlan == MarkdownParser().highlightPlan(for: storage.string))
+}
+
+@MainActor @Test func rehighlightAllOfLongTextClearsStaleAttributesBeforeParse() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("~~gone~~ # Title")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)  // 同期: 打ち消し線と色が付く
+    let storage = contentStorage.textStorage!
+    #expect(storage.attribute(.strikethroughStyle, at: 2, effectiveRange: nil) != nil)
+
+    storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: "plain text only here")
+    highlighter.backgroundParseLengthThreshold = 4
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    // バックグラウンドパース待ちの間、古い打ち消し線・色・フォントは残らない。
+    #expect(storage.attribute(.strikethroughStyle, at: 2, effectiveRange: nil) == nil)
+    #expect(storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont == MarkdownTheme.default.bodyFont)
+    #expect(renderingColor(at: 2, layoutManager) == MarkdownTheme.default.bodyColor)
+    while let task = highlighter.activeBackgroundParse { await task.value }
+    #expect(highlighter.currentPlan.spans.isEmpty)
 }
 
 @MainActor @Test func rehighlightAllOfLongTextWhileParseInFlightDiscardsStaleResult() async {
@@ -418,3 +458,4 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     await highlighter.activeBackgroundParse?.value
     #expect(highlighter.currentPlan.spans.count > 10_000)
 }
+#endif

@@ -89,11 +89,12 @@ public final class Highlighter {
     /// 文書が `backgroundParseLengthThreshold` より長ければ、全文を本文属性に戻してすぐ返り、
     /// パースはバックグラウンドで行って完了時に適用する(`onBackgroundFlushApplied` で通知)。
     /// 巨大な Note を開いたときにメインスレッドを塞がないため。
+    @discardableResult
     public func rehighlightAll(
         contentStorage: NSTextContentStorage,
         layoutManager: NSTextLayoutManager
-    ) {
-        guard let storage = contentStorage.textStorage else { return }
+    ) -> FlushOutcome {
+        guard let storage = contentStorage.textStorage else { return .nothingPending }
         // 進行中のバックグラウンドパース結果を無効化する。これを怠ると、旧テキストを
         // パースした結果が世代一致のまま新テキストへ適用されてしまう(誤ハイライト)。
         // 無効化されたタスクは破棄経路で flushPendingHighlight を再呼び出しするが、
@@ -108,7 +109,7 @@ public final class Highlighter {
             lastParseDuration = max(lastParseDuration, backgroundParseThreshold + .milliseconds(1))
             // 進行中のパースがあれば、その破棄経路が flushPendingHighlight を呼んで改めて始める。
             startBackgroundFlush(text: storage.string, contentStorage: contentStorage, layoutManager: layoutManager)
-            return
+            return .deferredToBackground
         }
         let clock = ContinuousClock()
         var plan = HighlightPlan()
@@ -121,6 +122,7 @@ public final class Highlighter {
         )
         currentPlan = plan
         pendingEditedRanges = []
+        return .applied
     }
 
     /// テーマ変更を現在の計画に適用し直す。再パースはしない(テキストは変わっていないため)。
@@ -271,7 +273,20 @@ public final class Highlighter {
             } else {
                 // 古い結果は破棄。パース中に来た編集の highlightNow は active ガードで
                 // 素通りしているため、ここで自分から再フラッシュしないと取りこぼす。
-                self.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager)
+                // 短い旧文書のパースが速く終わっても、長文はバックグラウンド経路に留める
+                // (同期経路へ戻るとメインスレッドで全文パースし、IME ガードも通らない)。
+                if let storage = contentStorage.textStorage, storage.length > self.backgroundParseLengthThreshold {
+                    self.lastParseDuration = max(self.lastParseDuration, self.backgroundParseThreshold + .milliseconds(1))
+                }
+                if self.shouldDeferApply?() == true {
+                    self.applyDeferred?()
+                    return
+                }
+                // 同期で適用できた場合も、エンジンは先の flush で `.deferredToBackground` を受けて
+                // 再同期を見送っているので、ここで完了を知らせる。
+                if self.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager) == .applied {
+                    self.onBackgroundFlushApplied?()
+                }
             }
         }
     }
