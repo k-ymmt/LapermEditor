@@ -25,7 +25,7 @@ public final class MarkdownTextView: NSTextView {
             engine.theme = newValue
             backgroundColor = newValue.backgroundColor
             font = newValue.bodyFont
-            engine.highlightAll()
+            engine.applyThemeChange()
         }
     }
 

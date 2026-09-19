@@ -15,6 +15,7 @@ public struct MarkdownEditorView {
     private var onOpenLink: ((URL) -> Bool)?
     private var onOutlineChange: (([OutlineItem]) -> Void)?
     private var foldingEnabled = true
+    private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
@@ -89,6 +90,13 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// 編集支援(リスト継続・括弧補完など)の個別 ON/OFF(デフォルトは全部有効)。
+    public func editingOptions(_ options: EditingOptions) -> MarkdownEditorView {
+        var copy = self
+        copy.editingOptions = options
+        return copy
+    }
+
     /// 命令的 API(scrollToHeading / fold 等)の呼び出し口を接続する。
     public func editorProxy(_ proxy: MarkdownEditorProxy) -> MarkdownEditorView {
         var copy = self
@@ -113,6 +121,7 @@ public struct MarkdownEditorView {
             { items in DispatchQueue.main.async { callback(items) } }
         }
         textView.isFoldingEnabled = foldingEnabled
+        textView.editingOptions = editingOptions
         proxy?.textView = textView
     }
 }

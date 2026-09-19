@@ -22,6 +22,12 @@ public final class Highlighter {
     /// spec: 「パースが 16ms を超える巨大文書ではパースをバックグラウンドキューで行う」
     public var backgroundParseThreshold: Duration = .milliseconds(16)
 
+    /// 全文再ハイライト(初回表示・全文置換)で、文書がこの長さ(UTF-16 単位)を超えていたら
+    /// メインスレッドで同期パースせず、本文属性だけ先に適用してバックグラウンドでパースする。
+    /// 1 万行(約 60 万文字)の同期パースは 90ms 以上かかり、Note を開く操作が固まるため。
+    /// 既定値はおよそ 16ms で同期パースできる長さ。
+    public var backgroundParseLengthThreshold: Int = 64 * 1024
+
     /// バックグラウンドパース完了時、今すぐ属性適用してよいかを呼び出し側(エンジン)に問い合わせる。
     /// true を返すと適用を見送る(IME 変換中など)。MarkdownEditorEngine.highlightNow() が持つ
     /// marked text ガードと同じ判断をここでも効かせるためのフック。
@@ -77,7 +83,12 @@ public final class Highlighter {
         return attributes
     }
 
-    /// 全文を再ハイライトする(初期表示・テーマ変更・プログラムによる全文置換時)。
+    /// 全文を再ハイライトする(初期表示・プログラムによる全文置換時)。
+    /// テーマだけが変わった場合は再パースの要らない `reapplyTheme` を使う。
+    ///
+    /// 文書が `backgroundParseLengthThreshold` より長ければ、全文を本文属性に戻してすぐ返り、
+    /// パースはバックグラウンドで行って完了時に適用する(`onBackgroundFlushApplied` で通知)。
+    /// 巨大な Note を開いたときにメインスレッドを塞がないため。
     public func rehighlightAll(
         contentStorage: NSTextContentStorage,
         layoutManager: NSTextLayoutManager
@@ -86,12 +97,22 @@ public final class Highlighter {
         // 進行中のバックグラウンドパース結果を無効化する。これを怠ると、旧テキストを
         // パースした結果が世代一致のまま新テキストへ適用されてしまう(誤ハイライト)。
         // 無効化されたタスクは破棄経路で flushPendingHighlight を再呼び出しするが、
-        // 直下で pendingEditedRanges を空にするため無害な no-op になる。
+        // 同期経路では直下で pendingEditedRanges を空にするため無害な no-op になる。
         generation += 1
+        let fullRange = NSRange(location: 0, length: storage.length)
+        if storage.length > backgroundParseLengthThreshold {
+            // 先にプレーンテキスト(本文属性)を見せる。以後の flush もバックグラウンド経路に乗せる。
+            apply(spans: [], resetting: [fullRange], contentStorage: contentStorage, layoutManager: layoutManager)
+            currentPlan = HighlightPlan()
+            pendingEditedRanges = [fullRange]
+            lastParseDuration = max(lastParseDuration, backgroundParseThreshold + .milliseconds(1))
+            // 進行中のパースがあれば、その破棄経路が flushPendingHighlight を呼んで改めて始める。
+            startBackgroundFlush(text: storage.string, contentStorage: contentStorage, layoutManager: layoutManager)
+            return
+        }
         let clock = ContinuousClock()
         var plan = HighlightPlan()
         lastParseDuration = clock.measure { plan = parser.highlightPlan(for: storage.string) }
-        let fullRange = NSRange(location: 0, length: storage.length)
         apply(
             spans: plan.spans,
             resetting: [fullRange],
@@ -100,6 +121,22 @@ public final class Highlighter {
         )
         currentPlan = plan
         pendingEditedRanges = []
+    }
+
+    /// テーマ変更を現在の計画に適用し直す。再パースはしない(テキストは変わっていないため)。
+    /// バックグラウンドパースが進行中なら、その完了時に新テーマで全体が適用される。
+    public func reapplyTheme(
+        contentStorage: NSTextContentStorage,
+        layoutManager: NSTextLayoutManager
+    ) {
+        guard let storage = contentStorage.textStorage else { return }
+        let fullRange = NSRange(location: 0, length: storage.length)
+        apply(
+            spans: currentPlan.spans,
+            resetting: [fullRange],
+            contentStorage: contentStorage,
+            layoutManager: layoutManager
+        )
     }
 
     /// NSTextStorageDelegate の didProcessEditing(.editedCharacters)から呼ぶ。

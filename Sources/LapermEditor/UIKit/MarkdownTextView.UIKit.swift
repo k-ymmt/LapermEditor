@@ -49,7 +49,7 @@ public final class MarkdownTextView: UITextView {
             backgroundColor = newValue.backgroundColor
             font = newValue.bodyFont
             textColor = newValue.bodyColor
-            engine.highlightAll()
+            engine.applyThemeChange()
         }
     }
 

@@ -58,6 +58,7 @@ struct ContentView: View {
         MarkdownEditorView(text: $text)
             .showsLineNumbers(true)
             .foldingEnabled(true)
+            .editingOptions(EditingOptions(completesPairs: false))
             .onOutlineChange { outline = $0 }
             .onOpenLink { url in
                 // Return true when the link has been handled.

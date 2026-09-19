@@ -148,3 +148,20 @@ import Testing
     #expect(openedURLs == [URL(string: "https://example.com")!])
 }
 #endif
+
+#if os(macOS)
+@MainActor @Test func editingOptionsModifierIsAppliedToTextView() {
+    var text = ""
+    let binding = Binding(get: { text }, set: { text = $0 })
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    #expect(textView.editingOptions == EditingOptions())
+
+    let options = EditingOptions(continuesLists: false, completesPairs: false)
+    MarkdownEditorView(text: binding).editingOptions(options).apply(to: textView)
+    #expect(textView.editingOptions == options)
+
+    MarkdownEditorView(text: binding).apply(to: textView)
+    #expect(textView.editingOptions == EditingOptions())
+}
+#endif

@@ -106,11 +106,20 @@ final class MarkdownEditorEngine: NSObject {
 
     // MARK: - ハイライト
 
-    /// 全文を再ハイライトする。テキストをプログラムで差し替えた後・テーマ変更後に呼ぶ。
+    /// 全文を再ハイライトする。テキストをプログラムで差し替えた後に呼ぶ。
+    /// 巨大文書ではパースがバックグラウンドへ回り、完了時に onBackgroundFlushApplied で再同期される。
     func highlightAll() {
         guard let contentStorage = host?.editorContentStorage,
               let layoutManager = host?.editorLayoutManager else { return }
         highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+        resyncAfterHighlight()
+    }
+
+    /// テーマ変更を反映する。再パースせず、現在の計画に新しい属性を適用し直す。
+    func applyThemeChange() {
+        guard let contentStorage = host?.editorContentStorage,
+              let layoutManager = host?.editorLayoutManager else { return }
+        highlighter.reapplyTheme(contentStorage: contentStorage, layoutManager: layoutManager)
         resyncAfterHighlight()
     }
 

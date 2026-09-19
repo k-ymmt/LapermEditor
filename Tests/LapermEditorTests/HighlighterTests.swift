@@ -320,3 +320,101 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     #expect(font == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
 }
 #endif
+
+// MARK: - 初回表示のバックグラウンドパース
+
+@MainActor @Test func rehighlightAllOfLongTextParsesInBackgroundAndShowsBodyFirst() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title\n\nbody text")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.backgroundParseLengthThreshold = 4  // 文書は必ず「長い」扱い
+    var fired = 0
+    highlighter.onBackgroundFlushApplied = { fired += 1 }
+
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    // すぐ返り、まだ本文属性だけ(見出しフォントは未適用)。
+    let storage = contentStorage.textStorage!
+    #expect(highlighter.currentPlan.spans.isEmpty)
+    #expect(highlighter.activeBackgroundParse != nil)
+    #expect(storage.attribute(.font, at: 3, effectiveRange: nil) as? NSFont == MarkdownTheme.default.bodyFont)
+    #expect(fired == 0)
+
+    await highlighter.activeBackgroundParse?.value
+    #expect(fired == 1)
+    #expect(highlighter.currentPlan == MarkdownParser().highlightPlan(for: storage.string))
+    #expect(storage.attribute(.font, at: 3, effectiveRange: nil) as? NSFont == MarkdownTheme.default.style(for: .heading(level: 1))?.font)
+    #expect(renderingColor(at: 0, layoutManager) == MarkdownTheme.default.renderingColor(for: .syntaxMarker))
+}
+
+@MainActor @Test func shortTextStillParsesSynchronouslyOnRehighlightAll() {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    #expect(highlighter.activeBackgroundParse == nil)
+    #expect(!highlighter.currentPlan.spans.isEmpty)
+}
+
+@MainActor @Test func editWhileInitialBackgroundParseIsRunningEndsWithCurrentPlan() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title\n\nbody")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.backgroundParseLengthThreshold = 4
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    #expect(highlighter.activeBackgroundParse != nil)
+
+    let storage = contentStorage.textStorage!
+    storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: " **b**")
+    highlighter.noteEdit(editedRange: NSRange(location: storage.length - 6, length: 6), changeInLength: 6)
+    highlighter.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    while let task = highlighter.activeBackgroundParse { await task.value }
+    #expect(highlighter.currentPlan == MarkdownParser().highlightPlan(for: storage.string))
+    let font = storage.attribute(.font, at: storage.length - 3, effectiveRange: nil) as? NSFont
+    #expect(font == MarkdownTheme.default.style(for: .strong)?.font)
+}
+
+@MainActor @Test func rehighlightAllOfLongTextWhileParseInFlightDiscardsStaleResult() async {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title\n\nbody")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.backgroundParseLengthThreshold = 4
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    let storage = contentStorage.textStorage!
+    storage.replaceCharacters(in: NSRange(location: 0, length: storage.length), with: "**changed** text")
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    while let task = highlighter.activeBackgroundParse { await task.value }
+    #expect(highlighter.currentPlan == MarkdownParser().highlightPlan(for: storage.string))
+    #expect(storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont == MarkdownTheme.default.style(for: .strong)?.font)
+}
+
+@MainActor @Test func reapplyThemeUsesCurrentPlanWithoutReparsing() {
+    let (contentStorage, layoutManager) = makeTextKitStack("# Title")
+    let highlighter = Highlighter(theme: .default)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    let plan = highlighter.currentPlan
+
+    var theme = MarkdownTheme.default
+    theme.styles[.heading(level: 1)] = .init(font: .systemFont(ofSize: 40, weight: .black))
+    highlighter.theme = theme
+    highlighter.reapplyTheme(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    #expect(highlighter.currentPlan == plan)
+    #expect(highlighter.activeBackgroundParse == nil)
+    let font = contentStorage.textStorage!.attribute(.font, at: 3, effectiveRange: nil) as? NSFont
+    #expect(font?.pointSize == 40)
+}
+
+@MainActor @Test func rehighlightAllOf10kLinesReturnsQuicklyOnMainThread() async {
+    let text = (1...10_000).map { "# Heading \($0)\n\nparagraph \($0) with **bold** and `code` and a [link](https://example.com)\n" }.joined()
+    let (contentStorage, layoutManager) = makeTextKitStack(text)
+    let highlighter = Highlighter(theme: .default)
+    let clock = ContinuousClock()
+    let elapsed = clock.measure {
+        highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    }
+    // 同期パースは 1 万行で 90ms 以上(release)。ここでは属性のリセットだけなので余裕を持って 200ms。
+    #expect(elapsed < .milliseconds(200), "rehighlightAll took \(elapsed)")
+    #expect(highlighter.activeBackgroundParse != nil)
+    await highlighter.activeBackgroundParse?.value
+    #expect(highlighter.currentPlan.spans.count > 10_000)
+}
