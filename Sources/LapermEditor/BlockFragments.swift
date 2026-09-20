@@ -32,19 +32,101 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     }
 }
 
-/// コードブロック: テキスト背面に角丸背景
+/// コードブロック: テキストコンテナの全幅を段落の高さぶん塗る。
+///
+/// 1 つのコードブロックは段落(= 行)ごとのフラグメントに分かれるが、隣り合う段落の
+/// 矩形を隙間なく連ね、ブロック先頭の段落だけ上の角、末尾の段落だけ下の角を丸めることで
+/// 全体が 1 つの角丸の箱に見えるようにする。上下の内側余白はフラグメント側では作らず、
+/// `BlockFragmentProvider` が先頭 / 末尾段落の段落スタイル(paragraphSpacingBefore /
+/// paragraphSpacing)で確保した高さを、ここではそのまま塗るだけにする
+/// (行の位置をずらすとキャレットやヒットテストとずれるため)。
 final class CodeBlockFragment: ReservingTextLayoutFragment {
+    static let cornerRadius: CGFloat = 4
+
     var fillColor: PlatformColor = .quaternarySystemFill
+    /// ブロックの先頭段落(上の角を丸める)
+    var roundsTop = false
+    /// ブロックの末尾段落(下の角を丸める)
+    var roundsBottom = false
+
+    /// 背景矩形(フラグメント原点基準)。`layoutFragmentFrame` はテキストの使用幅しか持たず、
+    /// 原点 x は lineFragmentPadding ぶんずれているので、コンテナ左端(x = -frame.minX)から
+    /// コンテナ幅ぶんを塗る。高さは段落スタイルの上下余白・予約領域込みのフレーム高。
+    var backgroundRect: CGRect {
+        let frame = layoutFragmentFrame
+        let containerWidth = textLayoutManager?.textContainer?.size.width ?? frame.width
+        return CGRect(x: -frame.minX, y: 0, width: containerWidth, height: frame.height)
+    }
+
+    /// 描画面を背景矩形まで広げる。UITextView はフラグメントごとの描画面をこの境界で
+    /// クリップするため、これを広げないと文字の周囲しか塗れない。
+    override var renderingSurfaceBounds: CGRect {
+        super.renderingSurfaceBounds.union(backgroundRect)
+    }
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let rect = renderingSurfaceBounds.insetBy(dx: 2, dy: 0)
-        let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
+        // 段落ごとの矩形が隣接するので、辺をデバイスピクセルに揃えてアンチエイリアスの
+        // 継ぎ目(薄い線)が出ないようにする。
+        let rect = Self.pixelAligned(backgroundRect, in: context)
+        let path = CGPath.blockBackground(
+            in: rect, cornerRadius: Self.cornerRadius,
+            roundsTop: roundsTop, roundsBottom: roundsBottom)
         context.setFillColor(fillColor.cgColor)
         context.addPath(path)
         context.fillPath()
         context.restoreGState()
         super.draw(at: point, in: context)
+    }
+
+    /// rect の各辺をデバイスピクセル境界に丸めたもの(ユーザー座標で返す)。
+    static func pixelAligned(_ rect: CGRect, in context: CGContext) -> CGRect {
+        let device = context.convertToDeviceSpace(rect).standardized
+        let snapped = CGRect(
+            x: device.minX.rounded(), y: device.minY.rounded(),
+            width: device.maxX.rounded() - device.minX.rounded(),
+            height: device.maxY.rounded() - device.minY.rounded())
+        return context.convertToUserSpace(snapped).standardized
+    }
+}
+
+extension CGPath {
+    /// 上下の角を個別に丸められる矩形パス(y 下向きのフラグメント座標を前提に、
+    /// minY 側を「上」として扱う)。
+    static func blockBackground(
+        in rect: CGRect, cornerRadius: CGFloat, roundsTop: Bool, roundsBottom: Bool
+    ) -> CGPath {
+        let radius = max(0, min(cornerRadius, rect.width / 2, rect.height / 2))
+        let top = roundsTop ? radius : 0
+        let bottom = roundsBottom ? radius : 0
+        let path = CGMutablePath()
+        path.move(to: CGPoint(x: rect.minX + top, y: rect.minY))
+        path.addLine(to: CGPoint(x: rect.maxX - top, y: rect.minY))
+        if top > 0 {
+            path.addArc(
+                tangent1End: CGPoint(x: rect.maxX, y: rect.minY),
+                tangent2End: CGPoint(x: rect.maxX, y: rect.minY + top), radius: top)
+        }
+        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY - bottom))
+        if bottom > 0 {
+            path.addArc(
+                tangent1End: CGPoint(x: rect.maxX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.maxX - bottom, y: rect.maxY), radius: bottom)
+        }
+        path.addLine(to: CGPoint(x: rect.minX + bottom, y: rect.maxY))
+        if bottom > 0 {
+            path.addArc(
+                tangent1End: CGPoint(x: rect.minX, y: rect.maxY),
+                tangent2End: CGPoint(x: rect.minX, y: rect.maxY - bottom), radius: bottom)
+        }
+        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + top))
+        if top > 0 {
+            path.addArc(
+                tangent1End: CGPoint(x: rect.minX, y: rect.minY),
+                tangent2End: CGPoint(x: rect.minX + top, y: rect.minY), radius: top)
+        }
+        path.closeSubpath()
+        return path
     }
 }
 
@@ -79,7 +161,7 @@ final class ThematicBreakFragment: ReservingTextLayoutFragment {
     }
 }
 
-/// テーブル: テキスト背面に角丸背景(コードブロックと同型)
+/// テーブル: テキスト背面に角丸背景
 final class TableBackgroundFragment: ReservingTextLayoutFragment {
     var fillColor: PlatformColor = .quaternarySystemFill
 
@@ -94,4 +176,3 @@ final class TableBackgroundFragment: ReservingTextLayoutFragment {
         super.draw(at: point, in: context)
     }
 }
-

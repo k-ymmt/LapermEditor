@@ -116,20 +116,60 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return style.paragraphSpacing
     }
 
-    /// 段落(textElement)に適用する装飾。段落レンジと装飾レンジの交差で判定する。
-    /// 段落の先頭オフセットだけで判定すると、インデントされたコードブロック(`\tcode`)や
-    /// リスト項目内の引用(`- > quote`)のように装飾レンジがインデント後から始まる場合に
-    /// 先頭行だけ装飾されない。
-    private func decoration(
-        for textElement: NSTextElement, in contentManager: NSTextContentManager
-    ) -> BlockDecoration? {
+    /// 段落(textElement)の文書内レンジ。
+    private func paragraphRange(
+        of textElement: NSTextElement, in contentManager: NSTextContentManager
+    ) -> NSRange? {
         guard let elementRange = textElement.elementRange else { return nil }
         let start = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
         let end = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.endLocation)
-        let paragraph = NSRange(location: start, length: max(0, end - start))
-        return decorations.first {
-            NSLocationInRange(start, $0.range) || NSIntersectionRange(paragraph, $0.range).length > 0
-        }?.kind
+        return NSRange(location: start, length: max(0, end - start))
+    }
+
+    /// 段落レンジに適用する装飾。段落レンジと装飾レンジの交差で判定する。
+    /// 段落の先頭オフセットだけで判定すると、インデントされたコードブロック(`\tcode`)や
+    /// リスト項目内の引用(`- > quote`)のように装飾レンジがインデント後から始まる場合に
+    /// 先頭行だけ装飾されない。
+    private func decoration(forParagraph paragraph: NSRange) -> Decoration? {
+        decorations.first {
+            NSLocationInRange(paragraph.location, $0.range)
+                || NSIntersectionRange(paragraph, $0.range).length > 0
+        }
+    }
+
+    /// コードブロック内での段落の位置(先頭段落か / 末尾段落か)。
+    /// コードブロックでない段落は nil。装飾レンジはインデント後から始まり、
+    /// 末尾の改行を含まないことがあるので、段落が装飾の始点 / 終点を含むかで判定する。
+    struct CodeBlockEdges: Equatable {
+        var isFirst: Bool
+        var isLast: Bool
+    }
+
+    func codeBlockEdges(forParagraph paragraph: NSRange) -> CodeBlockEdges? {
+        guard let decoration = decoration(forParagraph: paragraph), decoration.kind == .codeBlock
+        else { return nil }
+        return CodeBlockEdges(
+            isFirst: paragraph.location <= decoration.range.location,
+            isLast: NSMaxRange(paragraph) >= NSMaxRange(decoration.range))
+    }
+
+    /// コードブロックの先頭 / 末尾段落に上下余白の段落スタイルを付けた表示用の段落を返す
+    /// (NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:) 用)。
+    /// それ以外の段落は nil(既定の段落をそのまま使う)。textStorage の属性は変更しない。
+    func textParagraph(with range: NSRange, in contentStorage: NSTextContentStorage) -> NSTextParagraph? {
+        guard range.length > 0,
+              let edges = codeBlockEdges(forParagraph: range),
+              edges.isFirst || edges.isLast,
+              let storage = contentStorage.textStorage,
+              NSMaxRange(range) <= storage.length
+        else { return nil }
+        let text = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
+        let existing = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        let style = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        if edges.isFirst { style.paragraphSpacingBefore = theme.codeBlockVerticalPadding }
+        if edges.isLast { style.paragraphSpacing = theme.codeBlockVerticalPadding }
+        text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
+        return NSTextParagraph(attributedString: text)
     }
 
     func textLayoutManager(
@@ -141,16 +181,23 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // 確保できるよう `reservedBottomHeight` を設定する(下記いずれの分岐でも共通)。
         let reservation = reservedBottomHeight(for: textElement)
         guard let contentManager = textLayoutManager.textContentManager,
-              let kind = decoration(for: textElement, in: contentManager) else {
+              let paragraph = paragraphRange(of: textElement, in: contentManager),
+              let decoration = decoration(forParagraph: paragraph) else {
             let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
             fragment.reservedBottomHeight = reservation
             return fragment
         }
-        switch kind {
+        switch decoration.kind {
         case .codeBlock:
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.codeBlockBackgroundColor
+            let edges = codeBlockEdges(forParagraph: paragraph)
+            fragment.roundsTop = edges?.isFirst ?? false
+            fragment.roundsBottom = edges?.isLast ?? false
+            // 末尾段落の下余白は paragraphSpacing で確保するが、文書末尾では
+            // layoutFragmentFrame に算入されない(基底クラスのコメント参照)ので予約で補う。
             fragment.reservedBottomHeight = reservation
+                ?? (edges?.isLast == true ? theme.codeBlockVerticalPadding : nil)
             return fragment
         case .blockquote:
             let fragment = BlockquoteFragment(textElement: textElement, range: textElement.elementRange)

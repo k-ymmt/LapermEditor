@@ -32,6 +32,10 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     public var thematicBreakLineColor: PlatformColor
     public var styles: [SyntaxKind: Style]
     public var tableBackgroundColor: PlatformColor
+    /// コードブロックの箱の内側に取る上下の余白(先頭行の上・末尾行の下)。
+    /// 段落スタイル(paragraphSpacingBefore / paragraphSpacing)で確保するため、
+    /// 文書の先頭段落から始まるコードブロックには上の余白が付かない(TextKit の仕様)。
+    public var codeBlockVerticalPadding: CGFloat
 
     public init(
         bodyFont: PlatformFont,
@@ -41,7 +45,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         blockquoteBarColor: PlatformColor,
         thematicBreakLineColor: PlatformColor,
         styles: [SyntaxKind: Style],
-        tableBackgroundColor: PlatformColor = .quaternarySystemFill
+        tableBackgroundColor: PlatformColor = .quaternarySystemFill,
+        codeBlockVerticalPadding: CGFloat = 4
     ) {
         self.bodyFont = bodyFont
         self.bodyColor = bodyColor
@@ -51,6 +56,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         self.thematicBreakLineColor = thematicBreakLineColor
         self.styles = styles
         self.tableBackgroundColor = tableBackgroundColor
+        self.codeBlockVerticalPadding = codeBlockVerticalPadding
     }
 
     public func style(for kind: SyntaxKind) -> Style? {

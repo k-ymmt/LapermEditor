@@ -43,6 +43,9 @@ final class MarkdownEditorEngine: NSObject {
     let imagePreviewController = ImagePreviewController()
     let foldingController = FoldingController()
     let fragmentProvider: BlockFragmentProvider
+    /// NSTextContentStorage の delegate(折畳の列挙除外とコードブロック段落の表示用スタイル)。
+    /// delegate は weak 参照なのでここで保持する。
+    private var contentStorageDelegate: EditorContentStorageDelegate?
     weak var host: (any MarkdownEditorHost)?
 
     private var highlightScheduled = false
@@ -105,9 +108,13 @@ final class MarkdownEditorEngine: NSObject {
         // NSTextContentStorage は NSTextStorageObserving 経由で storage を監視するため
         // delegate スロットは空いている
         contentStorage.textStorage?.delegate = self
-        // NSTextContentStorage の delegate は未使用なので折畳コントローラが使う。
-        // shouldEnumerate で折畳中の本体段落を列挙から除外する(ストレージ無変更)。
-        contentStorage.delegate = foldingController
+        // NSTextContentStorage の delegate は未使用なのでエディタ側で使う:
+        // shouldEnumerate で折畳中の本体段落を列挙から除外し、textParagraphWith で
+        // コードブロック先頭 / 末尾段落に上下余白の段落スタイルを付ける(いずれもストレージ無変更)。
+        let delegate = EditorContentStorageDelegate(
+            foldingController: foldingController, fragmentProvider: fragmentProvider)
+        contentStorageDelegate = delegate
+        contentStorage.delegate = delegate
         fragmentProvider.fallbackDelegate = layoutManager.delegate
         layoutManager.delegate = fragmentProvider
     }
@@ -335,10 +342,14 @@ final class MarkdownEditorEngine: NSObject {
         let endOffset = contentManager.offset(
             from: contentManager.documentRange.location,
             to: fragment.rangeInElement.endLocation)
+        // 段落スタイルの paragraphSpacingBefore(コードブロック先頭の上余白)ぶん、
+        // 最初のテキスト行はフラグメント上端より下から始まる。行番号は行に揃える。
+        let frame = fragment.layoutFragmentFrame
+        let firstLineTop = fragment.textLineFragments.first?.typographicBounds.minY ?? 0
         return GutterLine(
             number: lineNumber(atOffset: offset),
-            yInTextView: fragment.layoutFragmentFrame.minY + host.editorTextContainerOrigin.y,
-            heightInTextView: fragment.layoutFragmentFrame.height,
+            yInTextView: frame.minY + firstLineTop + host.editorTextContainerOrigin.y,
+            heightInTextView: max(0, frame.height - firstLineTop),
             foldMarker: foldMarker(inParagraphFrom: offset, to: endOffset))
     }
 
