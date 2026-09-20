@@ -25,7 +25,27 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// nonisolated(unsafe): この delegate は AppKit のメインスレッド上のテキストレイアウト機構から
     /// responds(to:)/forwardingTarget(for:) 経由で同期的にのみ参照されるため安全。
     nonisolated(unsafe) weak var fallbackDelegate: NSTextLayoutManagerDelegate?
-    private var decorations: [Decoration] = []
+    private var decorations: [Decoration] = [] {
+        didSet { rebuildIndex() }
+    }
+    /// 段落 → 装飾の検索用索引。`decorations` を開始位置(同位置なら計画順)で安定ソートしたものと、
+    /// その各位置までの終端の最大値(単調増加)。1 万行の文書は段落ごとにこの検索を行う
+    /// (フラグメント生成と表示用段落の生成)ので、線形探索だと 段落数 × 装飾数 になり
+    /// 初回レイアウトが 0.5 秒単位で遅くなる。
+    private var sortedDecorations: [Decoration] = []
+    private var prefixMaxEnd: [Int] = []
+
+    private func rebuildIndex() {
+        sortedDecorations = decorations.enumerated()
+            .sorted { ($0.element.range.location, $0.offset) < ($1.element.range.location, $1.offset) }
+            .map(\.element)
+        prefixMaxEnd.removeAll(keepingCapacity: true)
+        var maxEnd = Int.min
+        for decoration in sortedDecorations {
+            maxEnd = max(maxEnd, NSMaxRange(decoration.range))
+            prefixMaxEnd.append(maxEnd)
+        }
+    }
 
     init(theme: MarkdownTheme) {
         self.theme = theme
@@ -129,9 +149,30 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     /// 段落レンジに適用する装飾。段落レンジと装飾レンジの交差で判定する。
     /// 段落の先頭オフセットだけで判定すると、インデントされたコードブロック(`\tcode`)や
     /// リスト項目内の引用(`- > quote`)のように装飾レンジがインデント後から始まる場合に
-    /// 先頭行だけ装飾されない。
-    private func decoration(forParagraph paragraph: NSRange) -> Decoration? {
-        decorations.first {
+    /// 先頭行だけ装飾されない。複数の装飾が重なる段落(引用内のコードブロックなど)では
+    /// 開始位置が最も早いもの(同位置なら計画順 = 外側のブロック)を返す。
+    ///
+    /// 候補は索引で絞る: 一致する装飾は終端が段落の先頭より後(prefixMaxEnd が単調増加
+    /// なので二分探索できる下限)かつ開始位置が段落の終端より前(上限)にしかない。
+    func decoration(forParagraph paragraph: NSRange) -> Decoration? {
+        guard !sortedDecorations.isEmpty else { return nil }
+        // 下限: prefixMaxEnd[i] > paragraph.location となる最初の i
+        var low = 0
+        var high = prefixMaxEnd.count
+        while low < high {
+            let mid = (low + high) / 2
+            if prefixMaxEnd[mid] > paragraph.location { high = mid } else { low = mid + 1 }
+        }
+        let start = low
+        // 上限: 開始位置が limit 以上になる最初の i(空段落は先頭を含む装飾だけが対象)
+        let limit = paragraph.length > 0 ? NSMaxRange(paragraph) : paragraph.location + 1
+        high = sortedDecorations.count
+        while low < high {
+            let mid = (low + high) / 2
+            if sortedDecorations[mid].range.location >= limit { high = mid } else { low = mid + 1 }
+        }
+        guard start < low else { return nil }
+        return sortedDecorations[start..<low].first {
             NSLocationInRange(paragraph.location, $0.range)
                 || NSIntersectionRange(paragraph, $0.range).length > 0
         }

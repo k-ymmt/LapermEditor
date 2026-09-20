@@ -20,15 +20,26 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
 
     override var layoutFragmentFrame: CGRect {
         var frame = super.layoutFragmentFrame
-        guard let reservedBottomHeight else { return frame }
+        guard let reservedBottomHeight, reservationApplies else { return frame }
         let needed = textLinesBottom + reservedBottomHeight
         if frame.height < needed { frame.size.height = needed }
         return frame
     }
 
+    /// サブクラスが予約を見送りたい状況(既に高さが確保されている等)で false を返す。
+    var reservationApplies: Bool { true }
+
     /// テキスト行群の下端(フラグメント原点からの相対値)。
     var textLinesBottom: CGFloat {
         textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
+    }
+
+    /// 文書が改行で終わるとき、最後の段落のフラグメントに付く文字数ゼロの「追加行」
+    /// (次に入力する行のためのキャレット位置)。それ以外は nil。
+    var trailingExtraLineFragment: NSTextLineFragment? {
+        guard textLineFragments.count > 1, let last = textLineFragments.last,
+              last.characterRange.length == 0 else { return nil }
+        return last
     }
 }
 
@@ -49,14 +60,34 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
     /// ブロックの末尾段落(下の角を丸める)
     var roundsBottom = false
 
+    /// これ以上のコンテナ幅は「折り返しなし(実質無制限)」とみなし、全幅塗りをやめる。
+    static let unboundedContainerWidth: CGFloat = 1_000_000
+
     /// 背景矩形(フラグメント原点基準)。`layoutFragmentFrame` はテキストの使用幅しか持たず、
     /// 原点 x は lineFragmentPadding ぶんずれているので、コンテナ左端(x = -frame.minX)から
     /// コンテナ幅ぶんを塗る。高さは段落スタイルの上下余白・予約領域込みのフレーム高。
+    /// ただし文書末尾の追加行(改行で終わる文書の最後の空行)はブロックの外なので、
+    /// その手前(= 末尾段落の paragraphSpacing の直後)で止める。
     var backgroundRect: CGRect {
         let frame = layoutFragmentFrame
-        let containerWidth = textLayoutManager?.textContainer?.size.width ?? frame.width
-        return CGRect(x: -frame.minX, y: 0, width: containerWidth, height: frame.height)
+        let width = Self.backgroundWidth(
+            containerWidth: textLayoutManager?.textContainer?.size.width,
+            textRightEdge: frame.maxX)
+        let bottom = trailingExtraLineFragment?.typographicBounds.minY ?? frame.height
+        return CGRect(x: -frame.minX, y: 0, width: width, height: bottom)
     }
+
+    /// 背景の幅。コンテナ幅が 0(NSTextContainer では「無制限」)・非有限・無制限相当の
+    /// 巨大値のときは全幅の意味がないので、コンテナ左端からテキスト右端までに落とす。
+    static func backgroundWidth(containerWidth: CGFloat?, textRightEdge: CGFloat) -> CGFloat {
+        guard let containerWidth, containerWidth > 0, containerWidth.isFinite,
+              containerWidth < unboundedContainerWidth else { return max(0, textRightEdge) }
+        return containerWidth
+    }
+
+    /// 追加行があるときは末尾段落の paragraphSpacing が追加行の手前に既に算入されている
+    /// (文書末尾で落ちるのは改行なしで終わる場合だけ)ので、予約で二重に足さない。
+    override var reservationApplies: Bool { trailingExtraLineFragment == nil }
 
     /// 描画面を背景矩形まで広げる。UITextView はフラグメントごとの描画面をこの境界で
     /// クリップするため、これを広げないと文字の周囲しか塗れない。
@@ -67,8 +98,9 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
         // 段落ごとの矩形が隣接するので、辺をデバイスピクセルに揃えてアンチエイリアスの
-        // 継ぎ目(薄い線)が出ないようにする。
-        let rect = Self.pixelAligned(backgroundRect, in: context)
+        // 継ぎ目(薄い線)が出ないようにする。point は呼び出し側が指定する描画原点
+        // (NSTextView / UITextView は CTM を原点へ移した上で .zero を渡してくる)。
+        let rect = Self.pixelAligned(backgroundRect.offsetBy(dx: point.x, dy: point.y), in: context)
         let path = CGPath.blockBackground(
             in: rect, cornerRadius: Self.cornerRadius,
             roundsTop: roundsTop, roundsBottom: roundsBottom)
@@ -136,7 +168,7 @@ final class BlockquoteFragment: ReservingTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let bounds = renderingSurfaceBounds
+        let bounds = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y)
         context.setFillColor(barColor.cgColor)
         context.fill(CGRect(x: bounds.minX + 2, y: bounds.minY, width: 3, height: bounds.height))
         context.restoreGState()
@@ -150,7 +182,7 @@ final class ThematicBreakFragment: ReservingTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let bounds = renderingSurfaceBounds
+        let bounds = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y)
         context.setStrokeColor(lineColor.cgColor)
         context.setLineWidth(1)
         context.move(to: CGPoint(x: bounds.minX, y: bounds.midY))
@@ -167,7 +199,7 @@ final class TableBackgroundFragment: ReservingTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let rect = renderingSurfaceBounds.insetBy(dx: 2, dy: 0)
+        let rect = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y).insetBy(dx: 2, dy: 0)
         let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
         context.setFillColor(fillColor.cgColor)
         context.addPath(path)

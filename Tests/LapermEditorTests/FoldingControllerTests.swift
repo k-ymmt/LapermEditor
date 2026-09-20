@@ -133,7 +133,6 @@ private let sample = "# A\nbody1\nbody2\n# B\nafter"
     #expect(enumerated.contains(4))   // body1
     #expect(enumerated.contains(10))  // body2
 }
-#endif
 
 @MainActor @Test func foldingChangeFiresOnlyWhenTheFoldedSetChanges() {
     let controller = makeController(text: sample)
@@ -168,3 +167,4 @@ private let sample = "# A\nbody1\nbody2\n# B\nafter"
     #expect(received.last == [])
     #expect(controller.foldedHeadingLocations.isEmpty)
 }
+#endif

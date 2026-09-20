@@ -11,6 +11,7 @@ A TextKit 2–based Markdown editor library for macOS and iOS, written in Swift 
 - Inline image preview for image references
 - Link detection with click / Cmd+tap opening and hover underlines
 - Editing assistance (list continuation, indentation, task toggling)
+- Block decorations: code blocks as one full-width rounded box with vertical padding (`MarkdownTheme.codeBlockVerticalPadding`; a code block that starts at the very first paragraph gets no top padding because TextKit ignores `paragraphSpacingBefore` there), blockquote bars, thematic-break rules, table backgrounds
 - Customizable `MarkdownTheme`
 - macOS only: `TextInputInterceptor` for Vim-style key handling and `InsertionPointStyle` (block / bar cursors)
 
