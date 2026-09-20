@@ -569,6 +569,17 @@ public final class MarkdownTextView: NSTextView {
         engine.linkReference(atPoint: point, characterIndex: characterIndexForInsertion(at: point))
     }
 
+    /// 選択範囲(なければカーソル位置の単語)のボールド / イタリックを切り替える(EditingAssistant.toggleEmphasis)。
+    /// IME 変換中は何もしない。適用できたら true。
+    @discardableResult
+    public func toggleEmphasis(_ style: EmphasisStyle) -> Bool {
+        guard !editorHasMarkedText,
+              let command = EditingAssistant.toggleEmphasis(
+                text: editorText as NSString, selection: editorSelectedRanges[0], style: style)
+        else { return false }
+        return perform(command)
+    }
+
     /// EditCommand を undo 対応の経路で適用する。
     /// shouldChangeText / didChangeText を通すことで NSTextView 標準の undo に乗り、
     /// 既存の NSTextStorageDelegate 経由で再ハイライトも自動で走る。

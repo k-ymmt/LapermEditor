@@ -74,6 +74,23 @@ public enum TextMotions {
         return i
     }
 
+    /// offset にある(または隣接する)単語の範囲。単語構成文字(英数字 + アンダースコア、CJK を含む)の
+    /// 連続を両側へ広げる。前後どちらも単語文字でなければ offset の空範囲。
+    public static func wordRange(text: NSString, at offset: Int) -> NSRange {
+        let clamped = clamp(offset, to: text)
+        var start = clamped
+        while start > 0 {
+            let prev = text.rangeOfComposedCharacterSequence(at: start - 1).location
+            guard characterClass(text, at: prev) == .word else { break }
+            start = prev
+        }
+        var end = clamped
+        while end < text.length, characterClass(text, at: end) == .word {
+            end = NSMaxRange(text.rangeOfComposedCharacterSequence(at: end))
+        }
+        return NSRange(location: start, length: end - start)
+    }
+
     // MARK: - 内部
 
     private enum CharacterClass { case whitespace, word, symbol }
