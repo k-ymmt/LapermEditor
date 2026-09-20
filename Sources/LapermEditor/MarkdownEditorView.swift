@@ -18,6 +18,9 @@ public struct MarkdownEditorView {
     private var foldingEnabled = true
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
+    #if canImport(UIKit)
+    private var keyboardAccessory: AnyView?
+    #endif
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
         self._text = text
@@ -115,6 +118,17 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    #if canImport(UIKit)
+    /// キーボードの上に出すアクセサリ(iOS)。UITextView の `inputAccessoryView` に SwiftUI ビューを載せる。
+    /// SwiftUI の `.toolbar(placement: .keyboard)` は UIViewRepresentable のテキストビューには付かないための口。
+    /// 背景は透明で、高さはコンテンツの固有サイズから決まる。親の SwiftUI 環境(Environment)は引き継がない。
+    public func keyboardAccessory<Content: View>(@ViewBuilder _ content: () -> Content) -> MarkdownEditorView {
+        var copy = self
+        copy.keyboardAccessory = AnyView(content())
+        return copy
+    }
+    #endif
+
     /// make / update 共通の反映処理(テストの継ぎ目)
     @MainActor
     func apply(to textView: MarkdownTextView) {
@@ -210,6 +224,7 @@ extension MarkdownEditorView: UIViewRepresentable {
         let textView = MarkdownTextView(theme: theme)
         textView.delegate = context.coordinator
         apply(to: textView)
+        applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
         textView.text = text
         textView.highlightAll()
         textView.showsLineNumbers = showsLineNumbers
@@ -229,6 +244,33 @@ extension MarkdownEditorView: UIViewRepresentable {
         }
         textView.showsLineNumbers = showsLineNumbers
         apply(to: textView)
+        applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
+    }
+
+    /// アクセサリの SwiftUI ビューをホスティングして inputAccessoryView に付ける(なければ外す)。
+    /// 表示中に変わったときは reloadInputViews で反映する。
+    @MainActor
+    func applyKeyboardAccessory(to textView: MarkdownTextView, coordinator: Coordinator) {
+        guard let keyboardAccessory else {
+            guard coordinator.accessoryHost != nil else { return }
+            coordinator.accessoryHost = nil
+            textView.inputAccessoryView = nil
+            if textView.isFirstResponder { textView.reloadInputViews() }
+            return
+        }
+        if let host = coordinator.accessoryHost {
+            host.rootView = keyboardAccessory
+            return
+        }
+        let host = UIHostingController(rootView: keyboardAccessory)
+        host.view.backgroundColor = .clear
+        // 高さは SwiftUI の固有サイズから。UIKit は autoresizing を使わない inputAccessoryView の
+        // 固有サイズ(自動レイアウト)を尊重する。
+        host.sizingOptions = .intrinsicContentSize
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        coordinator.accessoryHost = host
+        textView.inputAccessoryView = host.view
+        if textView.isFirstResponder { textView.reloadInputViews() }
     }
 
     /// UITextView.sizeThatFits は全文の高さを返すため、デフォルト実装のままだとテキストビューが
@@ -250,6 +292,8 @@ extension MarkdownEditorView: UIViewRepresentable {
         var isUpdatingFromSwiftUI = false
         /// 直近にビューから binding へ書いた文字列(同一インスタンス判定用)
         var lastPushedText: String?
+        /// キーボードアクセサリのホスト(`keyboardAccessory` が設定されているときだけ)
+        var accessoryHost: UIHostingController<AnyView>?
 
         init(text: Binding<String>) {
             self.text = text
