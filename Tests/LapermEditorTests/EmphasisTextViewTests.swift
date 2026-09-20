@@ -52,6 +52,45 @@ import Testing
     #expect(!textView.string.contains("*"))
 }
 
+@MainActor @Test func toggleEmphasisRefusesMultipleSelections() {
+    let textView = MarkdownTextView()
+    textView.string = "one two"
+    textView.selectedRanges = [NSValue(range: NSRange(location: 0, length: 3)), NSValue(range: NSRange(location: 4, length: 3))]
+    #expect(!textView.toggleEmphasis(.strong))
+    #expect(textView.string == "one two")
+    #expect(textView.selectedRanges.count == 2)
+}
+
+@MainActor @Test func toggleEmphasisUndoesSeparatelyFromSurroundingTyping() {
+    let textView = MarkdownTextView()
+    let provider = UndoManagerProvider()
+    textView.delegate = provider
+    textView.string = "hello"
+    func settle() { RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05)) }
+    textView.setSelectedRange(NSRange(location: 5, length: 0))
+    textView.insertText(" world", replacementRange: NSRange(location: 5, length: 0))
+    settle()
+    textView.setSelectedRange(NSRange(location: 6, length: 5))
+    #expect(textView.toggleEmphasis(.strong))
+    settle()
+    #expect(textView.string == "hello **world**")
+    textView.setSelectedRange(NSRange(location: 15, length: 0))
+    textView.insertText("!", replacementRange: NSRange(location: 15, length: 0))
+    settle()
+    #expect(textView.string == "hello **world**!")
+
+    provider.manager.undo()
+    #expect(textView.string == "hello **world**")
+    provider.manager.undo()
+    #expect(textView.string == "hello world")
+    provider.manager.undo()
+    #expect(textView.string == "hello")
+    provider.manager.redo()
+    provider.manager.redo()
+    #expect(textView.string == "hello **world**")
+    withExtendedLifetime(provider) {}
+}
+
 @MainActor @Test func proxyWithoutTextViewIsInert() {
     let proxy = MarkdownEditorProxy()
     #expect(!proxy.toggleEmphasis(.strong))

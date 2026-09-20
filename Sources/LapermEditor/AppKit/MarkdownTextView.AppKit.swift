@@ -570,12 +570,13 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// 選択範囲(なければカーソル位置の単語)のボールド / イタリックを切り替える(EditingAssistant.toggleEmphasis)。
-    /// IME 変換中は何もしない。適用できたら true。
+    /// IME 変換中と複数選択のときは何もしない。適用できたら true。
     @discardableResult
     public func toggleEmphasis(_ style: EmphasisStyle) -> Bool {
-        guard !editorHasMarkedText,
+        let ranges = editorSelectedRanges
+        guard !editorHasMarkedText, ranges.count == 1,
               let command = EditingAssistant.toggleEmphasis(
-                text: editorText as NSString, selection: editorSelectedRanges[0], style: style)
+                text: editorText as NSString, selection: ranges[0], style: style)
         else { return false }
         return perform(command)
     }

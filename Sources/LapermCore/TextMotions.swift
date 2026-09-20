@@ -77,7 +77,7 @@ public enum TextMotions {
     /// offset にある(または隣接する)単語の範囲。単語構成文字(英数字 + アンダースコア、CJK を含む)の
     /// 連続を両側へ広げる。前後どちらも単語文字でなければ offset の空範囲。
     public static func wordRange(text: NSString, at offset: Int) -> NSRange {
-        let clamped = clamp(offset, to: text)
+        let clamped = composedStart(text: text, at: offset)
         var start = clamped
         while start > 0 {
             let prev = text.rangeOfComposedCharacterSequence(at: start - 1).location
@@ -89,6 +89,18 @@ public enum TextMotions {
             end = NSMaxRange(text.rangeOfComposedCharacterSequence(at: end))
         }
         return NSRange(location: start, length: end - start)
+    }
+
+    /// offset の文字が単語構成文字か(文書外は false)。
+    static func isWordCharacter(text: NSString, at offset: Int) -> Bool {
+        guard offset >= 0, offset < text.length else { return false }
+        return characterClass(text, at: offset) == .word
+    }
+
+    /// offset の直前の文字が単語構成文字か(文書頭は false)。
+    static func isWordCharacter(text: NSString, before offset: Int) -> Bool {
+        guard offset > 0, offset <= text.length else { return false }
+        return characterClass(text, at: text.rangeOfComposedCharacterSequence(at: offset - 1).location) == .word
     }
 
     // MARK: - 内部
@@ -127,7 +139,7 @@ public enum TextMotions {
 
     /// クランプした上で、合成文字の途中にある offset をその文字の先頭へ丸める
     /// (「戻り値は常に合成文字境界」の契約を、移動しない経路でも守る)
-    private static func composedStart(text: NSString, at offset: Int) -> Int {
+    static func composedStart(text: NSString, at offset: Int) -> Int {
         let clamped = clamp(offset, to: text)
         guard clamped < text.length else { return clamped }
         return text.rangeOfComposedCharacterSequence(at: clamped).location
