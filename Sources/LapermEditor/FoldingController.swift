@@ -12,11 +12,24 @@ import LapermCore
 /// MarkdownEditorEngine(takePendingDirtyRanges)に委ねる。
 @MainActor
 final class FoldingController: NSObject {
-    private(set) var state = FoldingState()
+    private(set) var state = FoldingState() {
+        didSet {
+            // どの見出しが折りたたまれているかが変わったときだけ通知する。sync で bodyRange だけが
+            // 追従した場合や、同じ状態への置き換えでは呼ばない。
+            let locations = state.folds.map(\.headingLocation)
+            if locations != oldValue.folds.map(\.headingLocation) { onFoldingChanged?(locations) }
+        }
+    }
     private(set) var outline: [OutlineItem] = []
     var isEnabled = true
     /// アウトラインが実際に変化した(Equatable 比較)ときだけ呼ばれる
     var onOutlineChanged: (() -> Void)?
+    /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる。
+    /// 経路(API、ガター、編集による自動展開、見出しの消失)を問わない。
+    var onFoldingChanged: (([Int]) -> Void)?
+
+    /// 折りたたまれている見出しの位置(昇順)
+    var foldedHeadingLocations: [Int] { state.folds.map(\.headingLocation) }
 
     /// 折畳状態の変化で無効化が必要になったレンジ(文書座標)。編集が挟まった場合は
     /// noteEdit がシフト・拡張する。

@@ -89,6 +89,16 @@ public final class MarkdownTextView: NSTextView {
         set { engine.onOutlineChange = newValue }
     }
 
+    /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる。
+    /// API 呼び出し・ガターのクリック・編集による自動展開・見出しの消失のどれでも通知する
+    public var onFoldingChange: (([Int]) -> Void)? {
+        get { engine.onFoldingChange }
+        set { engine.onFoldingChange = newValue }
+    }
+
+    /// 折りたたまれている見出しの位置(昇順)
+    public var foldedHeadingLocations: [Int] { engine.foldedHeadingLocations }
+
     /// 折りたたみ機能の有効/無効。無効化すると全折畳を解除し、以後の折畳操作を無視する
     public var isFoldingEnabled: Bool {
         get { engine.isFoldingEnabled }

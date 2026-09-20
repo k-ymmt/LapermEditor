@@ -14,6 +14,7 @@ public struct MarkdownEditorView {
     private var linkOptions = LinkOptions()
     private var onOpenLink: ((URL) -> Bool)?
     private var onOutlineChange: (([OutlineItem]) -> Void)?
+    private var onFoldingChange: (([Int]) -> Void)?
     private var foldingEnabled = true
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
@@ -83,6 +84,16 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// 折りたたまれている見出しの集合が変わったときの通知を受け取る(折りたたまれている見出し位置、昇順)。
+    /// ガターのクリックや編集による自動展開も含む。
+    public func onFoldingChange(
+        _ action: @escaping ([Int]) -> Void
+    ) -> MarkdownEditorView {
+        var copy = self
+        copy.onFoldingChange = action
+        return copy
+    }
+
     /// セクション折りたたみの有効/無効(デフォルト有効)。
     public func foldingEnabled(_ enabled: Bool) -> MarkdownEditorView {
         var copy = self
@@ -119,6 +130,9 @@ public struct MarkdownEditorView {
         // 利用側の @State 更新が破棄されるため、次のランループへ遅延して届ける
         textView.onOutlineChange = onOutlineChange.map { callback in
             { items in DispatchQueue.main.async { callback(items) } }
+        }
+        textView.onFoldingChange = onFoldingChange.map { callback in
+            { locations in DispatchQueue.main.async { callback(locations) } }
         }
         textView.isFoldingEnabled = foldingEnabled
         textView.editingOptions = editingOptions

@@ -50,6 +50,11 @@ final class MarkdownEditorEngine: NSObject {
 
     /// アウトラインが実際に変化したときだけ呼ばれる(Equatable 比較)
     var onOutlineChange: (([OutlineItem]) -> Void)?
+    /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる
+    var onFoldingChange: (([Int]) -> Void)?
+
+    /// 折りたたまれている見出しの位置(昇順)
+    var foldedHeadingLocations: [Int] { foldingController.foldedHeadingLocations }
 
     var theme: MarkdownTheme {
         get { highlighter.theme }
@@ -67,6 +72,9 @@ final class MarkdownEditorEngine: NSObject {
         foldingController.onOutlineChanged = { [weak self] in
             guard let self else { return }
             self.onOutlineChange?(self.foldingController.outline)
+        }
+        foldingController.onFoldingChanged = { [weak self] locations in
+            self?.onFoldingChange?(locations)
         }
 
         // バックグラウンドパース完了経路も IME 変換中の属性適用を避けるため、

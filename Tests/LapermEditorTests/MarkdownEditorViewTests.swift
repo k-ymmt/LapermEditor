@@ -123,6 +123,23 @@ import Testing
     #expect(received.map { $0.map(\.title) } == [["A"]])
 }
 
+@MainActor @Test func foldingChangeIsDeliveredAsynchronously() async {
+    let textView = MarkdownTextView()
+    var received: [[Int]] = []
+    let view = MarkdownEditorView(text: .constant("# A\nbody"))
+        .onFoldingChange { received.append($0) }
+    view.apply(to: textView)
+    #expect(textView.onFoldingChange != nil)
+    textView.string = "# A\nbody"
+    textView.highlightAll()
+    textView.fold(at: 0)
+    // 同期時点では未配信(ビュー更新中の @State 破棄を避けるための遅延)
+    #expect(received.isEmpty)
+    try? await Task.sleep(nanoseconds: 50_000_000)
+    #expect(received == [[0]])
+    #expect(textView.foldedHeadingLocations == [0])
+}
+
 @MainActor @Test func proxyForwardsToTextView() {
     let proxy = MarkdownEditorProxy()
     let textView = MarkdownTextView()

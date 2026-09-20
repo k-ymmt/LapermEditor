@@ -134,3 +134,37 @@ private let sample = "# A\nbody1\nbody2\n# B\nafter"
     #expect(enumerated.contains(10))  // body2
 }
 #endif
+
+@MainActor @Test func foldingChangeFiresOnlyWhenTheFoldedSetChanges() {
+    let controller = makeController(text: sample)
+    var received: [[Int]] = []
+    controller.onFoldingChanged = { received.append($0) }
+
+    #expect(controller.fold(at: 0))
+    #expect(received == [[0]])
+    #expect(!controller.fold(at: 0))          // 既に折畳中: 通知なし
+    #expect(received == [[0]])
+
+    // 本体だけが伸びた再同期: 折畳の集合は同じなので通知なし
+    let grown = "# A\nbody1\nbody2\nbody3\n# B\nafter"
+    controller.sync(plan: MarkdownParser().highlightPlan(for: grown), text: grown)
+    #expect(controller.isFolded(headingLocation: 0))
+    #expect(received == [[0]])
+
+    #expect(controller.unfoldAll())
+    #expect(received == [[0], []])
+}
+
+@MainActor @Test func foldingChangeFiresWhenAFoldedHeadingDisappears() {
+    let controller = makeController(text: sample)
+    var received: [[Int]] = []
+    controller.onFoldingChanged = { received.append($0) }
+    #expect(controller.fold(at: 0))
+    #expect(controller.fold(at: 16))
+    #expect(received == [[0], [0, 16]])
+    // 見出し A が消えた再同期: A の折畳だけ解除される
+    let withoutA = "A\nbody1\nbody2\n# B\nafter"
+    controller.sync(plan: MarkdownParser().highlightPlan(for: withoutA), text: withoutA)
+    #expect(received.last == [])
+    #expect(controller.foldedHeadingLocations.isEmpty)
+}
