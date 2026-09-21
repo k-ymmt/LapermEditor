@@ -13,12 +13,17 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
   - `LivePreviewConcealer` (shared): Live Preview hides `HighlightPlan.concealableMarkers` (a subset of the
     `.syntaxMarker` spans, produced by `HighlightMapper`) on every paragraph the caret / selection does
     not touch. It never touches the text storage: `EditorContentStorageDelegate.textContentStorage(_:textParagraphWith:)`
-    returns a display `NSTextParagraph` whose marker characters carry a 0.01pt font (TextKit 2 ignores
-    `.expansion`), and a paragraph whose visible characters are all markers gets `minimumLineHeight` so it
-    does not collapse. Focus changes and marker changes are applied by `MarkdownEditorEngine.regenerateParagraphs`,
-    which posts `textStorage.edited(.editedAttributes)` for the affected paragraphs — `recordEditAction` does
-    NOT make `NSTextContentStorage` rebuild a cached paragraph, and the delegate is held weakly (keep a strong
-    reference in tests). Regeneration is deferred while IME marked text exists.
+    returns a display `NSTextParagraph` whose marker characters carry a 1e-6pt font (TextKit 2 ignores
+    `.expansion`; the advance still scales with size, so 0.01pt left ~390pt for a 100k-character URL), a
+    paragraph whose visible characters are all markers gets `minimumLineHeight` from the markers' own fonts
+    (the newline's font does not count in normal line-height computation), and a hidden tab (`#\tTitle`)
+    zeroes the paragraph's `defaultTabInterval`. Focus changes (only the symmetric difference of the old / new
+    focused paragraphs), marker changes and the mode toggle (a full-document dirty range) are applied by
+    `MarkdownEditorEngine.regenerateParagraphs`, which posts `textStorage.edited(.editedAttributes)` once per
+    affected paragraph — `recordEditAction` does NOT make `NSTextContentStorage` rebuild a cached paragraph,
+    and the delegate is held weakly (keep a strong reference in tests). Regeneration is deferred while IME
+    marked text exists. `HighlightMapper` limits blockquote `>` markers per line to the quote depth so code
+    inside a quote keeps its literal `>`.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

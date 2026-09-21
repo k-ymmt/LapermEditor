@@ -44,7 +44,10 @@ enum HighlightMapper {
         mutating func visitHeading(_ heading: Heading) {
             if var range = nsRange(of: heading), range.length > 0 {
                 // ATX 見出しの行頭 "#…"(+スペース 1 個)をマーカーに。Setext はマーカーなし。
-                let markerLength = leadingHashMarkerLength(in: range)
+                // cmark の ATX 見出しレンジは閉じ側の "#" 列を含まず、空見出し "# #" では "#" だけに
+                // なることもあるので、開き側・閉じ側とも見出し行の内容末尾までを見る。
+                let headingLine = lineContentRange(from: range.location)
+                let markerLength = leadingHashMarkerLength(in: headingLine)
                 if markerLength == 0 {
                     // cmark が Setext 見出しの終端を次ブロックまで過大報告するため
                     // (例: "Title\n=====\nbody" で見出しレンジが後続の Paragraph
@@ -54,6 +57,11 @@ enum HighlightMapper {
                 blockSpans.append(HighlightSpan(range: range, kind: .heading(level: heading.level)))
                 if markerLength > 0 {
                     appendConcealableMarker(NSRange(location: range.location, length: markerLength))
+                    // 閉じ側の "#" 列(CommonMark の optional closing sequence)。cmark の見出しレンジは
+                    // 閉じ側を含むので、行末から逆に走査する。
+                    if let closing = closingHashMarkerRange(in: headingLine, afterOpening: markerLength) {
+                        appendConcealableMarker(closing)
+                    }
                 }
             }
             descendInto(heading)
@@ -100,7 +108,7 @@ enum HighlightMapper {
             // 最外の BlockQuote のみブロックスパンと行頭マーカーを生成
             if !(blockQuote.parent is BlockQuote), let range = nsRange(of: blockQuote), range.length > 0 {
                 blockSpans.append(HighlightSpan(range: range, kind: .blockquote))
-                appendQuoteMarkers(in: range)
+                appendQuoteMarkers(in: range, nestedQuoteRanges: nestedBlockQuoteRanges(in: blockQuote))
             }
             descendInto(blockQuote)
         }
@@ -309,9 +317,17 @@ enum HighlightMapper {
             let first = text.character(at: range.location)
             guard first == ASCII.leftBracket || first == ASCII.lessThan else { return }
             let childRanges = link.children.compactMap { nsRange(of: $0) }
-            guard let textEnd = childRanges.map(NSMaxRange).max(),
-                  textEnd > range.location + 1, textEnd < NSMaxRange(range)
-            else { return }
+            let textEnd: Int
+            if let childEnd = childRanges.map(NSMaxRange).max() {
+                textEnd = childEnd
+            } else if first == ASCII.leftBracket, range.length > 2,
+                      text.character(at: range.location + 1) == ASCII.rightBracket {
+                // 空ラベルのリンク "[](url)": 子ノードが無いので "]" の位置から閉じ側にする
+                textEnd = range.location + 1
+            } else {
+                return
+            }
+            guard textEnd > range.location, textEnd < NSMaxRange(range) else { return }
             appendConcealableMarker(NSRange(location: range.location, length: 1))
             appendConcealableMarker(NSRange(location: textEnd, length: NSMaxRange(range) - textEnd))
         }
@@ -354,6 +370,35 @@ enum HighlightMapper {
             default:
                 return 0
             }
+        }
+
+        /// ATX 見出しの閉じ側 "#" 列(+ 直前のスペース 1 個以上)のレンジ。行末の空白を除いた位置から
+        /// 逆に "#" を数え、その直前が空白でなければ(本文の "#"、"\#" エスケープ)閉じ側ではない。
+        /// 開き側のマーカーの直後から始まる列("# #" のような空見出し)は開き側のスペースの後から数える。
+        private func closingHashMarkerRange(in range: NSRange, afterOpening openingLength: Int) -> NSRange? {
+            let contentStart = range.location + openingLength
+            var end = NSMaxRange(range)
+            while end > contentStart, isSpaceOrTab(text.character(at: end - 1)) { end -= 1 }
+            var i = end
+            while i > contentStart, text.character(at: i - 1) == ASCII.hash { i -= 1 }
+            guard i < end else { return nil }
+            var start = i
+            if start > contentStart {
+                guard isSpaceOrTab(text.character(at: start - 1)) else { return nil }
+                while start > contentStart, isSpaceOrTab(text.character(at: start - 1)) { start -= 1 }
+            }
+            return NSRange(location: start, length: end - start)
+        }
+
+        /// location からその行の内容末尾(改行を含まない)までのレンジ。
+        private func lineContentRange(from location: Int) -> NSRange {
+            var contentsEnd = 0
+            text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
+            return NSRange(location: location, length: max(0, contentsEnd - location))
+        }
+
+        private func isSpaceOrTab(_ character: unichar) -> Bool {
+            character == ASCII.space || character == ASCII.tab
         }
 
         /// location を含む行のレンジを range 内にクリップし、末尾の改行(LF / CR / CRLF 等)を除いて返す。
@@ -417,10 +462,25 @@ enum HighlightMapper {
             return text.character(at: i + 1) == first && text.character(at: i + 2) == first
         }
 
+        /// blockQuote の子孫にある BlockQuote のレンジ(ネストの深さの判定用)。
+        private func nestedBlockQuoteRanges(in blockQuote: BlockQuote) -> [NSRange] {
+            var ranges: [NSRange] = []
+            func collect(_ markup: Markup) {
+                for child in markup.children {
+                    if child is BlockQuote, let range = nsRange(of: child), range.length > 0 { ranges.append(range) }
+                    collect(child)
+                }
+            }
+            collect(blockQuote)
+            return ranges
+        }
+
         /// range 内の各行頭にある ">"(+ 直後のスペース 1 個)をマーカーとして追加(ネスト分も拾う)。
         /// 先頭行はレンジ先頭(外側コンテナの接頭辞の直後)から走査し、以降の行では
         /// 外側コンテナぶんのインデント + 3 個までのスペースを読み飛ばす。
-        private mutating func appendQuoteMarkers(in range: NSRange) {
+        /// 1 行あたりのマーカー数は、その行を含む引用(最外 + ネスト)の数まで: 引用内のコードブロックの
+        /// "> ```\n> > literal" では 2 個目の ">" はコード本文なので隠さない。
+        private mutating func appendQuoteMarkers(in range: NSRange, nestedQuoteRanges: [NSRange]) {
             let space = ASCII.space
             let gt = ASCII.greaterThan
             var location = range.location
@@ -438,12 +498,15 @@ enum HighlightMapper {
                     i += 1
                     leadingSpaces += 1
                 }
-                while i < lineEnd, text.character(at: i) == gt {
+                let lineContent = NSRange(location: line.location, length: lineEnd - line.location)
+                var remaining = 1 + nestedQuoteRanges.count(where: { NSIntersectionRange($0, lineContent).length > 0 })
+                while i < lineEnd, remaining > 0, text.character(at: i) == gt {
                     // CommonMark の引用マーカーは ">" と直後のスペース 1 個(あれば)
                     let start = i
                     i += 1
                     if i < lineEnd, text.character(at: i) == space { i += 1 }
                     appendConcealableMarker(NSRange(location: start, length: i - start))
+                    remaining -= 1
                 }
                 if NSMaxRange(line) <= location { break }
                 location = NSMaxRange(line)

@@ -17,6 +17,7 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
         frame = frame.union(segment)
         return true
     }
+    if frame.isNull { Issue.record("no text segment for \(range)") }
     return frame
 }
 
@@ -42,6 +43,23 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
     textView.isLivePreviewEnabled = false
     #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
     #expect(textView.text == markdown)
+}
+
+@MainActor @Test func livePreviewFollowsSelectedTextRangeAndLeavesUndoAlone() {
+    let textView = makeLaidOutTextView("**a**\n\nplain\n")
+    textView.isLivePreviewEnabled = true
+    textView.selectedRange = NSRange(location: 8, length: 0)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width < 0.1)
+    let canUndoBefore = textView.undoManager?.canUndo ?? false
+
+    // UITextInput 経由の選択変更(selectedTextRange の didSet)でも追従する
+    let position = textView.position(from: textView.beginningOfDocument, offset: 1)!
+    textView.selectedTextRange = textView.textRange(from: position, to: position)
+    #expect(textView.selectedRange == NSRange(location: 1, length: 0))
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
+    // 段落の再生成は undo 履歴に載らない
+    #expect((textView.undoManager?.canUndo ?? false) == canUndoBefore)
+    #expect(textView.text == "**a**\n\nplain\n")
 }
 
 @MainActor @Test func livePreviewKeepsMarkerOnlyQuoteLineHeight() {

@@ -374,9 +374,33 @@ private func concealable(in markdown: String) -> [NSRange] {
 @Test func concealableMarkersAreASubsetOfSyntaxMarkerSpans() {
     let md = "# T\n\n> **b** *i* ~~s~~ `c` [l](u) ![a](p)\n\n```\nx\n```\n\n- [ ] t\n\n| a |\n|---|\n| b |\n"
     let markers = Set(ranges(of: .syntaxMarker, in: md))
-    for range in concealable(in: md) {
+    let hidden = concealable(in: md)
+    // 見出し "# "、引用 "> "、強調 2、斜体 2、打ち消し 2、コード 2、リンク 2、画像 2 = 14 個
+    #expect(hidden.count == 14, "\(hidden)")
+    for range in hidden {
         #expect(markers.contains(range), "\(range)")
     }
+}
+
+@Test func concealsClosingHashesOfATXHeadings() {
+    #expect(concealable(in: "# Title ###") == [NSRange(location: 0, length: 2), NSRange(location: 7, length: 4)])
+    #expect(concealable(in: "## Title ##  ") == [NSRange(location: 0, length: 3), NSRange(location: 8, length: 3)])
+    // 直前が空白でない "#" は本文、"\\#" はエスケープ、"#" だけの本文
+    #expect(concealable(in: "# C#") == [NSRange(location: 0, length: 2)])
+    #expect(concealable(in: "# Title \\#") == [NSRange(location: 0, length: 2)])
+    #expect(concealable(in: "# #") == [NSRange(location: 0, length: 2), NSRange(location: 2, length: 1)])
+}
+
+@Test func concealsEmptyLabelLink() {
+    #expect(concealable(in: "[](https://x.y)") == [NSRange(location: 0, length: 1), NSRange(location: 1, length: 14)])
+}
+
+@Test func quotedCodeBlockKeepsItsLiteralGreaterThan() {
+    // 引用内のコードブロック: 2 行目の 2 個目の "> " はコード本文
+    let md = "> ```\n> > literal\n> ```"
+    #expect(concealable(in: md) == [NSRange(location: 0, length: 2), NSRange(location: 6, length: 2), NSRange(location: 18, length: 2)])
+    // ネストした引用は両方隠す
+    #expect(concealable(in: "> > a") == [NSRange(location: 0, length: 2), NSRange(location: 2, length: 2)])
 }
 
 @Test func concealsHeadingEmphasisCodeAndStrikethroughMarkers() {

@@ -187,13 +187,12 @@ final class MarkdownEditorEngine: NSObject {
     var isLivePreviewEnabled: Bool {
         get { livePreview.isEnabled }
         set {
-            guard livePreview.setEnabled(newValue) else { return }
+            let length = host?.editorContentStorage?.textStorage?.length ?? 0
+            guard livePreview.setEnabled(newValue, documentLength: length) else { return }
             // どの段落がマーカーを持つかに関わらず全段落の表示用段落を作り直す(テーマ変更と同程度の作業)。
-            _ = livePreview.takePendingDirtyRanges()
+            // 保留経路に載せるので、IME 変換中なら確定後の flush まで待つ。
             refreshLivePreviewFocus()
-            _ = livePreview.takePendingDirtyRanges()
-            guard let storage = host?.editorContentStorage?.textStorage else { return }
-            regenerateParagraphs(in: [NSRange(location: 0, length: storage.length)])
+            applyLivePreviewChanges()
         }
     }
 
@@ -207,8 +206,10 @@ final class MarkdownEditorEngine: NSObject {
     /// 選択範囲の変化(キャレット移動)。フォーカスのある段落が変わったら、その段落を再生成させる。
     /// ビューの選択変更フックから呼ぶ。
     func selectionDidChangeForLivePreview() {
-        guard livePreview.isEnabled, !isRegeneratingParagraphs else { return }
+        guard livePreview.isEnabled else { return }
+        // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush)に回す。
         refreshLivePreviewFocus()
+        guard !isRegeneratingParagraphs else { return }
         applyLivePreviewChanges()
     }
 
@@ -242,10 +243,17 @@ final class MarkdownEditorEngine: NSObject {
               let contentStorage = host?.editorContentStorage,
               let storage = contentStorage.textStorage else { return }
         let text = storage.string as NSString
-        let paragraphs = ranges.compactMap { range -> NSRange? in
-            guard NSMaxRange(range) <= text.length else { return nil }
-            let paragraph = text.paragraphRange(for: range)
-            return paragraph.length > 0 ? paragraph : nil
+        // 位置順に走査し、直前に求めた段落に収まるレンジは段落の算出を省く(段落ごとに 1 回)。
+        // マーカーごとに paragraphRange を求めると、1 行に何万ものマーカーがある文書で
+        // 行長 × マーカー数の二乗コストになる。
+        var paragraphs: [NSRange] = []
+        for range in ranges.sorted(by: { $0.location < $1.location }) {
+            guard NSMaxRange(range) <= text.length else { continue }
+            if let last = paragraphs.last, NSMaxRange(range) <= NSMaxRange(last) { continue }
+            let start = paragraphs.last.map { max(NSMaxRange($0), range.location) } ?? range.location
+            let paragraph = text.paragraphRange(for: NSRange(location: start, length: NSMaxRange(range) - start))
+            guard paragraph.length > 0 else { continue }
+            paragraphs.append(paragraph)
         }
         guard !paragraphs.isEmpty else { return }
         isRegeneratingParagraphs = true

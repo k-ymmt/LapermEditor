@@ -17,7 +17,10 @@ import LapermCore
 final class LivePreviewConcealer {
     /// 隠すマーカーに付ける表示用フォント。TextKit 2 は `.expansion` を無視するので、
     /// 極小サイズのフォントで字送りをほぼ 0 にする(高さも 0 に近づくが、行の高さは他の文字が決める)。
-    static let hiddenFont = PlatformFont.systemFont(ofSize: 0.01)
+    /// 字送りはサイズに比例して残る(0.01pt では 10 万文字の URL で約 390pt、1e-6pt なら約 0.06pt)ので、
+    /// data URL のような極端に長いマーカーでも後続の文字が動かない大きさにする。
+    static let hiddenFontSize: CGFloat = 0.000_001
+    static let hiddenFont = PlatformFont.systemFont(ofSize: hiddenFontSize)
 
     var isEnabled = false
 
@@ -52,20 +55,45 @@ final class LivePreviewConcealer {
         let previous = focusedParagraphs
         focusedParagraphs = focused
         guard isEnabled else { return }
-        for range in previous where !focused.contains(range) && containsMarker(in: range) {
-            pendingDirtyRanges.append(range)
-        }
-        for range in focused where !previous.contains(range) && containsMarker(in: range) {
+        // 新旧の対称差だけを無効化する: 大きな選択を 1 行伸縮しても、重なっている部分は作り直さない。
+        for range in Self.subtracting(focused, from: previous) + Self.subtracting(previous, from: focused)
+        where containsMarker(in: range) {
             pendingDirtyRanges.append(range)
         }
     }
 
-    /// 有効 / 無効の切替。マーカーのある文書では全段落の再生成が要る(呼び出し側が文書全体を無効化する)。
+    /// `ranges` の各レンジから `others` と重なる部分を取り除いた残り(空レンジは落とす)。
+    static func subtracting(_ others: [NSRange], from ranges: [NSRange]) -> [NSRange] {
+        var result: [NSRange] = []
+        for range in ranges {
+            var pieces = [range]
+            for other in others {
+                pieces = pieces.flatMap { piece -> [NSRange] in
+                    let overlap = NSIntersectionRange(piece, other)
+                    guard overlap.length > 0 else { return [piece] }
+                    var remainder: [NSRange] = []
+                    if overlap.location > piece.location {
+                        remainder.append(NSRange(location: piece.location, length: overlap.location - piece.location))
+                    }
+                    if NSMaxRange(overlap) < NSMaxRange(piece) {
+                        remainder.append(NSRange(location: NSMaxRange(overlap), length: NSMaxRange(piece) - NSMaxRange(overlap)))
+                    }
+                    return remainder
+                }
+            }
+            result += pieces.filter { $0.length > 0 }
+        }
+        return result
+    }
+
+    /// 有効 / 無効の切替。切り替わったら、それまでの保留を捨てて文書全体(`documentLength`)を
+    /// 無効化対象にする(全段落の表示用段落を作り直す。IME 変換中なら呼び出し側が確定後まで保留する)。
     /// 切り替わったら true。
     @discardableResult
-    func setEnabled(_ enabled: Bool) -> Bool {
+    func setEnabled(_ enabled: Bool, documentLength: Int) -> Bool {
         guard isEnabled != enabled else { return false }
         isEnabled = enabled
+        pendingDirtyRanges = documentLength > 0 ? [NSRange(location: 0, length: documentLength)] : []
         return true
     }
 
@@ -128,20 +156,27 @@ final class LivePreviewConcealer {
 
     /// range と交差するマーカー(昇順)。二分探索で先頭候補を絞る。
     func markers(intersecting range: NSRange) -> ArraySlice<NSRange> {
-        guard !markers.isEmpty else { return [] }
-        var low = 0
-        var high = markers.count
-        while low < high {
-            let mid = (low + high) / 2
-            if NSMaxRange(markers[mid]) <= range.location { low = mid + 1 } else { high = mid }
-        }
+        guard let low = firstMarkerIndex(endingAfter: range.location) else { return [] }
         var end = low
         while end < markers.count, markers[end].location < NSMaxRange(range) { end += 1 }
         return markers[low..<end]
     }
 
+    /// range と交差するマーカーがあるか(二分探索の先頭候補だけで判定できる)。
     func containsMarker(in range: NSRange) -> Bool {
-        !markers(intersecting: range).isEmpty
+        guard let first = firstMarkerIndex(endingAfter: range.location) else { return false }
+        return markers[first].location < NSMaxRange(range)
+    }
+
+    /// 終端が location より後ろにある最初のマーカーの添字(無ければ nil)。
+    private func firstMarkerIndex(endingAfter location: Int) -> Int? {
+        var low = 0
+        var high = markers.count
+        while low < high {
+            let mid = (low + high) / 2
+            if NSMaxRange(markers[mid]) <= location { low = mid + 1 } else { high = mid }
+        }
+        return low < markers.count ? low : nil
     }
 
     // MARK: - 表示用段落
@@ -154,24 +189,40 @@ final class LivePreviewConcealer {
         else { return base }
         let hidden = markers(intersecting: range)
         guard !hidden.isEmpty else { return base }
-        let text = NSMutableAttributedString(
-            attributedString: base?.attributedString ?? storage.attributedSubstring(from: range))
+        let original = base?.attributedString ?? storage.attributedSubstring(from: range)
+        let text = NSMutableAttributedString(attributedString: original)
         guard text.length == range.length else { return base }
+        let string = text.string as NSString
         var hiddenLength = 0
+        var hidesTab = false
         for marker in hidden {
             let clipped = NSIntersectionRange(marker, range)
             guard clipped.length > 0 else { continue }
-            text.addAttribute(
-                .font, value: Self.hiddenFont,
-                range: NSRange(location: clipped.location - range.location, length: clipped.length))
+            let local = NSRange(location: clipped.location - range.location, length: clipped.length)
+            text.addAttribute(.font, value: Self.hiddenFont, range: local)
             hiddenLength += clipped.length
+            if string.rangeOfCharacter(from: .init(charactersIn: "\t"), options: [], range: local).location != NSNotFound {
+                hidesTab = true
+            }
         }
-        // 見える文字が全部マーカーの段落(">" だけの引用行など)は、TextKit 2 が改行のフォントを
-        // 行の高さに使わず 0 に潰れるので、元のフォントの行の高さを最低値として付ける。
-        if hiddenLength >= Self.visibleLength(of: text.string as NSString) {
+        let visibleLength = Self.visibleLength(of: string)
+        let allHidden = hiddenLength >= visibleLength
+        if allHidden || hidesTab {
             let style = (text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?
                 .mutableCopy() as? NSMutableParagraphStyle ?? NSMutableParagraphStyle()
-            style.minimumLineHeight = Self.lineHeight(of: base?.attributedString ?? storage.attributedSubstring(from: range))
+            // 見える文字が全部マーカーの段落(">" だけの引用行など)は、TextKit 2 が改行のフォントを
+            // 行の高さに使わず 0 に潰れるので、隠す前の見える文字(改行を除く)のフォントから
+            // 行の高さを求めて最低値として付ける。
+            if allHidden {
+                style.minimumLineHeight = Self.lineHeight(
+                    of: original, in: NSRange(location: 0, length: max(visibleLength, 0)))
+            }
+            // タブ("#\tTitle" の見出しマーカー)は字送りではなくタブ位置で幅が決まるので、
+            // 表示用段落ではタブ幅も潰す(タブを含むマーカーは見出しの開きだけで、本文にタブは残らない)。
+            if hidesTab {
+                style.tabStops = []
+                style.defaultTabInterval = Self.hiddenFontSize
+            }
             text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
         }
         return NSTextParagraph(attributedString: text)
@@ -184,10 +235,13 @@ final class LivePreviewConcealer {
         return contentsEnd
     }
 
-    /// 段落に付いているフォントのうち最も高い行の高さ(隠す前の自然な高さの近似)。
-    static func lineHeight(of paragraph: NSAttributedString) -> CGFloat {
+    /// `range`(見える文字。改行は含めない: 通常の行高計算は改行のフォントを使わない)に付いている
+    /// フォントのうち最も高い行の高さ(隠す前の自然な高さの近似)。
+    static func lineHeight(of paragraph: NSAttributedString, in range: NSRange) -> CGFloat {
         var height: CGFloat = 0
-        paragraph.enumerateAttribute(.font, in: NSRange(location: 0, length: paragraph.length)) { value, _, _ in
+        let clipped = NSIntersectionRange(range, NSRange(location: 0, length: paragraph.length))
+        guard clipped.length > 0 else { return 0 }
+        paragraph.enumerateAttribute(.font, in: clipped) { value, _, _ in
             guard let font = value as? PlatformFont else { return }
             height = max(height, (font.ascender - font.descender + font.leading).rounded(.up))
         }

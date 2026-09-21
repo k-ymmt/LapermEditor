@@ -54,6 +54,34 @@ import Testing
     #expect(concealer.markers.isEmpty)
 }
 
+@MainActor @Test func selectionGrowthOnlyDirtiesTheChangedLines() {
+    let concealer = LivePreviewConcealer()
+    concealer.isEnabled = true
+    let text = "*a*\n*b*\n*c*\n*d*\n" as NSString
+    concealer.update(markers: [0, 2, 4, 6, 8, 10, 12, 14].map { NSRange(location: $0, length: 1) })
+    _ = concealer.takePendingDirtyRanges()
+    concealer.selectionDidChange([NSRange(location: 0, length: 8)], text: text)      // 1〜2 行目
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 8)])
+    concealer.selectionDidChange([NSRange(location: 0, length: 12)], text: text)     // 3 行目まで伸ばす
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 8, length: 4)])
+    concealer.selectionDidChange([NSRange(location: 4, length: 8)], text: text)      // 先頭を 1 行縮める
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 4)])
+    #expect(LivePreviewConcealer.subtracting([NSRange(location: 2, length: 2)], from: [NSRange(location: 0, length: 6)])
+            == [NSRange(location: 0, length: 2), NSRange(location: 4, length: 2)])
+    #expect(concealer.containsMarker(in: NSRange(location: 1, length: 1)) == false)
+    #expect(concealer.containsMarker(in: NSRange(location: 1, length: 2)))
+}
+
+@MainActor @Test func togglingLivePreviewQueuesAFullRegeneration() {
+    let concealer = LivePreviewConcealer()
+    concealer.update(markers: [NSRange(location: 0, length: 1)])
+    #expect(concealer.setEnabled(true, documentLength: 10))
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 10)])
+    #expect(!concealer.setEnabled(true, documentLength: 10))
+    #expect(concealer.setEnabled(false, documentLength: 0))
+    #expect(concealer.takePendingDirtyRanges().isEmpty)
+}
+
 @MainActor @Test func concealerNoteEditShiftsMarkersAndFocus() {
     let concealer = LivePreviewConcealer()
     concealer.isEnabled = true
@@ -103,6 +131,8 @@ func segmentFrame(of range: NSRange, in layoutManager: NSTextLayoutManager) -> C
         frame = frame.union(segment)
         return true
     }
+    // セグメントが無い(レイアウト欠落・レンジ対応の不具合)ときに「幅 0 = 隠れた」と誤認しないよう失敗にする
+    if frame.isNull { Issue.record("no text segment for \(range)") }
     return frame
 }
 
@@ -170,6 +200,99 @@ func segmentFrame(of range: NSRange, in layoutManager: NSTextLayoutManager) -> C
     #expect(abs(heights[1] - heights[0]) < 0.5)
     // ">" は幅ゼロ
     #expect(segmentFrame(of: NSRange(location: 4, length: 1), in: layoutManager).width < 0.1)
+}
+
+@MainActor @Test func veryLongConcealedMarkerLeavesNoVisibleWidthAndDoesNotWrap() {
+    // data URL のような 1 万文字超のリンク先も、隠れれば後続の文字は行頭のすぐ隣に来て、行も増えない
+    let destination = "https://example.com/" + String(repeating: "a", count: 20_000)
+    let markdown = "[t](\(destination)) end\nplain\n"
+    let (contentStorage, layoutManager) = makeTextKitStack(markdown)
+    let engine = MarkdownEditorEngine(theme: .default)
+    engine.highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    let concealer = engine.livePreview
+    concealer.isEnabled = true
+    concealer.update(markers: engine.highlighter.currentPlan.concealableMarkers)
+    let length = (markdown as NSString).length
+    concealer.selectionDidChange([NSRange(location: length - 3, length: 0)], text: markdown as NSString)
+    let delegate = EditorContentStorageDelegate(
+        foldingController: engine.foldingController, fragmentProvider: engine.fragmentProvider, livePreview: concealer)
+    contentStorage.delegate = delegate
+    defer { withExtendedLifetime(delegate) {} }
+    regenerateAllParagraphs(in: contentStorage)
+
+    let t = segmentFrame(of: NSRange(location: 1, length: 1), in: layoutManager)
+    let endWord = segmentFrame(of: NSRange(location: length - 10, length: 3), in: layoutManager)  // "end"
+    #expect(abs(endWord.minX - t.maxX - t.width) < 0.5, "\(endWord) vs \(t)")  // "t" + 空白 1 文字ぶんだけ右
+    #expect(endWord.minY == t.minY, "the hidden destination must not wrap the line")
+    var lineCount = 0
+    layoutManager.enumerateTextLayoutFragments(from: nil, options: []) { fragment in
+        lineCount += fragment.textLineFragments.count
+        return true
+    }
+    #expect(lineCount <= 3, "one line for the link, one for plain, at most one trailing empty line: \(lineCount)")
+}
+
+@MainActor @Test func tabInHeadingMarkerIsConcealedToo() {
+    let markdown = "#\tTitle\nplain\n"
+    let (contentStorage, layoutManager) = makeTextKitStack(markdown)
+    let engine = MarkdownEditorEngine(theme: .default)
+    engine.highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    let concealer = engine.livePreview
+    concealer.isEnabled = true
+    concealer.update(markers: engine.highlighter.currentPlan.concealableMarkers)
+    #expect(concealer.markers == [NSRange(location: 0, length: 2)])
+    concealer.selectionDidChange([NSRange(location: 10, length: 0)], text: markdown as NSString)
+    let delegate = EditorContentStorageDelegate(
+        foldingController: engine.foldingController, fragmentProvider: engine.fragmentProvider, livePreview: concealer)
+    contentStorage.delegate = delegate
+    defer { withExtendedLifetime(delegate) {} }
+    regenerateAllParagraphs(in: contentStorage)
+    let title = segmentFrame(of: NSRange(location: 2, length: 5), in: layoutManager)
+    let plain = segmentFrame(of: NSRange(location: 8, length: 5), in: layoutManager)
+    #expect(abs(title.minX - plain.minX) < 0.1, "the tab after # must not advance to a tab stop: \(title) vs \(plain)")
+}
+
+@MainActor @Test func markerOnlyLineHeightFollowsTheMarkerFontNotTheNewline() {
+    // syntaxMarker のフォントが本文より小さいテーマ: ">" だけの行は Source でも隠しても同じ高さ
+    var theme = MarkdownTheme.default
+    theme.styles[.syntaxMarker] = MarkdownTheme.Style(font: .systemFont(ofSize: 8), foregroundColor: .gray)
+    let markdown = ">\nplain\n"
+    func lineHeights(concealed: Bool) -> [CGFloat] {
+        let (contentStorage, layoutManager) = makeTextKitStack(markdown)
+        let engine = MarkdownEditorEngine(theme: theme)
+        engine.highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+        let concealer = engine.livePreview
+        concealer.isEnabled = concealed
+        concealer.update(markers: engine.highlighter.currentPlan.concealableMarkers)
+        concealer.selectionDidChange([NSRange(location: 4, length: 0)], text: markdown as NSString)
+        let delegate = EditorContentStorageDelegate(
+            foldingController: engine.foldingController, fragmentProvider: engine.fragmentProvider, livePreview: concealer)
+        contentStorage.delegate = delegate
+        regenerateAllParagraphs(in: contentStorage)
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        var heights: [CGFloat] = []
+        layoutManager.enumerateTextLayoutFragments(from: nil, options: []) { heights.append($0.layoutFragmentFrame.height); return true }
+        withExtendedLifetime(delegate) {}
+        return heights
+    }
+    let source = lineHeights(concealed: false)
+    let hidden = lineHeights(concealed: true)
+    #expect(source.count >= 2 && hidden.count >= 2)
+    #expect(abs(source[0] - hidden[0]) < 0.5, "source \(source) vs hidden \(hidden)")
+}
+
+@MainActor @Test func enablingLivePreviewOnAHugeSingleLineIsNotQuadratic() {
+    // 1 行に 16,000 個の強調(マーカー 32,000 個)。段落の算出がマーカーごとだと数秒かかる。
+    let markdown = String(repeating: "a*b*", count: 16_000) + "\n"
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    scrollView.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    textView.string = markdown
+    textView.highlightAll()
+    textView.setSelectedRange(NSRange(location: (markdown as NSString).length, length: 0))
+    let clock = ContinuousClock()
+    let elapsed = clock.measure { textView.isLivePreviewEnabled = true }
+    #expect(elapsed < .seconds(1), "\(elapsed)")
 }
 
 @MainActor @Test func disabledConcealerLeavesDisplayParagraphsAlone() {
