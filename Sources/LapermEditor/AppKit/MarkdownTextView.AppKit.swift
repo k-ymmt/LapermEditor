@@ -26,11 +26,21 @@ public final class MarkdownTextView: NSTextView {
             backgroundColor = newValue.backgroundColor
             font = newValue.bodyFont
             engine.applyThemeChange()
+            updateTextInsets()
         }
     }
 
     public var showsLineNumbers: Bool = true {
         didSet { enclosingScrollView?.rulersVisible = showsLineNumbers }
+    }
+
+    /// 本文の左右余白(デフォルトは余白なし)。行番号ガターはルーラー(このビューの外)なので、
+    /// 余白は左右対称で、ガターの表示・非表示でビュー自体の幅が変わる。
+    public var margins: EditorMargins = .none {
+        didSet {
+            guard margins != oldValue else { return }
+            updateTextInsets()
+        }
     }
 
     /// 編集支援機能の設定(デフォルト全 ON)
@@ -394,6 +404,22 @@ public final class MarkdownTextView: NSTextView {
     public override func unmarkText() {
         super.unmarkText()
         engine.scheduleHighlight()
+    }
+
+    /// `margins` からテキストコンテナの左右 inset を決める(上下は触らない)。中央寄せはビュー幅に
+    /// 依るので、幅が変わる `setFrameSize` からも呼ぶ。`NSTextView.textContainerInset` は左右同値。
+    private func updateTextInsets() {
+        let insets = margins.horizontalInsets(
+            viewWidth: frame.width, gutterWidth: 0, fontSize: engine.theme.bodyFont.pointSize)
+        let inset = NSSize(width: insets.leading, height: textContainerInset.height)
+        if inset != textContainerInset {
+            textContainerInset = inset
+        }
+    }
+
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        updateTextInsets()
     }
 
     public override func layout() {

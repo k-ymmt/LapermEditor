@@ -5,6 +5,7 @@ public struct MarkdownEditorView {
     @Binding private var text: String
     private var theme: MarkdownTheme
     private var showsLineNumbers = true
+    private var margins = EditorMargins.none
     #if os(macOS)
     private var inputInterceptor: (any TextInputInterceptor)?
     private var insertionPointStyle: InsertionPointStyle = .bar
@@ -31,6 +32,13 @@ public struct MarkdownEditorView {
     public func showsLineNumbers(_ flag: Bool) -> MarkdownEditorView {
         var copy = self
         copy.showsLineNumbers = flag
+        return copy
+    }
+
+    /// 本文の左右余白(デフォルトは余白なし)。`.readable` で読みやすい行長に中央寄せする。
+    public func editorMargins(_ margins: EditorMargins) -> MarkdownEditorView {
+        var copy = self
+        copy.margins = margins
         return copy
     }
 
@@ -151,6 +159,7 @@ public struct MarkdownEditorView {
         #else
         textView.adjustsContentInsetForKeyboard = adjustsContentInsetForKeyboard
         #endif
+        textView.margins = margins
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
         textView.linkOptions = linkOptions

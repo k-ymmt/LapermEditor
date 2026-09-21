@@ -58,6 +58,7 @@ struct ContentView: View {
     var body: some View {
         MarkdownEditorView(text: $text)
             .showsLineNumbers(true)
+            .editorMargins(.readable)
             .foldingEnabled(true)
             .editingOptions(EditingOptions(completesPairs: false))
             .onOutlineChange { outline = $0 }

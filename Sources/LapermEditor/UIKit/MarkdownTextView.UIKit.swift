@@ -50,6 +50,7 @@ public final class MarkdownTextView: UITextView {
             font = newValue.bodyFont
             textColor = newValue.bodyColor
             engine.applyThemeChange()
+            updateTextInsets()
         }
     }
 
@@ -57,7 +58,15 @@ public final class MarkdownTextView: UITextView {
     public var showsLineNumbers: Bool = true {
         didSet {
             guard showsLineNumbers != oldValue else { return }
-            updateGutterLayout()
+            updateTextInsets()
+        }
+    }
+
+    /// 本文の左右余白(デフォルトは余白なし)。ガターの幅は左余白に含まれる。
+    public var margins: EditorMargins = .none {
+        didSet {
+            guard margins != oldValue else { return }
+            updateTextInsets()
         }
     }
 
@@ -168,7 +177,7 @@ public final class MarkdownTextView: UITextView {
         }
         addSubview(gutter)
         addSubview(imageOverlay)
-        updateGutterLayout()
+        updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
         // 自分自身にしているため、ビューを UIGestureRecognizerDelegate に準拠させると
@@ -375,15 +384,25 @@ public final class MarkdownTextView: UITextView {
 
     private var gutterWidth: CGFloat { showsLineNumbers ? LineNumberGutterView.width : 0 }
 
-    private func updateGutterLayout() {
+    /// ガターの表示と `margins` から左右の `textContainerInset` を決める(上下は触らない)。
+    /// 中央寄せはビュー幅に依るので、幅が変わる `layoutSubviews` からも呼ぶ。値が同じなら何もしない
+    /// (inset の変更はレイアウトを無効化するので、layoutSubviews からの再入で無限にならないように)。
+    private func updateTextInsets() {
         gutter.isHidden = !showsLineNumbers
+        let insets = margins.horizontalInsets(
+            viewWidth: bounds.width, gutterWidth: gutterWidth, fontSize: engine.theme.bodyFont.pointSize)
         var inset = textContainerInset
-        inset.left = gutterWidth
-        textContainerInset = inset
-        setNeedsLayout()
+        inset.left = insets.leading
+        inset.right = insets.trailing
+        if inset != textContainerInset {
+            textContainerInset = inset
+            setNeedsLayout()
+        }
     }
 
     public override func layoutSubviews() {
+        // UITextView はこのパスでテキストコンテナの幅を inset から決めるので、その前に余白を確定する。
+        updateTextInsets()
         super.layoutSubviews()
         // サブビューはコンテンツ座標に置かれるため、可視領域 = bounds(origin は contentOffset)。
         // ガターと下線オーバーレイは描画バッキングを持つので可視領域にピン留めし、

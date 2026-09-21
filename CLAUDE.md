@@ -12,6 +12,11 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     used by the public `MarkdownTheme` API.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
+  - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`
+    rule (minimum per side + maximum text width in ems, centered). The AppKit view applies it
+    symmetrically via `textContainerInset` from `setFrameSize`; the UIKit view folds the gutter width
+    into `textContainerInset.left` and recomputes in `layoutSubviews` before `super` (UITextView sizes
+    the container from the inset in that pass).
   - `Sources/LapermEditor/UIKit/`: `MarkdownTextView: UITextView`, gutter as a viewport-pinned subview
     (text is inset via `textContainerInset.left`), overlays. Links open via the long-press edit menu
     ("Open Link", localized in `Resources/Localizable.xcstrings`) or Cmd+tap; Cmd+hover underlines
