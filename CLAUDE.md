@@ -31,6 +31,10 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     apply `.ignoresSafeArea(.keyboard)` to the editor instead of letting it shrink;
     `adjustsContentInsetForKeyboard = false` (or the `.adjustsContentInsetForKeyboard(false)`
     modifier) opts out. A view added while the keyboard is up catches up from a per-screen cache.
+    When the new inset would hide the caret, the reveal scroll sets `contentOffset` inside the same
+    keyboard animation block as the inset (never `scrollRangeToVisible`, whose own timer-driven
+    animation lags the keyboard and re-lays out every frame); while that animation runs,
+    `viewportBounds(for:)` adds the traversed range so the departing text stays rendered.
   - Platform-specific files carry a `.AppKit.swift` / `.UIKit.swift` suffix because Xcode rejects
     two source files with the same basename in one target.
 - Tests: `Tests/LapermEditorTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermEditorTests/UIKit/` are iOS

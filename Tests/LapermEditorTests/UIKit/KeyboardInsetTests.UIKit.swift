@@ -194,6 +194,115 @@ struct KeyboardInsetTests {
         #expect(textView.caretIsHidden(byBottomInset: 400 - caret.maxY + 1))
     }
 
+    /// 追従先の contentOffset: キャレットの下に 1 行分の余裕を取って可視領域の下端に収める。
+    @Test func revealOffsetPutsTheCaretOneLineAboveTheKeyboard() {
+        // 可視領域は 600 - 300 = 300pt。キャレット(高さ 20)の下端は 500 → 520 まで見せたいので 220 進める。
+        let caret = CGRect(x: 0, y: 480, width: 2, height: 20)
+        let y = MarkdownTextView.contentOffsetY(
+            revealing: caret, bounds: bounds, bottomInset: 300, contentHeight: 2000, adjustedInsets: (top: 0, bottom: 300))
+        #expect(y == 220)
+        // スクロール済みでも同じ量だけ進む(bounds.origin = contentOffset)
+        let scrolled = bounds.offsetBy(dx: 0, dy: 1000)
+        let scrolledY = MarkdownTextView.contentOffsetY(
+            revealing: caret.offsetBy(dx: 0, dy: 1000), bounds: scrolled, bottomInset: 300, contentHeight: 3000,
+            adjustedInsets: (top: 0, bottom: 300))
+        #expect(scrolledY == 1220)
+    }
+
+    @Test func revealOffsetNeverScrollsUpwards() {
+        let caret = CGRect(x: 0, y: 100, width: 2, height: 20)
+        let y = MarkdownTextView.contentOffsetY(
+            revealing: caret, bounds: bounds, bottomInset: 300, contentHeight: 2000, adjustedInsets: (top: 0, bottom: 300))
+        #expect(y == bounds.minY)
+    }
+
+    /// 短い本文では、余白込みのコンテンツ下端を越えて空白を見せない(UIScrollView が跳ね返す位置)。
+    @Test func revealOffsetStopsAtTheContentEnd() {
+        let caret = CGRect(x: 0, y: 480, width: 2, height: 20)
+        // コンテンツ 520 + 下余白 300 - 高さ 600 = 220 が下限。余裕込みだと 220 なのでちょうど。
+        #expect(
+            MarkdownTextView.contentOffsetY(
+                revealing: caret, bounds: bounds, bottomInset: 300, contentHeight: 520, adjustedInsets: (top: 0, bottom: 300))
+                == 220)
+        // コンテンツ 500 なら下限 200 で止まる
+        #expect(
+            MarkdownTextView.contentOffsetY(
+                revealing: caret, bounds: bounds, bottomInset: 300, contentHeight: 500, adjustedInsets: (top: 0, bottom: 300))
+                == 200)
+        // 余白を入れてもビューより短いコンテンツは上端(-top)から動かない
+        #expect(
+            MarkdownTextView.contentOffsetY(
+                revealing: caret, bounds: bounds, bottomInset: 300, contentHeight: 200, adjustedInsets: (top: 50, bottom: 50))
+                == -50)
+    }
+
+    /// 通知一発で(scrollRangeToVisible の別アニメーションを待たずに)キャレットが余白の上に来る。
+    /// 見えているキャレットのときは読んでいる位置を動かさない。
+    @Test func keyboardNotificationScrollsTheHiddenCaretIntoView() {
+        let window = makeWindow()
+        let textView = makeLaidOutTextView(
+            (1...80).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
+        window.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+        let restingOffsetY = textView.contentOffset.y  // -adjustedContentInset.top(上の safe area)
+
+        // 見えているキャレット(先頭)は動かない
+        textView.selectedRange = NSRange(location: 0, length: 0)
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen)
+        #expect(textView.contentOffset.y == restingOffsetY)
+        post(.hide, frame: CGRect(x: 0, y: 874, width: 402, height: 374), screen: window.screen)
+
+        // キーボードに隠れる行(y ≈ 700)をタップした状態
+        let inset = 374 - textView.safeAreaInsets.bottom
+        let hiddenLine = textView.closestPosition(to: CGPoint(x: 60, y: 700))!
+        textView.selectedTextRange = textView.textRange(from: hiddenLine, to: hiddenLine)
+        let caretBefore = textView.caretRect(for: hiddenLine)
+        #expect(textView.caretIsHidden(byBottomInset: inset))
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen)
+        #expect(textView.keyboardInset == inset)
+        // 通知の同期処理だけで(別のアニメーションを待たずに)キャレットが 1 行分の余裕込みで余白の上にある
+        let visibleBottom = textView.bounds.maxY - textView.adjustedContentInset.bottom
+        #expect(abs(caretBefore.maxY + caretBefore.height - visibleBottom) < 0.01)
+        // キャレット矩形はコンテンツ座標なのでスクロールしても変わらない。動いたのは contentOffset だけ。
+        #expect(textView.caretRect(for: hiddenLine) == caretBefore)
+        #expect(abs(textView.contentOffset.y - (caretBefore.maxY + caretBefore.height - (874 - 374))) < 0.01)
+    }
+
+    /// アニメーション中はビューポートに通過範囲(開始時の bounds)を足して、出発側の描画を保つ。
+    /// duration 0 の通知(テストの既定)ではアニメーションしないので何も足さない。
+    @Test func animatedRevealKeepsTheTraversedRangeInTheViewport() {
+        let window = makeWindow()
+        let textView = makeLaidOutTextView(
+            (1...80).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
+        window.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { window.isHidden = true }
+        #expect(textView.becomeFirstResponder())
+        let hiddenLine = textView.closestPosition(to: CGPoint(x: 60, y: 700))!
+        textView.selectedTextRange = textView.textRange(from: hiddenLine, to: hiddenLine)
+        let controller = textView.textLayoutManager!.textViewportLayoutController
+        let startBounds = textView.bounds
+
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen, duration: 0.25)
+        #expect(textView.keyboardScrollTraversedBounds == startBounds)
+        #expect(textView.contentOffset.y > startBounds.minY)
+        // 親クラスのビューポートは次のレイアウトで更新されるので、ここでは出発範囲が含まれることだけ見る
+        #expect(textView.viewportBounds(for: controller).contains(startBounds))
+
+        // アニメーションが終わると外れる(描画されないテストのウィンドウでは完了ハンドラが来ないので期限で)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
+        #expect(textView.keyboardScrollTraversedBounds == nil)
+
+        // 見えているキャレットでは(スクロールしないので)足さない
+        post(.hide, frame: CGRect(x: 0, y: 874, width: 402, height: 374), screen: window.screen)
+        textView.selectedRange = NSRange(location: 0, length: 0)
+        textView.contentOffset.y = startBounds.minY
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen, duration: 0.25)
+        #expect(textView.keyboardScrollTraversedBounds == nil)
+    }
+
     /// 402×874(iPhone 17 Pro)のウィンドウ。`init(frame:)` は iOS 26 で非推奨なので既定の init から作る。
     private func makeWindow() -> UIWindow {
         let window = UIWindow()
@@ -203,14 +312,14 @@ struct KeyboardInsetTests {
 
     private enum Kind { case change, hide }
 
-    private func post(_ kind: Kind, frame: CGRect, screen: UIScreen?) {
+    private func post(_ kind: Kind, frame: CGRect, screen: UIScreen?, duration: Double = 0) {
         let name: Notification.Name =
             kind == .change ? UIResponder.keyboardWillChangeFrameNotification : UIResponder.keyboardWillHideNotification
         NotificationCenter.default.post(
             name: name, object: screen,
             userInfo: [
                 UIResponder.keyboardFrameEndUserInfoKey: NSValue(cgRect: frame),
-                UIResponder.keyboardAnimationDurationUserInfoKey: 0.0,
+                UIResponder.keyboardAnimationDurationUserInfoKey: duration,
                 UIResponder.keyboardAnimationCurveUserInfoKey: 7,
             ])
     }
