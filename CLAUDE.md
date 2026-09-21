@@ -34,7 +34,10 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     When the new inset would hide the caret, the reveal scroll sets `contentOffset` inside the same
     keyboard animation block as the inset (never `scrollRangeToVisible`, whose own timer-driven
     animation lags the keyboard and re-lays out every frame); while that animation runs,
-    `viewportBounds(for:)` adds the traversed range so the departing text stays rendered.
+    `viewportBounds(for:)` and the gutter frame add the traversed range so the departing text and
+    line numbers stay rendered. The visible area subtracts the whole post-keyboard
+    `adjustedContentInset.bottom` (host inset + safe area + keyboard). A caret more than one view
+    height away is jumped to without animation instead of laying out everything in between.
   - Platform-specific files carry a `.AppKit.swift` / `.UIKit.swift` suffix because Xcode rejects
     two source files with the same basename in one target.
 - Tests: `Tests/LapermEditorTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermEditorTests/UIKit/` are iOS

@@ -328,8 +328,14 @@ public final class MarkdownTextView: UITextView {
         // (そのたびに layoutSubviews とビューポートのレイアウト)になるので、キーボードより遅れて
         // カクつく。ブロック内の代入は bounds の変更として Core Animation が補間するので、
         // キーボードと同じカーブで一体に動き、レイアウトは最終位置で一度だけ走る。
-        let targetOffset = revealsCaret ? contentOffsetRevealingCaret(bottomInset: inset) : nil
+        var targetOffset = revealsCaret ? contentOffsetRevealingCaret(bottomInset: inset) : nil
         keyboardInset = inset
+        // 一画面より遠いキャレット(復元された選択が画面外にあるなど)へはアニメーションせずに移る:
+        // 通過範囲をビューポートに足すと文書の大半を同期レイアウトすることになる。
+        if let target = targetOffset, animationDuration > 0, abs(target.y - bounds.minY) > bounds.height {
+            UIView.performWithoutAnimation { contentOffset = target }
+            targetOffset = nil
+        }
         let apply = {
             self.contentInset.bottom += delta
             self.verticalScrollIndicatorInsets.bottom += delta
@@ -340,23 +346,32 @@ public final class MarkdownTextView: UITextView {
             return
         }
         // 補間中のフレームは最終位置のビューポートしかレイアウトされていないので、通過する範囲
-        // (開始時の bounds)を終わるまでビューポートに足しておく。でないと出発側が一瞬白く抜ける。
-        // 完了ハンドラで外すが、描画されないウィンドウ(テストホストなど)では呼ばれないので
-        // 期限も持たせる。
+        // (開始時の bounds)を終わるまでビューポート(とガター)に足しておく。でないと出発側が
+        // 一瞬白く抜ける。完了ハンドラで外すが、描画されないウィンドウ(テストホストなど)では
+        // 呼ばれないので期限も持たせる。
         let traversal: Int? = targetOffset.map { _ in
             keyboardScrollTraversal = (
                 bounds: (keyboardScrollTraversedBounds ?? bounds).union(bounds),
                 until: CACurrentMediaTime() + animationDuration + 0.1)
             keyboardScrollTraversalGeneration += 1
+            gutterNeedsViewportRefresh = true
             return keyboardScrollTraversalGeneration
         }
+        // 通知のカーブは UIViewAnimationCurve の生値(キーボードは非公開の 7)。外側のアニメーション
+        // ブロックの中で通知を処理しても、キーボードの長さとカーブで動かす。
         let options = UIView.AnimationOptions(rawValue: UInt(curve) << 16)
         UIView.animate(
             withDuration: animationDuration, delay: 0,
-            options: [options, .beginFromCurrentState, .allowUserInteraction], animations: apply
+            options: [
+                options, .beginFromCurrentState, .allowUserInteraction,
+                .overrideInheritedDuration, .overrideInheritedCurve,
+            ], animations: apply
         ) { [weak self] _ in
             guard let self, let traversal, traversal == keyboardScrollTraversalGeneration else { return }
             keyboardScrollTraversal = nil
+            // ビューポートとガターを可視領域に戻す
+            gutterNeedsViewportRefresh = true
+            setNeedsLayout()
         }
     }
 
@@ -376,11 +391,18 @@ public final class MarkdownTextView: UITextView {
         return viewport.union(traversed)
     }
 
-    /// キャレットが、下余白を `inset` にしたあとの可視領域からはみ出すか。
+    /// キーボード分の下余白を `inset` にしたあとの adjustedContentInset.bottom(ホストの余白 + safe area
+    /// + キーボード)。`keyboardInset` を更新する前に呼ぶこと。
+    private func adjustedBottomInset(afterKeyboardInset inset: CGFloat) -> CGFloat {
+        adjustedContentInset.bottom - keyboardInset + inset
+    }
+
+    /// キャレットが、キーボード分の下余白を `inset` にしたあとの可視領域(ホストの余白と safe area も
+    /// 除いた領域)からはみ出すか。
     func caretIsHidden(byBottomInset inset: CGFloat) -> Bool {
         guard let end = selectedTextRange?.end else { return false }
         let caret = caretRect(for: end)
-        return caret.maxY > bounds.maxY - inset - safeAreaBottomAlreadyInset
+        return caret.maxY > bounds.maxY - adjustedBottomInset(afterKeyboardInset: inset)
     }
 
     /// キーボード分の下余白を `inset` にしたあとキャレットが見える contentOffset(キャレットがなければ
@@ -389,10 +411,10 @@ public final class MarkdownTextView: UITextView {
     func contentOffsetRevealingCaret(bottomInset inset: CGFloat) -> CGPoint? {
         guard let end = selectedTextRange?.end else { return nil }
         let caret = caretRect(for: end)
+        let bottom = adjustedBottomInset(afterKeyboardInset: inset)
         let y = Self.contentOffsetY(
-            revealing: caret, bounds: bounds, bottomInset: inset + safeAreaBottomAlreadyInset,
-            contentHeight: contentSize.height,
-            adjustedInsets: (top: adjustedContentInset.top, bottom: adjustedContentInset.bottom - keyboardInset + inset))
+            revealing: caret, bounds: bounds, bottomInset: bottom, contentHeight: contentSize.height,
+            adjustedInsets: (top: adjustedContentInset.top, bottom: bottom))
         return CGPoint(x: contentOffset.x, y: y)
     }
 
@@ -477,8 +499,11 @@ public final class MarkdownTextView: UITextView {
         // サブビューはコンテンツ座標に置かれるため、可視領域 = bounds(origin は contentOffset)。
         // ガターと下線オーバーレイは描画バッキングを持つので可視領域にピン留めし、
         // 画像オーバーレイは描画しない(子ビューだけ)のでコンテンツ全体に広げる。
-        gutter.frame = CGRect(x: bounds.minX, y: bounds.minY, width: gutterWidth, height: bounds.height)
-        gutter.contentOffsetY = bounds.minY
+        // キーボード追従のアニメーション中は通過範囲まで広げてコンテンツと一緒に動かす(ピン留めの
+        // フレームは最終位置に置かれるので、途中のフレームで出発側の行番号が欠け、数字が本文とずれる)。
+        let gutterRange = keyboardScrollTraversedBounds.map { bounds.union($0) } ?? bounds
+        gutter.frame = CGRect(x: bounds.minX, y: gutterRange.minY, width: gutterWidth, height: gutterRange.height)
+        gutter.contentOffsetY = gutterRange.minY
         if gutterNeedsViewportRefresh {
             gutterNeedsViewportRefresh = false
             textLayoutManager?.textViewportLayoutController.layoutViewport()

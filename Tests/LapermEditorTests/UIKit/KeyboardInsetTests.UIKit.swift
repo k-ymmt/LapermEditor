@@ -244,7 +244,7 @@ struct KeyboardInsetTests {
             (1...80).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
         window.addSubview(textView)
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { tearDown(textView, in: window) }
         #expect(textView.becomeFirstResponder())
         let restingOffsetY = textView.contentOffset.y  // -adjustedContentInset.top(上の safe area)
 
@@ -278,7 +278,7 @@ struct KeyboardInsetTests {
             (1...80).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
         window.addSubview(textView)
         window.makeKeyAndVisible()
-        defer { window.isHidden = true }
+        defer { tearDown(textView, in: window) }
         #expect(textView.becomeFirstResponder())
         let hiddenLine = textView.closestPosition(to: CGPoint(x: 60, y: 700))!
         textView.selectedTextRange = textView.textRange(from: hiddenLine, to: hiddenLine)
@@ -291,9 +291,23 @@ struct KeyboardInsetTests {
         // 親クラスのビューポートは次のレイアウトで更新されるので、ここでは出発範囲が含まれることだけ見る
         #expect(textView.viewportBounds(for: controller).contains(startBounds))
 
+        // ガターも通過範囲まで広がり、コンテンツ座標で出発側の行番号を持つ
+        textView.setNeedsLayout()
+        textView.layoutIfNeeded()
+        let gutter = textView.gutterView
+        #expect(abs(gutter.frame.minY - startBounds.minY) < 0.01)
+        #expect(gutter.frame.maxY >= textView.bounds.maxY - 0.01)
+        #expect(gutter.contentOffsetY == startBounds.minY)
+        #expect(gutter.lines.contains { $0.yInTextView < startBounds.minY + 100 })
+        #expect(gutter.lines.contains { $0.yInTextView > textView.bounds.minY })
+
         // アニメーションが終わると外れる(描画されないテストのウィンドウでは完了ハンドラが来ないので期限で)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
         #expect(textView.keyboardScrollTraversedBounds == nil)
+        textView.setNeedsLayout()
+        textView.layoutIfNeeded()
+        #expect(abs(gutter.frame.minY - textView.bounds.minY) < 0.01)
+        #expect(gutter.frame.height == textView.bounds.height)
 
         // 見えているキャレットでは(スクロールしないので)足さない
         post(.hide, frame: CGRect(x: 0, y: 874, width: 402, height: 374), screen: window.screen)
@@ -301,6 +315,60 @@ struct KeyboardInsetTests {
         textView.contentOffset.y = startBounds.minY
         post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen, duration: 0.25)
         #expect(textView.keyboardScrollTraversedBounds == nil)
+    }
+
+    /// ホストが自分の下部 UI のために持つ contentInset.bottom も可視領域から除く(旧 scrollRangeToVisible
+    /// と同じ)。余白の判定と移動先の両方。
+    @Test func hostBottomInsetCountsAsHiddenArea() {
+        let window = makeWindow()
+        let textView = makeLaidOutTextView(
+            (1...80).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
+        textView.contentInset.bottom = 64
+        window.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { tearDown(textView, in: window) }
+        #expect(textView.becomeFirstResponder())
+        let safeArea = textView.safeAreaInsets.bottom
+        let inset = 374 - safeArea
+
+        // キーボードの上端より上だがホスト余白(64pt)の中にあるキャレットは「隠れている」
+        let boundary = textView.bounds.maxY - 374 - 64
+        let inHostArea = textView.closestPosition(to: CGPoint(x: 60, y: boundary + 30))!
+        textView.selectedTextRange = textView.textRange(from: inHostArea, to: inHostArea)
+        let caret = textView.caretRect(for: inHostArea)
+        #expect(caret.maxY > boundary && caret.maxY < textView.bounds.maxY - 374)
+        #expect(textView.caretIsHidden(byBottomInset: inset))
+
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen)
+        #expect(abs(textView.adjustedContentInset.bottom - (64 + 374)) < 0.01)
+        let visibleBottom = textView.bounds.maxY - textView.adjustedContentInset.bottom
+        #expect(abs(caret.maxY + caret.height - visibleBottom) < 0.01)
+    }
+
+    /// 一画面より遠いキャレットへはアニメーションせずに移る(通過範囲を全部レイアウトしない)。
+    @Test func farCaretJumpsWithoutAnimation() {
+        let window = makeWindow()
+        let textView = makeLaidOutTextView(
+            (1...400).map { "line \($0)" }.joined(separator: "\n"), width: 402, height: 874)
+        window.addSubview(textView)
+        window.makeKeyAndVisible()
+        defer { tearDown(textView, in: window) }
+        #expect(textView.becomeFirstResponder())
+        textView.selectedRange = NSRange(location: textView.text.utf16.count, length: 0)
+        let startBounds = textView.bounds
+
+        post(.change, frame: CGRect(x: 0, y: 500, width: 402, height: 374), screen: window.screen, duration: 0.25)
+        #expect(textView.keyboardScrollTraversedBounds == nil)
+        #expect(textView.contentOffset.y - startBounds.minY > startBounds.height)
+        let caret = textView.caretRect(for: textView.selectedTextRange!.end)
+        #expect(caret.maxY <= textView.bounds.maxY - textView.adjustedContentInset.bottom)
+    }
+
+    /// 実ビューのテストの後始末: キーボードを閉じた状態(共有キャッシュも空)に戻す。
+    private func tearDown(_ textView: MarkdownTextView, in window: UIWindow) {
+        textView.resignFirstResponder()
+        post(.hide, frame: CGRect(x: 0, y: 874, width: 402, height: 374), screen: window.screen)
+        window.isHidden = true
     }
 
     /// 402×874(iPhone 17 Pro)のウィンドウ。`init(frame:)` は iOS 26 で非推奨なので既定の init から作る。
