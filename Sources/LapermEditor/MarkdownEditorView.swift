@@ -20,6 +20,7 @@ public struct MarkdownEditorView {
     private var proxy: MarkdownEditorProxy?
     #if canImport(UIKit)
     private var keyboardAccessory: AnyView?
+    private var adjustsContentInsetForKeyboard = true
     #endif
 
     public init(text: Binding<String>, theme: MarkdownTheme = .default) {
@@ -130,6 +131,15 @@ public struct MarkdownEditorView {
         copy.keyboardAccessory = AnyView(content())
         return copy
     }
+
+    /// キーボード回避(iOS)。既定ではテキストビューがキーボード(アクセサリ込み)に隠れる分の
+    /// `contentInset` を自分で持つので、エディタには `.ignoresSafeArea(.keyboard)` を付ける。
+    /// SwiftUI のキーボード回避に任せたい(エディタを縮めたい)ときは `false` にする。
+    public func adjustsContentInsetForKeyboard(_ enabled: Bool) -> MarkdownEditorView {
+        var copy = self
+        copy.adjustsContentInsetForKeyboard = enabled
+        return copy
+    }
     #endif
 
     /// make / update 共通の反映処理(テストの継ぎ目)
@@ -138,6 +148,8 @@ public struct MarkdownEditorView {
         #if os(macOS)
         textView.inputInterceptor = inputInterceptor
         textView.insertionPointStyle = insertionPointStyle
+        #else
+        textView.adjustsContentInsetForKeyboard = adjustsContentInsetForKeyboard
         #endif
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }

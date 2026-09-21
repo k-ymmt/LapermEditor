@@ -194,9 +194,11 @@ public final class MarkdownTextView: UITextView {
     // MARK: - キーボード回避
 
     /// キーボード(`inputAccessoryView` を含む)に隠れる分だけ `contentInset.bottom` と
-    /// スクロールインジケータの余白を自前で調整する。SwiftUI 側は `.ignoresSafeArea(.keyboard)` で
-    /// ビューを縮めさせないことで、本文がアクセサリの下まで伸び、ガラス越しに本文が見える。
-    /// `false` にすると調整をやめて余白を 0 に戻す(利用側が自前で回避するとき)。
+    /// スクロールインジケータの余白を増やす。利用側が設定した余白には足し引きするだけで上書きしない。
+    /// SwiftUI 側は `.ignoresSafeArea(.keyboard)` でビューを縮めさせないことで、本文がアクセサリの下まで
+    /// 伸び、ガラス越しに本文が見える。対象はビューの下端を覆うドックされたキーボードだけで、
+    /// iPad の浮動・分割キーボードは無視する。`false` にするとキーボード分の余白を外して何もしない
+    /// (利用側が自前で回避するとき)。
     public var adjustsContentInsetForKeyboard = true {
         didSet {
             guard oldValue != adjustsContentInsetForKeyboard else { return }
@@ -208,69 +210,126 @@ public final class MarkdownTextView: UITextView {
         }
     }
 
-    /// 直近のキーボード終了フレーム(スクリーン座標)。回転などでレイアウトが変わったときの再計算用。
+    /// 画面ごとの直近のキーボード終了フレーム(スクリーン座標)。キーボードが出たまま作られたビュー
+    /// (Note の切り替えなど)が、ウィンドウに付いた時点で追いつくための共有キャッシュ。
+    /// iOS 16.1 以降、通知の `object` はキーボードが出ている `UIScreen`。
+    private static var keyboardFramesByScreen: [ObjectIdentifier: CGRect] = [:]
+    /// このビューが最後に受けたキーボード終了フレーム(スクリーン座標)と、その画面。
+    /// 回転などでレイアウトが変わったときの再計算用。画面が nil なら通知に画面情報がなかった。
     private var keyboardFrameOnScreen: CGRect?
+    private weak var keyboardScreen: UIScreen?
     /// 今かけているキーボード分の下余白(テスト用に読める)。
     private(set) var keyboardInset: CGFloat = 0
 
     @objc private func keyboardWillChangeFrame(_ notification: Notification) {
         guard let frame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
         else { return }
+        let screen = notification.object as? UIScreen
+        if let screen { Self.keyboardFramesByScreen[ObjectIdentifier(screen)] = frame }
+        guard isKeyboardNotificationForThisScreen(screen) else { return }
         keyboardFrameOnScreen = frame
-        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
-        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
-        updateKeyboardInset(animationDuration: duration, curve: curve)
+        keyboardScreen = screen
+        updateKeyboardInset(animationDuration: Self.animationDuration(of: notification), curve: Self.animationCurve(of: notification))
     }
 
     @objc private func keyboardWillHide(_ notification: Notification) {
+        let screen = notification.object as? UIScreen
+        if let screen { Self.keyboardFramesByScreen[ObjectIdentifier(screen)] = nil }
+        guard isKeyboardNotificationForThisScreen(screen) else { return }
         keyboardFrameOnScreen = nil
-        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
-        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
-        applyKeyboardInset(0, animationDuration: duration, curve: curve)
+        keyboardScreen = nil
+        applyKeyboardInset(0, animationDuration: Self.animationDuration(of: notification), curve: Self.animationCurve(of: notification))
+    }
+
+    /// 別画面(外部ディスプレイ)のキーボードの通知は無視する。画面が分からない通知、
+    /// ウィンドウにまだ付いていないビューは受け入れて、レイアウト時に画面を照合する。
+    private func isKeyboardNotificationForThisScreen(_ screen: UIScreen?) -> Bool {
+        guard let screen, let window else { return true }
+        return screen === window.screen
+    }
+
+    private static func animationDuration(of notification: Notification) -> Double {
+        notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+    }
+
+    private static func animationCurve(of notification: Notification) -> Int {
+        notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
+    }
+
+    public override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard let window else { return }
+        // キーボードが出たまま作られた / 付け替えられたビューは画面のキャッシュに追いつく。
+        // キャッシュがなければ(キーボードが出ていない)、別画面で受けたフレームは捨てる。
+        if let cached = Self.keyboardFramesByScreen[ObjectIdentifier(window.screen)] {
+            keyboardFrameOnScreen = cached
+            keyboardScreen = window.screen
+        } else if let keyboardScreen, keyboardScreen !== window.screen {
+            keyboardFrameOnScreen = nil
+            self.keyboardScreen = nil
+        }
+        setNeedsLayout()
     }
 
     /// 直近のキーボードフレームから下余白を計算し直して適用する(ウィンドウ外なら何もしない)。
     private func updateKeyboardInset(animationDuration: Double = 0, curve: Int = 0) {
         guard adjustsContentInsetForKeyboard, let window else { return }
-        guard let keyboardFrameOnScreen else {
+        guard let keyboardFrameOnScreen, keyboardScreen == nil || keyboardScreen === window.screen else {
             applyKeyboardInset(0, animationDuration: animationDuration, curve: curve)
             return
         }
         let keyboardFrame = convert(keyboardFrameOnScreen, from: window.screen.coordinateSpace)
-        // adjustedContentInset には safe area が既に足されている(behavior が .never のとき以外)。
-        let safeAreaBottom = contentInsetAdjustmentBehavior == .never ? 0 : safeAreaInsets.bottom
         let inset = Self.keyboardBottomInset(
-            bounds: bounds, keyboardFrame: keyboardFrame, safeAreaBottom: safeAreaBottom)
+            bounds: bounds, keyboardFrame: keyboardFrame, safeAreaBottom: safeAreaBottomAlreadyInset)
         applyKeyboardInset(inset, animationDuration: animationDuration, curve: curve)
+    }
+
+    /// adjustedContentInset に既に足されている safe area の下端(behavior が .never のときは 0)。
+    private var safeAreaBottomAlreadyInset: CGFloat {
+        contentInsetAdjustmentBehavior == .never ? 0 : safeAreaInsets.bottom
     }
 
     /// ビューの下端がキーボードに隠れる高さ(ビュー座標。bounds.origin = contentOffset なので
     /// スクロール量には依存しない)。safe area 分は既に余白に入っているので差し引く。
-    /// キーボードが横に外れている(iPad の浮動キーボードなど)か、下端より下にあれば 0。
+    /// ビューの下端を覆っていないキーボード(浮動・分割、横に外れている、下端より下)は 0:
+    /// 浮動キーボードの下の空き領域まで余白にすると、本文が不要に押し上げられる。
     static func keyboardBottomInset(bounds: CGRect, keyboardFrame: CGRect, safeAreaBottom: CGFloat) -> CGFloat {
-        let overlap = bounds.intersection(keyboardFrame)
-        guard !overlap.isNull, overlap.height > 0 else { return 0 }
-        return max(0, bounds.maxY - overlap.minY - safeAreaBottom)
+        guard keyboardFrame.minX < bounds.maxX, keyboardFrame.maxX > bounds.minX,
+            keyboardFrame.minY < bounds.maxY, keyboardFrame.maxY >= bounds.maxY
+        else { return 0 }
+        return max(0, bounds.maxY - max(bounds.minY, keyboardFrame.minY) - safeAreaBottom)
     }
 
     private func applyKeyboardInset(_ inset: CGFloat, animationDuration: Double, curve: Int) {
-        guard inset != keyboardInset else { return }
+        let delta = inset - keyboardInset
+        guard delta != 0 else { return }
+        // 余白が増えてキャレットが隠れるときだけ追従する。見えているキャレットや、候補バーの出入りで
+        // 高さが少し変わっただけのときに読んでいる位置を動かさない。指で動かしている最中も触らない。
+        let revealsCaret = delta > 0 && isFirstResponder && !isTracking && !isDragging && !isDecelerating
+            && caretIsHidden(byBottomInset: inset)
         keyboardInset = inset
         let apply = {
-            self.contentInset.bottom = inset
-            self.verticalScrollIndicatorInsets.bottom = inset
+            self.contentInset.bottom += delta
+            self.verticalScrollIndicatorInsets.bottom += delta
         }
         if animationDuration > 0 {
             let options = UIView.AnimationOptions(rawValue: UInt(curve) << 16)
-            UIView.animate(withDuration: animationDuration, delay: 0, options: [options, .beginFromCurrentState], animations: apply)
+            UIView.animate(
+                withDuration: animationDuration, delay: 0,
+                options: [options, .beginFromCurrentState, .allowUserInteraction], animations: apply)
         } else {
             apply()
         }
-        // キーボードが出てキャレットが隠れたら見える位置までスクロールする(UITextView は
-        // 自前の余白調整では行わない)。
-        if inset > 0, isFirstResponder {
+        if revealsCaret {
             scrollRangeToVisible(selectedRange)
         }
+    }
+
+    /// キャレットが、下余白を `inset` にしたあとの可視領域からはみ出すか。
+    func caretIsHidden(byBottomInset inset: CGFloat) -> Bool {
+        guard let end = selectedTextRange?.end else { return false }
+        let caret = caretRect(for: end)
+        return caret.maxY > bounds.maxY - inset - safeAreaBottomAlreadyInset
     }
 
     /// TextKit2 のコンテンツストレージ(UITextView は AppKit と違い直接公開していない)

@@ -16,9 +16,12 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     (text is inset via `textContainerInset.left`), overlays. Links open via the long-press edit menu
     ("Open Link", localized in `Resources/Localizable.xcstrings`) or Cmd+tap; Cmd+hover underlines
     on iPad pointer. No input interceptor / insertion point style on iOS.
-    The text view adjusts its own `contentInset.bottom` for the keyboard (including the
-    `inputAccessoryView`) from the keyboard frame notifications, so SwiftUI hosts apply
-    `.ignoresSafeArea(.keyboard)` to the editor instead of letting it shrink; `adjustsContentInsetForKeyboard = false` opts out.
+    The text view adds its own `contentInset.bottom` for a docked keyboard (including the
+    `inputAccessoryView`; floating / split keyboards and keyboards on another screen are ignored)
+    from the keyboard frame notifications, on top of whatever inset the host set, so SwiftUI hosts
+    apply `.ignoresSafeArea(.keyboard)` to the editor instead of letting it shrink;
+    `adjustsContentInsetForKeyboard = false` (or the `.adjustsContentInsetForKeyboard(false)`
+    modifier) opts out. A view added while the keyboard is up catches up from a per-screen cache.
   - Platform-specific files carry a `.AppKit.swift` / `.UIKit.swift` suffix because Xcode rejects
     two source files with the same basename in one target.
 - Tests: `Tests/LapermEditorTests/*.swift` are macOS (`#if os(macOS)`); `Tests/LapermEditorTests/UIKit/` are iOS

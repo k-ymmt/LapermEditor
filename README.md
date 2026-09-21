@@ -65,9 +65,16 @@ struct ContentView: View {
                 // Return true when the link has been handled.
                 false
             }
+            // iOS: the text view insets its own content for the keyboard (and its
+            // inputAccessoryView), so stop SwiftUI from shrinking the editor as well.
+            .ignoresSafeArea(.keyboard)
     }
 }
 ```
+
+On iOS, `.keyboardAccessory { ... }` puts a SwiftUI view above the keyboard, and
+`.adjustsContentInsetForKeyboard(false)` hands keyboard avoidance back to SwiftUI (drop the
+`.ignoresSafeArea(.keyboard)` in that case).
 
 ## Example apps
 
