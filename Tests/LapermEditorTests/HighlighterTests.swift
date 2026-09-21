@@ -496,6 +496,52 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     #expect(nextStyle?.paragraphSpacing == 0)
 }
 
+@MainActor @Test func incrementalEditKeepsImageSpacingOnTopOfLineSpacing() {
+    let (contentStorage, layoutManager) = makeTextKitStack("![a](a.png)\nnext")
+    let storage = contentStorage.textStorage!
+    var theme = MarkdownTheme.default
+    theme.lineSpacing = 6
+    let highlighter = Highlighter(theme: theme)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    // 画像プレビューが予約を載せる(行間の上に paragraphSpacing 88)
+    let reserved = NSRange(location: 0, length: 12)
+    storage.addAttribute(.paragraphStyle, value: ImagePreviewController.spacingStyle(height: 88, base: theme.baseParagraphStyle), range: reserved)
+    storage.addAttribute(ImagePreviewController.spacingAttribute, value: CGFloat(88), range: reserved)
+
+    // 画像段落と次の段落にまたがる差分編集(同期経路)で本文属性がリセットされても、予約は残る
+    storage.replaceCharacters(in: NSRange(location: 11, length: 0), with: " tail")
+    highlighter.noteEdit(editedRange: NSRange(location: 11, length: 5), changeInLength: 5)
+    #expect(highlighter.flushPendingHighlight(contentStorage: contentStorage, layoutManager: layoutManager) == .applied)
+
+    let imageStyle = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(imageStyle?.lineSpacing == 6)
+    #expect(imageStyle?.paragraphSpacing == 88)
+    let nextStyle = storage.attribute(.paragraphStyle, at: storage.length - 1, effectiveRange: nil) as? NSParagraphStyle
+    #expect(nextStyle?.lineSpacing == 6)
+    #expect(nextStyle?.paragraphSpacing == 0)
+}
+
+@MainActor @Test func switchingToAThemeWithoutLineSpacingRemovesTheOldParagraphStyle() {
+    let (contentStorage, layoutManager) = makeTextKitStack("![a](a.png)\nnext")
+    let storage = contentStorage.textStorage!
+    let reserved = NSRange(location: 0, length: 12)
+    storage.addAttribute(ImagePreviewController.spacingAttribute, value: CGFloat(88), range: reserved)
+
+    var spaced = MarkdownTheme.default
+    spaced.lineSpacing = 6
+    let highlighter = Highlighter(theme: spaced)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    #expect((storage.attribute(.paragraphStyle, at: 13, effectiveRange: nil) as? NSParagraphStyle)?.lineSpacing == 6)
+
+    highlighter.theme = .default  // lineSpacing 0
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    // 通常の段落からは段落スタイルが消え、画像段落は予約(paragraphSpacing)だけが残る
+    #expect(storage.attribute(.paragraphStyle, at: 13, effectiveRange: nil) == nil)
+    let imageStyle = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(imageStyle?.lineSpacing == 0)
+    #expect(imageStyle?.paragraphSpacing == 88)
+}
+
 @MainActor @Test func lineSpacingMovesTheNextLineDownInTextKit2() {
     func secondLineY(lineSpacing: CGFloat) -> CGFloat {
         let (contentStorage, layoutManager) = makeTextKitStack("one\ntwo")

@@ -228,11 +228,13 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             fragment.reservedBottomHeight = reservation
             return fragment
         }
+        let isBlockStart = paragraph.location <= decoration.range.location
         switch decoration.kind {
         case .codeBlock:
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.codeBlockBackgroundColor
             fragment.lineSpacing = theme.lineSpacing
+            fragment.isBlockStart = isBlockStart
             let edges = codeBlockEdges(forParagraph: paragraph)
             fragment.roundsTop = edges?.isFirst ?? false
             fragment.roundsBottom = edges?.isLast ?? false
@@ -244,6 +246,8 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         case .blockquote:
             let fragment = BlockquoteFragment(textElement: textElement, range: textElement.elementRange)
             fragment.barColor = theme.blockquoteBarColor
+            fragment.lineSpacing = theme.lineSpacing
+            fragment.isBlockStart = isBlockStart
             fragment.reservedBottomHeight = reservation
             return fragment
         case .thematicBreak:
@@ -254,6 +258,8 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         case .table:
             let fragment = TableBackgroundFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.tableBackgroundColor
+            fragment.lineSpacing = theme.lineSpacing
+            fragment.isBlockStart = isBlockStart
             fragment.reservedBottomHeight = reservation
             return fragment
         }

@@ -22,12 +22,33 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// 各行の上」に置くので、段落の先頭行もフラグメント上端から行間ぶん下に始まる。
     var lineSpacing: CGFloat = 0
 
-    /// ブロック装飾を上端から何 pt 下げて描き始めるか。先頭行の上に入った行間ぶんだけ
-    /// (最大でも `lineSpacing`)下げて、行間を箱の外に出す。文書の最初の行には行間が
-    /// 付かないので 0 になる。paragraphSpacingBefore(コードブロックの上余白)は含めない。
+    /// この段落が装飾ブロック(コードブロック / 引用 / テーブル)の先頭段落か。
+    /// 先頭段落だけ行間を装飾の外に出す(途中の段落で下げると隣の段落の装飾との間に隙間が開く)。
+    var isBlockStart = false
+
+    /// ブロック装飾を上端から何 pt 下げて描き始めるか。ブロック先頭段落で、先頭行の上に入った
+    /// 行間ぶんだけ(最大でも `lineSpacing`)下げて、行間を装飾の外に出す。文書の最初の行には
+    /// 行間が付かないので 0 になる。paragraphSpacingBefore(コードブロックの上余白)は含めない。
     var decorationTopInset: CGFloat {
+        guard isBlockStart else { return 0 }
         let firstLineTop = textLineFragments.first?.typographicBounds.minY ?? 0
         return max(0, min(lineSpacing, firstLineTop))
+    }
+
+    /// ブロック装飾の下端(フラグメント原点基準)。通常はフレーム下端(paragraphSpacing の予約込み)。
+    /// 文書末尾の追加行(改行で終わる文書の最後の空行)があるときはその手前で止めるが、追加行の
+    /// 上にも行間が入っている(minY = 末尾行下端 + paragraphSpacing + 行間)ので、その行間は除く。
+    var decorationBottom: CGFloat {
+        guard let extra = trailingExtraLineFragment else { return layoutFragmentFrame.height }
+        return max(textLinesBottom, extra.typographicBounds.minY - lineSpacing)
+    }
+
+    /// 装飾を描く矩形(フラグメント原点基準)。`renderingSurfaceBounds` は描画に必要な領域で
+    /// あって文字領域ではないので、上下は `decorationTopInset` / `decorationBottom` で決める。
+    var decorationRect: CGRect {
+        let top = decorationTopInset
+        let bounds = renderingSurfaceBounds
+        return CGRect(x: bounds.minX, y: top, width: bounds.width, height: max(0, decorationBottom - top))
     }
 
     override var layoutFragmentFrame: CGRect {
@@ -41,9 +62,10 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// サブクラスが予約を見送りたい状況(既に高さが確保されている等)で false を返す。
     var reservationApplies: Bool { true }
 
-    /// テキスト行群の下端(フラグメント原点からの相対値)。
+    /// テキスト行群(文書末尾の追加行を除く)の下端(フラグメント原点からの相対値)。
     var textLinesBottom: CGFloat {
-        textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
+        let extra = trailingExtraLineFragment
+        return textLineFragments.reduce(0) { $1 === extra ? $0 : max($0, $1.typographicBounds.maxY) }
     }
 
     /// 文書が改行で終わるとき、最後の段落のフラグメントに付く文字数ゼロの「追加行」
@@ -85,11 +107,8 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
         let width = Self.backgroundWidth(
             containerWidth: textLayoutManager?.textContainer?.size.width,
             textRightEdge: frame.maxX)
-        let bottom = trailingExtraLineFragment?.typographicBounds.minY ?? frame.height
-        // ブロック先頭の段落だけ、先頭行の上に入った行間を箱の外に出す(途中の段落で
-        // 下げると隣の段落の矩形との間に隙間が開く)。
-        let top = roundsTop ? decorationTopInset : 0
-        return CGRect(x: -frame.minX, y: top, width: width, height: max(0, bottom - top))
+        let top = decorationTopInset
+        return CGRect(x: -frame.minX, y: top, width: width, height: max(0, decorationBottom - top))
     }
 
     /// 背景の幅。コンテナ幅が 0(NSTextContainer では「無制限」)・非有限・無制限相当の
@@ -183,7 +202,7 @@ final class BlockquoteFragment: ReservingTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let bounds = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y)
+        let bounds = decorationRect.offsetBy(dx: point.x, dy: point.y)
         context.setFillColor(barColor.cgColor)
         context.fill(CGRect(x: bounds.minX + 2, y: bounds.minY, width: 3, height: bounds.height))
         context.restoreGState()
@@ -216,7 +235,7 @@ final class TableBackgroundFragment: ReservingTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let rect = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y).insetBy(dx: 2, dy: 0)
+        let rect = decorationRect.offsetBy(dx: point.x, dy: point.y).insetBy(dx: 2, dy: 0)
         let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
         context.setFillColor(fillColor.cgColor)
         context.addPath(path)

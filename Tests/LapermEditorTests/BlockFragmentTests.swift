@@ -229,7 +229,7 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     #expect(fragments.allSatisfy { paragraphStyle(of: $0) == nil })
 }
 
-@MainActor @Test func codeBlockBoxLeavesTheLineSpacingAboveItsFirstLineOutside() {
+@MainActor @Test func codeBlockBoxLeavesTheLineSpacingAboveItsFirstLineOutside() throws {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     var theme = textView.theme
@@ -238,21 +238,57 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     textView.string = "x\n\n```\na\nb\n```\n\ny"
     textView.highlightAll()
     let fragments = codeBlockFragments(in: textView)
+    let first = try #require(fragments.first)
     #expect(fragments.count == 4)
     // 先頭段落: 上余白(4)の上にさらに行間(6)が入るが、箱は行間の下から始まる
-    let first = fragments[0]
     #expect(first.textLineFragments.first?.typographicBounds.minY == 6 + theme.codeBlockVerticalPadding)
     #expect(first.backgroundRect.minY == 6)
     #expect(first.backgroundRect.maxY == first.layoutFragmentFrame.height)
     // 途中・末尾の段落は上端から塗って隣と隙間なく連なる
     for fragment in fragments.dropFirst() { #expect(fragment.backgroundRect.minY == 0) }
     // 行番号はテキスト行(行間 + 上余白の下)に揃う
-    let line = textView.engine.gutterLine(for: first)!
+    let line = try #require(textView.engine.gutterLine(for: first))
     #expect(line.yInTextView == first.layoutFragmentFrame.minY + 6 + theme.codeBlockVerticalPadding
             + textView.textContainerOrigin.y)
 }
 
-@MainActor @Test func gutterLinesKeepAnEvenPitchAcrossEmptyLinesWithLineSpacing() {
+@MainActor @Test func codeBlockBoxEndingTheDocumentWithANewlineStopsBeforeTheExtraLinesSpacing() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.string = "x\n\n```\na\n```\n"
+    textView.highlightAll()
+    let last = try #require(codeBlockFragments(in: textView).last)
+    let extra = try #require(last.trailingExtraLineFragment)
+    let fenceBottom = try #require(last.textLineFragments.first).typographicBounds.maxY
+    // 追加行の上には「下余白 + 行間」が入る。箱は下余白までで、行間は外に出す
+    #expect(extra.typographicBounds.minY == fenceBottom + theme.codeBlockVerticalPadding + 6)
+    #expect(last.backgroundRect.maxY == fenceBottom + theme.codeBlockVerticalPadding)
+}
+
+@MainActor @Test func blockquoteBarAndTableBackgroundStartBelowTheLineSpacingOnlyAtTheBlockStart() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.string = "x\n\n> one\n> two\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\ny"
+    textView.highlightAll()
+    let quotes = layoutFragments(in: textView).compactMap { $0 as? BlockquoteFragment }
+    let rows = layoutFragments(in: textView).compactMap { $0 as? TableBackgroundFragment }
+    #expect(quotes.count == 2)
+    #expect(rows.count == 3)
+    // 先頭段落だけ行間ぶん下げ、続く段落は上端から描いて隣と隙間なく連なる
+    #expect(quotes.map(\.decorationRect.minY) == [6, 0])
+    #expect(rows.map(\.decorationRect.minY) == [6, 0, 0])
+    for fragment in quotes + rows {
+        #expect(fragment.decorationRect.maxY == fragment.layoutFragmentFrame.height)
+    }
+}
+
+@MainActor @Test func gutterLinesKeepAnEvenPitchAcrossEmptyLinesWithLineSpacing() throws {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     var theme = textView.theme
@@ -262,7 +298,7 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     textView.highlightAll()
     let fragments = layoutFragments(in: textView)
     #expect(fragments.count == 6)
-    let tops = fragments.map { textView.engine.gutterLine(for: $0)!.yInTextView }
+    let tops = try fragments.map { try #require(textView.engine.gutterLine(for: $0)).yInTextView }
     // 空段落(2・4・5 行目)は TextKit 2 が行間を高さに畳み込むが、行番号の位置は文字行と同じ間隔で並ぶ
     let pitches = zip(tops, tops.dropFirst()).map { $1 - $0 }
     #expect(pitches.count == 5)
@@ -270,7 +306,26 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     #expect(pitches[0] > 17, "行間ぶん広がる: \(pitches)")
 }
 
-@MainActor @Test func codeBlockBoxAtTheDocumentStartHasNoTopInset() {
+@MainActor @Test func gutterDoesNotLowerAParagraphThatHasNoLineSpacingYet() throws {
+    // ハイライト前(段落スタイル未適用)の非空段落は行間 0 でレイアウトされる。テーマの行間で
+    // 判定すると minY 0 を空段落と誤認して行番号を下げてしまう → 実際に付いているスタイルで判定する
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.textStorage?.replaceCharacters(in: NSRange(location: 0, length: 0), with: "a\nb\n\nc")
+    textView.textLayoutManager?.ensureLayout(for: textView.textLayoutManager!.documentRange)
+    let fragments = layoutFragments(in: textView)
+    #expect(fragments.count == 4)
+    for fragment in fragments {
+        let line = try #require(textView.engine.gutterLine(for: fragment))
+        let firstLineTop = try #require(fragment.textLineFragments.first).typographicBounds.minY
+        #expect(line.yInTextView == fragment.layoutFragmentFrame.minY + firstLineTop + textView.textContainerOrigin.y)
+    }
+}
+
+@MainActor @Test func codeBlockBoxAtTheDocumentStartHasNoTopInset() throws {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
     var theme = textView.theme
@@ -278,7 +333,7 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     textView.theme = theme
     textView.string = "```\na\n```\n\ny"
     textView.highlightAll()
-    let first = codeBlockFragments(in: textView).first!
+    let first = try #require(codeBlockFragments(in: textView).first)
     // 文書の最初の行には行間も paragraphSpacingBefore も付かない
     #expect(first.textLineFragments.first?.typographicBounds.minY == 0)
     #expect(first.backgroundRect.minY == 0)
