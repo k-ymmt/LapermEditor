@@ -115,6 +115,14 @@ public final class MarkdownTextView: NSTextView {
         set { engine.isFoldingEnabled = newValue }
     }
 
+    /// Live Preview の有効/無効(既定は無効 = Source)。有効なら、キャレットのある行と選択範囲が触れる行を
+    /// 除いて Syntax Marker(見出しの `#`、強調・打ち消し線・インラインコードの記号、リンク・画像の括弧、
+    /// 引用の `>`)を幅ゼロで隠す。テキストストレージには触れない(コピーすれば Markdown がそのまま取れる)。
+    public var isLivePreviewEnabled: Bool {
+        get { engine.isLivePreviewEnabled }
+        set { engine.isLivePreviewEnabled = newValue }
+    }
+
     /// headingLocation(OutlineItem.headingLocation)のセクションを折りたたむ
     public func fold(at headingLocation: Int) { engine.fold(at: headingLocation) }
     public func unfold(at headingLocation: Int) { engine.unfold(at: headingLocation) }
@@ -391,6 +399,7 @@ public final class MarkdownTextView: NSTextView {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
         updateInsertionPointOverlay()
         engine.autoExpandFolds(atSelectedRanges: selectedRanges.map(\.rangeValue))
+        engine.selectionDidChangeForLivePreview()
     }
 
     public override func didChangeText() {

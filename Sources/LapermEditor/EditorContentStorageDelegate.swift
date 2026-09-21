@@ -9,14 +9,18 @@ import UIKit
 /// - コードブロック: 先頭 / 末尾段落に上下余白の段落スタイルを付けた表示用段落を返す
 ///   (`BlockFragmentProvider`)。textStorage は変更しないので、タイピング属性として
 ///   次の段落へ余白が引き継がれることがない。
+/// - Live Preview: フォーカスの無い段落の Syntax Marker を幅ゼロで隠した表示用段落を返す
+///   (`LivePreviewConcealer`)。コードブロックの表示用段落の上に重ねる。
 @MainActor
 final class EditorContentStorageDelegate: NSObject {
     let foldingController: FoldingController
     let fragmentProvider: BlockFragmentProvider
+    let livePreview: LivePreviewConcealer
 
-    init(foldingController: FoldingController, fragmentProvider: BlockFragmentProvider) {
+    init(foldingController: FoldingController, fragmentProvider: BlockFragmentProvider, livePreview: LivePreviewConcealer) {
         self.foldingController = foldingController
         self.fragmentProvider = fragmentProvider
+        self.livePreview = livePreview
     }
 }
 
@@ -33,6 +37,7 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
     func textContentStorage(
         _ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange
     ) -> NSTextParagraph? {
-        fragmentProvider.textParagraph(with: range, in: textContentStorage)
+        let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
+        return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
 }

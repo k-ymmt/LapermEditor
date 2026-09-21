@@ -18,11 +18,19 @@ public struct HighlightPlan: Equatable, Sendable {
     public var images: [ImageReference]
     /// リンクの出現一覧(クリック処理用)
     public var links: [LinkReference]
+    /// Live Preview がフォーカスの無い行で隠す Syntax Marker のレンジ(`spans` の `.syntaxMarker` の
+    /// 部分集合: 見出しの `#`、強調・打ち消し線・インラインコードの記号、リンク・画像の括弧、引用の `>`)。
+    /// コードフェンス・チェックボックス・テーブルの記号は含まない(Source と同じ表示のまま)。
+    public var concealableMarkers: [NSRange]
 
-    public init(spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = []) {
+    public init(
+        spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
+        concealableMarkers: [NSRange] = []
+    ) {
         self.spans = spans
         self.images = images
         self.links = links
+        self.concealableMarkers = concealableMarkers
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -66,7 +74,14 @@ public struct HighlightPlan: Equatable, Sendable {
             moved.range = range
             resultLinks.append(moved)
         }
-        return HighlightPlan(spans: resultSpans, images: resultImages, links: resultLinks)
+        var resultMarkers: [NSRange] = []
+        resultMarkers.reserveCapacity(concealableMarkers.count)
+        for marker in concealableMarkers {
+            guard let range = Self.shift(marker, preEditRange: preEditRange, delta: delta) else { continue }
+            resultMarkers.append(range)
+        }
+        return HighlightPlan(
+            spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。

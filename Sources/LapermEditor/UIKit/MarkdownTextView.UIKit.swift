@@ -127,6 +127,14 @@ public final class MarkdownTextView: UITextView {
         set { engine.isFoldingEnabled = newValue }
     }
 
+    /// Live Preview の有効/無効(既定は無効 = Source)。有効なら、キャレットのある行と選択範囲が触れる行を
+    /// 除いて Syntax Marker(見出しの `#`、強調・打ち消し線・インラインコードの記号、リンク・画像の括弧、
+    /// 引用の `>`)を幅ゼロで隠す。テキストストレージには触れない(コピーすれば Markdown がそのまま取れる)。
+    public var isLivePreviewEnabled: Bool {
+        get { engine.isLivePreviewEnabled }
+        set { engine.isLivePreviewEnabled = newValue }
+    }
+
     /// headingLocation(OutlineItem.headingLocation)のセクションを折りたたむ
     public func fold(at headingLocation: Int) { engine.fold(at: headingLocation) }
     public func unfold(at headingLocation: Int) { engine.unfold(at: headingLocation) }
@@ -452,11 +460,16 @@ public final class MarkdownTextView: UITextView {
     /// selectedRange / selectedTextRange の didSet で拾う(プログラムからの設定・UITextInput 経由の
     /// ユーザー操作の両方がここを通る)。編集による解除は MarkdownEditorHost.editorTextDidChange で行う。
     public override var selectedRange: NSRange {
-        didSet { engine.autoExpandFolds(atSelectedRanges: [selectedRange]) }
+        didSet { selectionDidChange() }
     }
 
     public override var selectedTextRange: UITextRange? {
-        didSet { engine.autoExpandFolds(atSelectedRanges: [selectedRange]) }
+        didSet { selectionDidChange() }
+    }
+
+    private func selectionDidChange() {
+        engine.autoExpandFolds(atSelectedRanges: [selectedRange])
+        engine.selectionDidChangeForLivePreview()
     }
 
     /// IME 変換の終了。変換中に見送ったハイライト適用(highlightNow は marked text 中は

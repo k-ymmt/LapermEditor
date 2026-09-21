@@ -14,7 +14,8 @@ enum HighlightMapper {
         return HighlightPlan(
             spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans,
             images: visitor.imageReferences,
-            links: visitor.linkReferences
+            links: visitor.linkReferences,
+            concealableMarkers: visitor.concealableMarkers
         )
     }
 
@@ -24,6 +25,8 @@ enum HighlightMapper {
         var blockSpans: [HighlightSpan] = []
         var inlineSpans: [HighlightSpan] = []
         var markerSpans: [HighlightSpan] = []
+        /// Live Preview が隠すマーカー(markerSpans の部分集合)
+        var concealableMarkers: [NSRange] = []
         var imageReferences: [ImageReference] = []
         var linkReferences: [LinkReference] = []
         private var tableDepth = 0
@@ -50,10 +53,7 @@ enum HighlightMapper {
                 }
                 blockSpans.append(HighlightSpan(range: range, kind: .heading(level: heading.level)))
                 if markerLength > 0 {
-                    markerSpans.append(HighlightSpan(
-                        range: NSRange(location: range.location, length: markerLength),
-                        kind: .syntaxMarker
-                    ))
+                    appendConcealableMarker(NSRange(location: range.location, length: markerLength))
                 }
             }
             descendInto(heading)
@@ -241,6 +241,7 @@ enum HighlightMapper {
         mutating func visitLink(_ link: Link) {
             if let range = nsRange(of: link), range.length > 0 {
                 inlineSpans.append(HighlightSpan(range: range, kind: .link))
+                appendLinkMarkers(in: range, link: link)
                 linkReferences.append(LinkReference(
                     text: plainText(of: link),
                     destination: link.destination ?? "",
@@ -291,14 +292,28 @@ enum HighlightMapper {
 
         /// range の先頭と末尾 length 文字ずつを構文マーカーにする(強調・コード・打ち消し線で共用)。
         private mutating func appendSymmetricMarkers(in range: NSRange, length: Int) {
-            markerSpans.append(HighlightSpan(
-                range: NSRange(location: range.location, length: length),
-                kind: .syntaxMarker
-            ))
-            markerSpans.append(HighlightSpan(
-                range: NSRange(location: NSMaxRange(range) - length, length: length),
-                kind: .syntaxMarker
-            ))
+            appendConcealableMarker(NSRange(location: range.location, length: length))
+            appendConcealableMarker(NSRange(location: NSMaxRange(range) - length, length: length))
+        }
+
+        /// Live Preview で隠せる構文マーカー(`.syntaxMarker` スパンにも載せる)。
+        private mutating func appendConcealableMarker(_ range: NSRange) {
+            markerSpans.append(HighlightSpan(range: range, kind: .syntaxMarker))
+            concealableMarkers.append(range)
+        }
+
+        /// リンク記法のマーカー: 先頭の "["(自動リンクなら "<")と、リンクテキスト末尾から記法末尾まで
+        /// (インライン形式 "](url)"、参照形式 "][ref]"、自動リンクの ">")。裸の URL(テキストと
+        /// レンジが一致する)や、子ノードの位置が取れないリンクにはマーカーを付けない。
+        private mutating func appendLinkMarkers(in range: NSRange, link: Link) {
+            let first = text.character(at: range.location)
+            guard first == ASCII.leftBracket || first == ASCII.lessThan else { return }
+            let childRanges = link.children.compactMap { nsRange(of: $0) }
+            guard let textEnd = childRanges.map(NSMaxRange).max(),
+                  textEnd > range.location + 1, textEnd < NSMaxRange(range)
+            else { return }
+            appendConcealableMarker(NSRange(location: range.location, length: 1))
+            appendConcealableMarker(NSRange(location: textEnd, length: NSMaxRange(range) - textEnd))
         }
 
         /// range の先頭にある character の連続長を求め、閉じ側にも同じ長さの列が
@@ -402,7 +417,7 @@ enum HighlightMapper {
             return text.character(at: i + 1) == first && text.character(at: i + 2) == first
         }
 
-        /// range 内の各行頭にある ">" を 1 文字ずつマーカーとして追加(ネスト分も拾う)。
+        /// range 内の各行頭にある ">"(+ 直後のスペース 1 個)をマーカーとして追加(ネスト分も拾う)。
         /// 先頭行はレンジ先頭(外側コンテナの接頭辞の直後)から走査し、以降の行では
         /// 外側コンテナぶんのインデント + 3 個までのスペースを読み飛ばす。
         private mutating func appendQuoteMarkers(in range: NSRange) {
@@ -424,9 +439,11 @@ enum HighlightMapper {
                     leadingSpaces += 1
                 }
                 while i < lineEnd, text.character(at: i) == gt {
-                    markerSpans.append(HighlightSpan(range: NSRange(location: i, length: 1), kind: .syntaxMarker))
+                    // CommonMark の引用マーカーは ">" と直後のスペース 1 個(あれば)
+                    let start = i
                     i += 1
                     if i < lineEnd, text.character(at: i) == space { i += 1 }
+                    appendConcealableMarker(NSRange(location: start, length: i - start))
                 }
                 if NSMaxRange(line) <= location { break }
                 location = NSMaxRange(line)
@@ -470,10 +487,7 @@ enum HighlightMapper {
         /// 画像記法のマーカー: 先頭の "![" と、alt 末尾から記法末尾まで
         /// (インライン形式 "](url)" と参照形式 "][ref]" の両方をカバーする)。
         private mutating func appendImageMarkers(in range: NSRange, image: Markdown.Image) {
-            markerSpans.append(HighlightSpan(
-                range: NSRange(location: range.location, length: 2),
-                kind: .syntaxMarker
-            ))
+            appendConcealableMarker(NSRange(location: range.location, length: 2))
             var altEnd = range.location + 2
             for child in image.children {
                 if let childRange = nsRange(of: child) {
@@ -481,10 +495,7 @@ enum HighlightMapper {
                 }
             }
             if altEnd < NSMaxRange(range) {
-                markerSpans.append(HighlightSpan(
-                    range: NSRange(location: altEnd, length: NSMaxRange(range) - altEnd),
-                    kind: .syntaxMarker
-                ))
+                appendConcealableMarker(NSRange(location: altEnd, length: NSMaxRange(range) - altEnd))
             }
         }
 

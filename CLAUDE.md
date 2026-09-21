@@ -10,6 +10,15 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     image-preview logic and talks to the view through the `MarkdownEditorHost` protocol.
     `Platform.swift` defines `PlatformFont` / `PlatformColor` / `PlatformImage` (NSFont/UIFont etc.)
     used by the public `MarkdownTheme` API.
+  - `LivePreviewConcealer` (shared): Live Preview hides `HighlightPlan.concealableMarkers` (a subset of the
+    `.syntaxMarker` spans, produced by `HighlightMapper`) on every paragraph the caret / selection does
+    not touch. It never touches the text storage: `EditorContentStorageDelegate.textContentStorage(_:textParagraphWith:)`
+    returns a display `NSTextParagraph` whose marker characters carry a 0.01pt font (TextKit 2 ignores
+    `.expansion`), and a paragraph whose visible characters are all markers gets `minimumLineHeight` so it
+    does not collapse. Focus changes and marker changes are applied by `MarkdownEditorEngine.regenerateParagraphs`,
+    which posts `textStorage.edited(.editedAttributes)` for the affected paragraphs — `recordEditAction` does
+    NOT make `NSTextContentStorage` rebuild a cached paragraph, and the delegate is held weakly (keep a strong
+    reference in tests). Regeneration is deferred while IME marked text exists.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

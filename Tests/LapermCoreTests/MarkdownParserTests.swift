@@ -79,8 +79,8 @@ private func ranges(of kind: SyntaxKind, in markdown: String) -> [NSRange] {
     let blocks = ranges(of: .blockquote, in: md)
     #expect(blocks.count == 1)
     let markers = ranges(of: .syntaxMarker, in: md)
-    #expect(markers.contains(NSRange(location: 0, length: 1)))   // 1 行目 ">"
-    #expect(markers.contains(NSRange(location: 6, length: 1)))   // 2 行目 ">"
+    #expect(markers.contains(NSRange(location: 0, length: 2)))   // 1 行目 "> "
+    #expect(markers.contains(NSRange(location: 6, length: 2)))   // 2 行目 "> "
 }
 
 @Test func nestedBlockquoteEmitsOneBlockSpanPerTopLevel() {
@@ -363,4 +363,66 @@ private func imageReferences(in markdown: String) -> [ImageReference] {
 @Test func crlfFenceMarkerExcludesCarriageReturn() {
     let md = "```\r\ncode\r\n```"
     #expect(ranges(of: .syntaxMarker, in: md).contains(NSRange(location: 0, length: 3)))
+}
+
+// MARK: - Live Preview が隠す Syntax Marker
+
+private func concealable(in markdown: String) -> [NSRange] {
+    MarkdownParser().highlightPlan(for: markdown).concealableMarkers.sorted { $0.location < $1.location }
+}
+
+@Test func concealableMarkersAreASubsetOfSyntaxMarkerSpans() {
+    let md = "# T\n\n> **b** *i* ~~s~~ `c` [l](u) ![a](p)\n\n```\nx\n```\n\n- [ ] t\n\n| a |\n|---|\n| b |\n"
+    let markers = Set(ranges(of: .syntaxMarker, in: md))
+    for range in concealable(in: md) {
+        #expect(markers.contains(range), "\(range)")
+    }
+}
+
+@Test func concealsHeadingEmphasisCodeAndStrikethroughMarkers() {
+    #expect(concealable(in: "## Title") == [NSRange(location: 0, length: 3)])
+    #expect(concealable(in: "a **b** c") == [NSRange(location: 2, length: 2), NSRange(location: 5, length: 2)])
+    #expect(concealable(in: "a *b* c") == [NSRange(location: 2, length: 1), NSRange(location: 4, length: 1)])
+    #expect(concealable(in: "a `b` c") == [NSRange(location: 2, length: 1), NSRange(location: 4, length: 1)])
+    #expect(concealable(in: "a ~~b~~ c") == [NSRange(location: 2, length: 2), NSRange(location: 5, length: 2)])
+}
+
+@Test func concealsLinkBracketsAndDestinationButKeepsText() {
+    let md = "see [here](https://example.com) now"
+    // "[" と "](https://example.com)"。リンクテキスト "here" は残る。
+    #expect(concealable(in: md) == [NSRange(location: 4, length: 1), NSRange(location: 9, length: 22)])
+    #expect(ranges(of: .syntaxMarker, in: md) == [NSRange(location: 4, length: 1), NSRange(location: 9, length: 22)])
+    // 強調を含むリンクテキスト
+    #expect(concealable(in: "[**a**](u)") == [
+        NSRange(location: 0, length: 1), NSRange(location: 1, length: 2), NSRange(location: 4, length: 2),
+        NSRange(location: 6, length: 4),
+    ])
+}
+
+@Test func concealsReferenceLinkAndAutolinkBracketsOnly() {
+    #expect(concealable(in: "[a][r]\n\n[r]: https://x.y") == [NSRange(location: 0, length: 1), NSRange(location: 2, length: 4)])
+    #expect(concealable(in: "<https://x.y>") == [NSRange(location: 0, length: 1), NSRange(location: 12, length: 1)])
+    // 裸の URL にはマーカーが無い
+    #expect(concealable(in: "https://x.y").isEmpty)
+}
+
+@Test func concealsImageMarkersButKeepsAltText() {
+    #expect(concealable(in: "![alt](p.png)") == [NSRange(location: 0, length: 2), NSRange(location: 5, length: 8)])
+}
+
+@Test func concealsBlockquoteMarkerWithItsSpace() {
+    let md = "> one\n>two\n> > inner\n>"
+    #expect(concealable(in: md) == [
+        NSRange(location: 0, length: 2), NSRange(location: 6, length: 1),
+        NSRange(location: 11, length: 2), NSRange(location: 13, length: 2), NSRange(location: 21, length: 1),
+    ])
+}
+
+@Test func doesNotConcealFencesCheckboxesOrTables() {
+    #expect(concealable(in: "```swift\nlet x = 1\n```").isEmpty)
+    #expect(concealable(in: "- [ ] todo\n- [x] done").isEmpty)
+    #expect(concealable(in: "| a | b |\n|---|---|\n| 1 | 2 |").isEmpty)
+    // Setext 見出し・インデント型コードブロックにもマーカーは無い
+    #expect(concealable(in: "Title\n=====").isEmpty)
+    #expect(concealable(in: "para\n\n    code").isEmpty)
 }

@@ -103,3 +103,12 @@ import Testing
     let shifted = plan.shifted(byEditAt: NSRange(location: 12, length: 1), changeInLength: 1)
     #expect(shifted.links.isEmpty)
 }
+
+@Test func shiftMovesAndDropsConcealableMarkers() {
+    let plan = HighlightPlan(concealableMarkers: [
+        NSRange(location: 0, length: 2), NSRange(location: 4, length: 2), NSRange(location: 10, length: 1),
+    ])
+    // 位置 5 に 1 文字挿入: 前は不変、交差は破棄、後ろは平行移動
+    let shifted = plan.shifted(byEditAt: NSRange(location: 5, length: 1), changeInLength: 1)
+    #expect(shifted.concealableMarkers == [NSRange(location: 0, length: 2), NSRange(location: 11, length: 1)])
+}

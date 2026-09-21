@@ -17,6 +17,7 @@ public struct MarkdownEditorView {
     private var onOutlineChange: (([OutlineItem]) -> Void)?
     private var onFoldingChange: (([Int]) -> Void)?
     private var foldingEnabled = true
+    private var livePreviewEnabled = false
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
     #if canImport(UIKit)
@@ -113,6 +114,14 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// Live Preview の有効/無効(デフォルト無効 = Source)。有効なら、キャレットのある行と選択範囲が触れる行を
+    /// 除いて Syntax Marker を幅ゼロで隠す(テキストは変換しない)。
+    public func livePreviewEnabled(_ enabled: Bool) -> MarkdownEditorView {
+        var copy = self
+        copy.livePreviewEnabled = enabled
+        return copy
+    }
+
     /// 編集支援(リスト継続・括弧補完など)の個別 ON/OFF(デフォルトは全部有効)。
     public func editingOptions(_ options: EditingOptions) -> MarkdownEditorView {
         var copy = self
@@ -173,6 +182,7 @@ public struct MarkdownEditorView {
             { locations in DispatchQueue.main.async { callback(locations) } }
         }
         textView.isFoldingEnabled = foldingEnabled
+        textView.isLivePreviewEnabled = livePreviewEnabled
         textView.editingOptions = editingOptions
         proxy?.textView = textView
     }

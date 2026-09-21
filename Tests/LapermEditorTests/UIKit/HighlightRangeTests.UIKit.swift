@@ -35,11 +35,16 @@ import UIKit
     let plan = textView.markdownHighlighter.currentPlan
     #expect(plan.links.first?.range == NSRange(location: 0, length: (md as NSString).length), "\(plan.links)")
     let storage = textView.textContentStorage!.textStorage!
-    var runs: [(NSRange, UIColor?)] = []
-    storage.enumerateAttribute(.foregroundColor, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
-        runs.append((range, value as? UIColor))
+    func color(at offset: Int) -> UIColor? {
+        storage.attribute(.foregroundColor, at: offset, effectiveRange: nil) as? UIColor
     }
-    #expect(runs.allSatisfy { $0.1 == MarkdownTheme.default.renderingColor(for: .link) }, "\(runs)")
+    // リンクテキスト(1...8)はすべてリンク色。"[" と "](url)" は Syntax Marker 色(ADR 0015 でリンクの括弧もマーカー)。
+    for offset in 1...8 {
+        #expect(color(at: offset) == MarkdownTheme.default.renderingColor(for: .link), "offset \(offset)")
+    }
+    #expect(color(at: 0) == MarkdownTheme.default.renderingColor(for: .syntaxMarker))
+    #expect(color(at: 9) == MarkdownTheme.default.renderingColor(for: .syntaxMarker))
+    #expect(color(at: storage.length - 1) == MarkdownTheme.default.renderingColor(for: .syntaxMarker))
 }
 #endif
 

@@ -43,6 +43,7 @@ final class MarkdownEditorEngine: NSObject {
     let imagePreviewController = ImagePreviewController()
     let foldingController = FoldingController()
     let fragmentProvider: BlockFragmentProvider
+    let livePreview = LivePreviewConcealer()
     /// NSTextContentStorage の delegate(折畳の列挙除外とコードブロック段落の表示用スタイル)。
     /// delegate は weak 参照なのでここで保持する。
     private var contentStorageDelegate: EditorContentStorageDelegate?
@@ -114,7 +115,7 @@ final class MarkdownEditorEngine: NSObject {
         // shouldEnumerate で折畳中の本体段落を列挙から除外し、textParagraphWith で
         // コードブロック先頭 / 末尾段落に上下余白の段落スタイルを付ける(いずれもストレージ無変更)。
         let delegate = EditorContentStorageDelegate(
-            foldingController: foldingController, fragmentProvider: fragmentProvider)
+            foldingController: foldingController, fragmentProvider: fragmentProvider, livePreview: livePreview)
         contentStorageDelegate = delegate
         contentStorage.delegate = delegate
         fragmentProvider.fallbackDelegate = layoutManager.delegate
@@ -174,9 +175,87 @@ final class MarkdownEditorEngine: NSObject {
 
     private func resyncAfterHighlight() {
         updateBlockDecorations()
+        updateLivePreview()
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
+    }
+
+    // MARK: - Live Preview
+
+    /// Live Preview(フォーカスの無い行の Syntax Marker を隠す)の有効 / 無効。既定は Source(無効)。
+    var isLivePreviewEnabled: Bool {
+        get { livePreview.isEnabled }
+        set {
+            guard livePreview.setEnabled(newValue) else { return }
+            // どの段落がマーカーを持つかに関わらず全段落の表示用段落を作り直す(テーマ変更と同程度の作業)。
+            _ = livePreview.takePendingDirtyRanges()
+            refreshLivePreviewFocus()
+            _ = livePreview.takePendingDirtyRanges()
+            guard let storage = host?.editorContentStorage?.textStorage else { return }
+            regenerateParagraphs(in: [NSRange(location: 0, length: storage.length)])
+        }
+    }
+
+    /// パース確定後に隠すマーカーを最新プランへ同期し、変わった段落を再生成させる。
+    private func updateLivePreview() {
+        refreshLivePreviewFocus()
+        livePreview.update(markers: highlighter.currentPlan.concealableMarkers)
+        applyLivePreviewChanges()
+    }
+
+    /// 選択範囲の変化(キャレット移動)。フォーカスのある段落が変わったら、その段落を再生成させる。
+    /// ビューの選択変更フックから呼ぶ。
+    func selectionDidChangeForLivePreview() {
+        guard livePreview.isEnabled, !isRegeneratingParagraphs else { return }
+        refreshLivePreviewFocus()
+        applyLivePreviewChanges()
+    }
+
+    private func refreshLivePreviewFocus() {
+        guard let host else { return }
+        livePreview.selectionDidChange(host.editorSelectedRanges, text: host.editorText as NSString)
+    }
+
+    /// 溜まった無効化レンジの段落を再生成・再レイアウトさせる。IME 変換中は変換セッションを乱さないよう
+    /// 見送り(レンジは溜めたまま)、確定後の flush(updateLivePreview)で適用する。
+    private func applyLivePreviewChanges() {
+        guard livePreview.hasPendingDirtyRanges else { return }
+        if host?.editorHasMarkedText == true {
+            scheduleHighlight()
+            return
+        }
+        let dirtyRanges = livePreview.takePendingDirtyRanges()
+        regenerateParagraphs(in: dirtyRanges)
+    }
+
+    private var isRegeneratingParagraphs = false
+
+    /// `ranges` を含む段落の表示用段落(NSTextParagraph)を作り直させてレイアウトを無効化する。
+    /// NSTextContentStorage は `recordEditAction` では既存の段落を使い回すので、textStorage に
+    /// 「属性が編集された」通知(`edited(.editedAttributes)`、属性自体は変えない)を出して
+    /// 段落の再生成を強制する。ハイライトの属性適用と同じ経路なので、undo・delegate の
+    /// テキスト変更通知(textDidChange)・IME には影響しない(文字編集ではないため
+    /// `didProcessEditing` のガードで無視される)。
+    private func regenerateParagraphs(in ranges: [NSRange]) {
+        guard !ranges.isEmpty,
+              let contentStorage = host?.editorContentStorage,
+              let storage = contentStorage.textStorage else { return }
+        let text = storage.string as NSString
+        let paragraphs = ranges.compactMap { range -> NSRange? in
+            guard NSMaxRange(range) <= text.length else { return nil }
+            let paragraph = text.paragraphRange(for: range)
+            return paragraph.length > 0 ? paragraph : nil
+        }
+        guard !paragraphs.isEmpty else { return }
+        isRegeneratingParagraphs = true
+        contentStorage.performEditingTransaction {
+            for paragraph in paragraphs {
+                storage.edited(.editedAttributes, range: paragraph, changeInLength: 0)
+            }
+        }
+        isRegeneratingParagraphs = false
+        requestViewportRelayout()
     }
 
     private func updateBlockDecorations() {
@@ -535,6 +614,7 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         highlighter.noteEdit(editedRange: editedRange, changeInLength: delta)
         foldingController.noteEdit(editedRange: editedRange, changeInLength: delta)
         fragmentProvider.noteEdit(editedRange: editedRange, changeInLength: delta)
+        livePreview.noteEdit(editedRange: editedRange, changeInLength: delta)
         scheduleHighlight()
         host?.editorTextDidChange()
     }

@@ -15,6 +15,7 @@ enum ASCII {
     static let dash: unichar = 0x2D
     static let period: unichar = 0x2E
     static let colon: unichar = 0x3A
+    static let lessThan: unichar = 0x3C
     static let greaterThan: unichar = 0x3E
     static let leftBracket: unichar = 0x5B
     static let backslash: unichar = 0x5C
