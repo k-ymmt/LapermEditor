@@ -180,6 +180,97 @@ public final class MarkdownTextView: UITextView {
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
         addGestureRecognizer(hover)
+
+        // selector 版は dealloc 時に自動で解除されるので deinit 不要。
+        let center = NotificationCenter.default
+        center.addObserver(
+            self, selector: #selector(keyboardWillChangeFrame(_:)),
+            name: UIResponder.keyboardWillChangeFrameNotification, object: nil)
+        center.addObserver(
+            self, selector: #selector(keyboardWillHide(_:)),
+            name: UIResponder.keyboardWillHideNotification, object: nil)
+    }
+
+    // MARK: - キーボード回避
+
+    /// キーボード(`inputAccessoryView` を含む)に隠れる分だけ `contentInset.bottom` と
+    /// スクロールインジケータの余白を自前で調整する。SwiftUI 側は `.ignoresSafeArea(.keyboard)` で
+    /// ビューを縮めさせないことで、本文がアクセサリの下まで伸び、ガラス越しに本文が見える。
+    /// `false` にすると調整をやめて余白を 0 に戻す(利用側が自前で回避するとき)。
+    public var adjustsContentInsetForKeyboard = true {
+        didSet {
+            guard oldValue != adjustsContentInsetForKeyboard else { return }
+            if adjustsContentInsetForKeyboard {
+                updateKeyboardInset()
+            } else {
+                applyKeyboardInset(0, animationDuration: 0, curve: 0)
+            }
+        }
+    }
+
+    /// 直近のキーボード終了フレーム(スクリーン座標)。回転などでレイアウトが変わったときの再計算用。
+    private var keyboardFrameOnScreen: CGRect?
+    /// 今かけているキーボード分の下余白(テスト用に読める)。
+    private(set) var keyboardInset: CGFloat = 0
+
+    @objc private func keyboardWillChangeFrame(_ notification: Notification) {
+        guard let frame = (notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? NSValue)?.cgRectValue
+        else { return }
+        keyboardFrameOnScreen = frame
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
+        updateKeyboardInset(animationDuration: duration, curve: curve)
+    }
+
+    @objc private func keyboardWillHide(_ notification: Notification) {
+        keyboardFrameOnScreen = nil
+        let duration = notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
+        let curve = notification.userInfo?[UIResponder.keyboardAnimationCurveUserInfoKey] as? Int ?? 0
+        applyKeyboardInset(0, animationDuration: duration, curve: curve)
+    }
+
+    /// 直近のキーボードフレームから下余白を計算し直して適用する(ウィンドウ外なら何もしない)。
+    private func updateKeyboardInset(animationDuration: Double = 0, curve: Int = 0) {
+        guard adjustsContentInsetForKeyboard, let window else { return }
+        guard let keyboardFrameOnScreen else {
+            applyKeyboardInset(0, animationDuration: animationDuration, curve: curve)
+            return
+        }
+        let keyboardFrame = convert(keyboardFrameOnScreen, from: window.screen.coordinateSpace)
+        // adjustedContentInset には safe area が既に足されている(behavior が .never のとき以外)。
+        let safeAreaBottom = contentInsetAdjustmentBehavior == .never ? 0 : safeAreaInsets.bottom
+        let inset = Self.keyboardBottomInset(
+            bounds: bounds, keyboardFrame: keyboardFrame, safeAreaBottom: safeAreaBottom)
+        applyKeyboardInset(inset, animationDuration: animationDuration, curve: curve)
+    }
+
+    /// ビューの下端がキーボードに隠れる高さ(ビュー座標。bounds.origin = contentOffset なので
+    /// スクロール量には依存しない)。safe area 分は既に余白に入っているので差し引く。
+    /// キーボードが横に外れている(iPad の浮動キーボードなど)か、下端より下にあれば 0。
+    static func keyboardBottomInset(bounds: CGRect, keyboardFrame: CGRect, safeAreaBottom: CGFloat) -> CGFloat {
+        let overlap = bounds.intersection(keyboardFrame)
+        guard !overlap.isNull, overlap.height > 0 else { return 0 }
+        return max(0, bounds.maxY - overlap.minY - safeAreaBottom)
+    }
+
+    private func applyKeyboardInset(_ inset: CGFloat, animationDuration: Double, curve: Int) {
+        guard inset != keyboardInset else { return }
+        keyboardInset = inset
+        let apply = {
+            self.contentInset.bottom = inset
+            self.verticalScrollIndicatorInsets.bottom = inset
+        }
+        if animationDuration > 0 {
+            let options = UIView.AnimationOptions(rawValue: UInt(curve) << 16)
+            UIView.animate(withDuration: animationDuration, delay: 0, options: [options, .beginFromCurrentState], animations: apply)
+        } else {
+            apply()
+        }
+        // キーボードが出てキャレットが隠れたら見える位置までスクロールする(UITextView は
+        // 自前の余白調整では行わない)。
+        if inset > 0, isFirstResponder {
+            scrollRangeToVisible(selectedRange)
+        }
     }
 
     /// TextKit2 のコンテンツストレージ(UITextView は AppKit と違い直接公開していない)
@@ -247,6 +338,8 @@ public final class MarkdownTextView: UITextView {
             lastImageContainerWidth = imageContainerWidth
             engine.imageContainerWidthDidChange()
         }
+        // 回転やウィンドウの付け替えでキーボードとの重なりが変わる(値が同じなら何もしない)。
+        if keyboardFrameOnScreen != nil { updateKeyboardInset() }
     }
 
     public override func textViewportLayoutControllerWillLayout(

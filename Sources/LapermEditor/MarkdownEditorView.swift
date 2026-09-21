@@ -122,6 +122,9 @@ public struct MarkdownEditorView {
     /// キーボードの上に出すアクセサリ(iOS)。UITextView の `inputAccessoryView` に SwiftUI ビューを載せる。
     /// SwiftUI の `.toolbar(placement: .keyboard)` は UIViewRepresentable のテキストビューには付かないための口。
     /// 背景は透明で、高さはコンテンツの固有サイズから決まる。親の SwiftUI 環境(Environment)は引き継がない。
+    /// テキストビューはキーボード(アクセサリ込み)に隠れる分の `contentInset` を自分で持つので、利用側は
+    /// エディタに `.ignoresSafeArea(.keyboard)` を付けて SwiftUI に縮めさせないこと(縮めると本文が
+    /// アクセサリの上で終わり、ガラス越しに見えるのがウィンドウの背景になる)。
     public func keyboardAccessory<Content: View>(@ViewBuilder _ content: () -> Content) -> MarkdownEditorView {
         var copy = self
         copy.keyboardAccessory = AnyView(content())
