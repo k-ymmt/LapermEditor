@@ -458,4 +458,64 @@ private func renderingColor(at offset: Int, _ layoutManager: NSTextLayoutManager
     await highlighter.activeBackgroundParse?.value
     #expect(highlighter.currentPlan.spans.count > 10_000)
 }
+
+@MainActor @Test func rehighlightAllAppliesThemeLineSpacingToEveryParagraph() {
+    let (contentStorage, layoutManager) = makeTextKitStack("first\n# Heading\nthird")
+    var theme = MarkdownTheme.default
+    theme.lineSpacing = 6
+    let highlighter = Highlighter(theme: theme)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    let storage = contentStorage.textStorage!
+    for offset in [0, 8, 17] {
+        let style = storage.attribute(.paragraphStyle, at: offset, effectiveRange: nil) as? NSParagraphStyle
+        #expect(style?.lineSpacing == 6, "offset \(offset)")
+    }
+}
+
+@MainActor @Test func rehighlightAllKeepsImageSpacingOnTopOfLineSpacing() {
+    let (contentStorage, layoutManager) = makeTextKitStack("![a](a.png)\nnext")
+    let storage = contentStorage.textStorage!
+    // 画像プレビューが予約した段落(paragraphSpacing 88 + マーカー)
+    let reserved = NSRange(location: 0, length: 12)
+    let reservedStyle = NSMutableParagraphStyle()
+    reservedStyle.paragraphSpacing = 88
+    storage.addAttribute(.paragraphStyle, value: reservedStyle, range: reserved)
+    storage.addAttribute(ImagePreviewController.spacingAttribute, value: CGFloat(88), range: reserved)
+
+    var theme = MarkdownTheme.default
+    theme.lineSpacing = 6
+    let highlighter = Highlighter(theme: theme)
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+
+    let imageStyle = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(imageStyle?.lineSpacing == 6)
+    #expect(imageStyle?.paragraphSpacing == 88)
+    let nextStyle = storage.attribute(.paragraphStyle, at: 13, effectiveRange: nil) as? NSParagraphStyle
+    #expect(nextStyle?.lineSpacing == 6)
+    #expect(nextStyle?.paragraphSpacing == 0)
+}
+
+@MainActor @Test func lineSpacingMovesTheNextLineDownInTextKit2() {
+    func secondLineY(lineSpacing: CGFloat) -> CGFloat {
+        let (contentStorage, layoutManager) = makeTextKitStack("one\ntwo")
+        var theme = MarkdownTheme.default
+        theme.lineSpacing = lineSpacing
+        Highlighter(theme: theme).rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+        layoutManager.ensureLayout(for: contentStorage.documentRange)
+        // TextKit 2 は行間を「次の行の上」に置く: 2 段落目のフラグメントは同じ y から
+        // 始まり、その中のテキスト行が行間ぶん下がる。
+        var lineTops: [CGFloat] = []
+        layoutManager.enumerateTextLayoutFragments(from: nil, options: []) { fragment in
+            let frame = fragment.layoutFragmentFrame
+            lineTops.append(frame.minY + (fragment.textLineFragments.first?.typographicBounds.minY ?? 0))
+            return true
+        }
+        #expect(lineTops.count == 2)
+        return lineTops.last ?? -1
+    }
+    let plain = secondLineY(lineSpacing: 0)
+    let spaced = secondLineY(lineSpacing: 6)
+    #expect(abs((spaced - plain) - 6) < 0.5, "plain \(plain) spaced \(spaced)")
+}
 #endif

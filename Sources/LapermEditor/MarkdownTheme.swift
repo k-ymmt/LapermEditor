@@ -36,6 +36,10 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     /// 段落スタイル(paragraphSpacingBefore / paragraphSpacing)で確保するため、
     /// 文書の先頭段落から始まるコードブロックには上の余白が付かない(TextKit の仕様)。
     public var codeBlockVerticalPadding: CGFloat
+    /// 行と行の間に足す余白(pt)。`NSParagraphStyle.lineSpacing` として全段落に適用され、
+    /// 段落内の折り返し行にも段落の最終行にも同じだけ付く(TextKit 2 の挙動)。
+    /// 0 なら段落スタイルを一切付けない(従来どおり)。
+    public var lineSpacing: CGFloat
 
     public init(
         bodyFont: PlatformFont,
@@ -46,7 +50,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         thematicBreakLineColor: PlatformColor,
         styles: [SyntaxKind: Style],
         tableBackgroundColor: PlatformColor = .quaternarySystemFill,
-        codeBlockVerticalPadding: CGFloat = 4
+        codeBlockVerticalPadding: CGFloat = 4,
+        lineSpacing: CGFloat = 0
     ) {
         self.bodyFont = bodyFont
         self.bodyColor = bodyColor
@@ -57,6 +62,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         self.styles = styles
         self.tableBackgroundColor = tableBackgroundColor
         self.codeBlockVerticalPadding = codeBlockVerticalPadding
+        self.lineSpacing = max(0, lineSpacing)
     }
 
     public func style(for kind: SyntaxKind) -> Style? {
@@ -102,8 +108,19 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
 }
 
 extension MarkdownTheme {
+    /// 全段落の土台になる段落スタイル。`lineSpacing` が 0 なら nil(段落スタイルを付けない)。
+    /// 画像プレビューの予約(paragraphSpacing)やコードブロックの上下余白はこの上に重ねる。
+    var baseParagraphStyle: NSParagraphStyle? {
+        guard lineSpacing > 0 else { return nil }
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = lineSpacing
+        return style
+    }
+
     var bodyLayoutAttributes: [NSAttributedString.Key: Any] {
-        [.font: bodyFont]
+        var attributes: [NSAttributedString.Key: Any] = [.font: bodyFont]
+        if let style = baseParagraphStyle { attributes[.paragraphStyle] = style }
+        return attributes
     }
 
     func layoutFont(for kind: SyntaxKind) -> PlatformFont? {

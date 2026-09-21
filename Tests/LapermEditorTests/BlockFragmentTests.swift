@@ -229,6 +229,61 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     #expect(fragments.allSatisfy { paragraphStyle(of: $0) == nil })
 }
 
+@MainActor @Test func codeBlockBoxLeavesTheLineSpacingAboveItsFirstLineOutside() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.string = "x\n\n```\na\nb\n```\n\ny"
+    textView.highlightAll()
+    let fragments = codeBlockFragments(in: textView)
+    #expect(fragments.count == 4)
+    // 先頭段落: 上余白(4)の上にさらに行間(6)が入るが、箱は行間の下から始まる
+    let first = fragments[0]
+    #expect(first.textLineFragments.first?.typographicBounds.minY == 6 + theme.codeBlockVerticalPadding)
+    #expect(first.backgroundRect.minY == 6)
+    #expect(first.backgroundRect.maxY == first.layoutFragmentFrame.height)
+    // 途中・末尾の段落は上端から塗って隣と隙間なく連なる
+    for fragment in fragments.dropFirst() { #expect(fragment.backgroundRect.minY == 0) }
+    // 行番号はテキスト行(行間 + 上余白の下)に揃う
+    let line = textView.engine.gutterLine(for: first)!
+    #expect(line.yInTextView == first.layoutFragmentFrame.minY + 6 + theme.codeBlockVerticalPadding
+            + textView.textContainerOrigin.y)
+}
+
+@MainActor @Test func gutterLinesKeepAnEvenPitchAcrossEmptyLinesWithLineSpacing() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.string = "a\n\nb\n\n\nc"
+    textView.highlightAll()
+    let fragments = layoutFragments(in: textView)
+    #expect(fragments.count == 6)
+    let tops = fragments.map { textView.engine.gutterLine(for: $0)!.yInTextView }
+    // 空段落(2・4・5 行目)は TextKit 2 が行間を高さに畳み込むが、行番号の位置は文字行と同じ間隔で並ぶ
+    let pitches = zip(tops, tops.dropFirst()).map { $1 - $0 }
+    #expect(pitches.count == 5)
+    for pitch in pitches { #expect(abs(pitch - pitches[0]) < 0.5, "\(pitches)") }
+    #expect(pitches[0] > 17, "行間ぶん広がる: \(pitches)")
+}
+
+@MainActor @Test func codeBlockBoxAtTheDocumentStartHasNoTopInset() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.lineSpacing = 6
+    textView.theme = theme
+    textView.string = "```\na\n```\n\ny"
+    textView.highlightAll()
+    let first = codeBlockFragments(in: textView).first!
+    // 文書の最初の行には行間も paragraphSpacingBefore も付かない
+    #expect(first.textLineFragments.first?.typographicBounds.minY == 0)
+    #expect(first.backgroundRect.minY == 0)
+}
+
 @MainActor @Test func gutterLineAlignsWithTheFirstTextLineOfPaddedCodeBlock() {
     let textView = makeCodeBlockTextView("x\n\n```\ncode\n```\n\ny")
     let padding = textView.theme.codeBlockVerticalPadding

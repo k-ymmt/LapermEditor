@@ -18,6 +18,18 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// nil の場合は通常の `NSTextLayoutFragment` と同じ挙動になる。
     var reservedBottomHeight: CGFloat?
 
+    /// テーマの行間(`MarkdownTheme.lineSpacing`)。TextKit 2 は行間を「文書の最初の行を除く
+    /// 各行の上」に置くので、段落の先頭行もフラグメント上端から行間ぶん下に始まる。
+    var lineSpacing: CGFloat = 0
+
+    /// ブロック装飾を上端から何 pt 下げて描き始めるか。先頭行の上に入った行間ぶんだけ
+    /// (最大でも `lineSpacing`)下げて、行間を箱の外に出す。文書の最初の行には行間が
+    /// 付かないので 0 になる。paragraphSpacingBefore(コードブロックの上余白)は含めない。
+    var decorationTopInset: CGFloat {
+        let firstLineTop = textLineFragments.first?.typographicBounds.minY ?? 0
+        return max(0, min(lineSpacing, firstLineTop))
+    }
+
     override var layoutFragmentFrame: CGRect {
         var frame = super.layoutFragmentFrame
         guard let reservedBottomHeight, reservationApplies else { return frame }
@@ -74,7 +86,10 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
             containerWidth: textLayoutManager?.textContainer?.size.width,
             textRightEdge: frame.maxX)
         let bottom = trailingExtraLineFragment?.typographicBounds.minY ?? frame.height
-        return CGRect(x: -frame.minX, y: 0, width: width, height: bottom)
+        // ブロック先頭の段落だけ、先頭行の上に入った行間を箱の外に出す(途中の段落で
+        // 下げると隣の段落の矩形との間に隙間が開く)。
+        let top = roundsTop ? decorationTopInset : 0
+        return CGRect(x: -frame.minX, y: top, width: width, height: max(0, bottom - top))
     }
 
     /// 背景の幅。コンテナ幅が 0(NSTextContainer では「無制限」)・非有限・無制限相当の
@@ -183,10 +198,12 @@ final class ThematicBreakFragment: ReservingTextLayoutFragment {
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
         let bounds = renderingSurfaceBounds.offsetBy(dx: point.x, dy: point.y)
+        // 罫線は "---" のテキスト行の中央に引く(行間ぶん上に入った余白で中心がずれないように)。
+        let midY = textLineFragments.first.map { point.y + $0.typographicBounds.midY } ?? bounds.midY
         context.setStrokeColor(lineColor.cgColor)
         context.setLineWidth(1)
-        context.move(to: CGPoint(x: bounds.minX, y: bounds.midY))
-        context.addLine(to: CGPoint(x: bounds.maxX, y: bounds.midY))
+        context.move(to: CGPoint(x: bounds.minX, y: midY))
+        context.addLine(to: CGPoint(x: bounds.maxX, y: midY))
         context.strokePath()
         context.restoreGState()
         super.draw(at: point, in: context)

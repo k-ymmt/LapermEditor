@@ -374,4 +374,32 @@ func waitUntil(_ condition: () -> Bool) async throws {
         return style?.paragraphSpacing == 50 + ImagePreviewController.padding
     }
 }
+
+@Test @MainActor func applySpacingsLayersReservationOnTheBaseParagraphStyle() {
+    let contentStorage = NSTextContentStorage()
+    let storage = NSTextStorage(string: "![a](a.png)\nnext line")
+    contentStorage.textStorage = storage
+    let base = NSMutableParagraphStyle()
+    base.lineSpacing = 6
+    storage.addAttribute(.paragraphStyle, value: base, range: NSRange(location: 0, length: storage.length))
+    let controller = ImagePreviewController()
+    controller.baseParagraphStyle = base
+    controller.options = ImagePreviewOptions(baseURL: URL(filePath: "/docs/"))
+    var ref = makeReference(destination: "a.png")
+    ref.paragraphRange = NSRange(location: 0, length: 12)
+    controller.update(references: [ref])  // loading: 80 + 8
+
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+    let style = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(style?.paragraphSpacing == 88)
+    #expect(style?.lineSpacing == 6)
+
+    // 予約を外すと土台(行間のみ)に戻る — 段落スタイルは消えない
+    controller.update(references: [])
+    controller.applySpacings(contentStorage: contentStorage, containerWidth: 500)
+    let restored = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(restored?.paragraphSpacing == 0)
+    #expect(restored?.lineSpacing == 6)
+    #expect(storage.attribute(ImagePreviewController.spacingAttribute, at: 0, effectiveRange: nil) == nil)
+}
 #endif

@@ -291,6 +291,16 @@ public final class Highlighter {
         }
     }
 
+    /// `range` 内で画像プレビューの予約マーカーが付いた部分に、`base`(行間)の上に
+    /// 予約高さを paragraphSpacing として重ねた段落スタイルを付け直す。
+    static func restoreImageSpacing(in storage: NSTextStorage, range: NSRange, base: NSParagraphStyle) {
+        storage.enumerateAttribute(ImagePreviewController.spacingAttribute, in: range) { value, run, _ in
+            guard let height = value as? CGFloat else { return }
+            storage.addAttribute(
+                .paragraphStyle, value: ImagePreviewController.spacingStyle(height: height, base: base), range: run)
+        }
+    }
+
     // MARK: - 適用
 
     private func apply(
@@ -310,11 +320,18 @@ public final class Highlighter {
         //    (計画の例コードからの意図的逸脱 — IME 属性保護のため)。
         let bodyLayoutAttributes = theme.bodyLayoutAttributes
         let bodyColorAttributes: [NSAttributedString.Key: Any] = [.foregroundColor: theme.bodyColor]
+        let baseParagraphStyle = theme.baseParagraphStyle
         contentStorage.performEditingTransaction {
             for range in invalidated {
                 let clipped = clip(range, to: documentLength)
                 guard clipped.length > 0 else { continue }
                 storage.addAttributes(bodyLayoutAttributes, range: clipped)
+                if let baseParagraphStyle {
+                    // 土台の段落スタイル(行間)で上書きすると、画像プレビューが予約した
+                    // paragraphSpacing が消える。マーカー属性は残るので ImagePreviewController は
+                    // 「変化なし」と判断して再適用しない → 予約高さをここで載せ直す。
+                    Self.restoreImageSpacing(in: storage, range: clipped, base: baseParagraphStyle)
+                }
                 // addAttributes では古い打ち消し線を消せないため、自前で管理する
                 // キーだけ明示的に取り除く(setAttributes を避けて IME 属性は保護したまま)。
                 storage.removeAttribute(.strikethroughStyle, range: clipped)

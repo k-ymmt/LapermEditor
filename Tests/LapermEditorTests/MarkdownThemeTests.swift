@@ -61,4 +61,25 @@ import Testing
     // テーブル全体はフォント変更なし(デフォルトテーマの本文は元から等幅)
     #expect(theme.layoutFont(for: .table) == nil)
 }
+
+@Test func lineSpacingZeroAddsNoParagraphStyle() {
+    let theme = MarkdownTheme.default
+    #expect(theme.lineSpacing == 0)
+    #expect(theme.baseParagraphStyle == nil)
+    #expect(theme.bodyLayoutAttributes[.paragraphStyle] == nil)
+}
+
+@Test func lineSpacingBecomesTheBodyParagraphStyle() {
+    var theme = MarkdownTheme.default
+    theme.lineSpacing = 6
+    let style = theme.bodyLayoutAttributes[.paragraphStyle] as? NSParagraphStyle
+    #expect(style?.lineSpacing == 6)
+    #expect(style?.paragraphSpacing == 0)
+    // 負値は 0 に丸める(init 経由)
+    #expect(MarkdownTheme(
+        bodyFont: theme.bodyFont, bodyColor: theme.bodyColor, backgroundColor: theme.backgroundColor,
+        codeBlockBackgroundColor: theme.codeBlockBackgroundColor, blockquoteBarColor: theme.blockquoteBarColor,
+        thematicBreakLineColor: theme.thematicBreakLineColor, styles: [:], lineSpacing: -3
+    ).lineSpacing == 0)
+}
 #endif

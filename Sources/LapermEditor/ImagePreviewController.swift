@@ -145,6 +145,16 @@ final class ImagePreviewController {
     /// 座標追跡なしで storage 自身から取り出せるようにする(属性は編集に自動追随する)。
     static let spacingAttribute = NSAttributedString.Key("laperm.imageSpacing")
 
+    /// 予約を載せる土台の段落スタイル(テーマの行間)。nil なら予約解除時に段落スタイルを外す。
+    var baseParagraphStyle: NSParagraphStyle?
+
+    /// `base`(行間など)の上に予約高さを paragraphSpacing として重ねた段落スタイル。
+    static func spacingStyle(height: CGFloat, base: NSParagraphStyle?) -> NSParagraphStyle {
+        let style = (base?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+        style.paragraphSpacing = height
+        return style
+    }
+
     /// 予約高さを paragraphSpacing として textStorage に反映する。
     /// 実属性編集なので TextKit2 の通常経路で再レイアウトされる
     /// (BlockFragment のような recordEditAction ワークアラウンドは不要)。
@@ -207,12 +217,16 @@ final class ImagePreviewController {
         guard !stale.isEmpty || wanted.count > unchanged.count else { return }
         contentStorage.performEditingTransaction {
             for range in stale {
-                storage.removeAttribute(.paragraphStyle, range: range)
+                // 予約を外したら土台(行間)に戻す。土台が無ければ段落スタイルごと外す。
+                if let baseParagraphStyle {
+                    storage.addAttribute(.paragraphStyle, value: baseParagraphStyle, range: range)
+                } else {
+                    storage.removeAttribute(.paragraphStyle, range: range)
+                }
                 storage.removeAttribute(Self.spacingAttribute, range: range)
             }
             for (range, height) in wanted where !unchanged.contains(range) {
-                let style = NSMutableParagraphStyle()
-                style.paragraphSpacing = height
+                let style = Self.spacingStyle(height: height, base: baseParagraphStyle)
                 storage.addAttribute(.paragraphStyle, value: style, range: range)
                 storage.addAttribute(Self.spacingAttribute, value: height, range: range)
             }

@@ -64,6 +64,7 @@ final class MarkdownEditorEngine: NSObject {
         set {
             highlighter.theme = newValue
             fragmentProvider.theme = newValue
+            imagePreviewController.baseParagraphStyle = newValue.baseParagraphStyle
         }
     }
 
@@ -71,6 +72,7 @@ final class MarkdownEditorEngine: NSObject {
         highlighter = Highlighter(theme: theme)
         fragmentProvider = BlockFragmentProvider(theme: theme)
         super.init()
+        imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
 
         foldingController.onOutlineChanged = { [weak self] in
             guard let self else { return }
@@ -345,12 +347,25 @@ final class MarkdownEditorEngine: NSObject {
         // 段落スタイルの paragraphSpacingBefore(コードブロック先頭の上余白)ぶん、
         // 最初のテキスト行はフラグメント上端より下から始まる。行番号は行に揃える。
         let frame = fragment.layoutFragmentFrame
-        let firstLineTop = fragment.textLineFragments.first?.typographicBounds.minY ?? 0
+        let firstLineTop = Self.firstTextLineTop(
+            of: fragment, lineSpacing: theme.lineSpacing,
+            isDocumentStart: fragment.rangeInElement.location.compare(contentManager.documentRange.location) == .orderedSame)
         return GutterLine(
             number: lineNumber(atOffset: offset),
             yInTextView: frame.minY + firstLineTop + host.editorTextContainerOrigin.y,
             heightInTextView: max(0, frame.height - firstLineTop),
             foldMarker: foldMarker(inParagraphFrom: offset, to: endOffset))
+    }
+
+    /// フラグメント内で最初のテキスト行の文字が始まる高さ(フラグメント原点基準)。
+    /// TextKit 2 は行間(`lineSpacing`)を「文書の最初の行を除く各行の上」に置き、文字のある行では
+    /// `typographicBounds.minY` がそのぶん下がる。ところが空段落では行間が minY ではなく行の高さに
+    /// 畳み込まれる(minY 0・高さ = 本来の行高 + 行間)ので、そのまま使うと空行の行番号だけ
+    /// 行間ぶん上にずれる。文書先頭でないのに minY が行間より小さい行は空段落とみなして補正する。
+    static func firstTextLineTop(of fragment: NSTextLayoutFragment, lineSpacing: CGFloat, isDocumentStart: Bool) -> CGFloat {
+        let minY = fragment.textLineFragments.first?.typographicBounds.minY ?? 0
+        guard lineSpacing > 0, !isDocumentStart, minY < lineSpacing else { return minY }
+        return minY + lineSpacing
     }
 
     // MARK: - 画像プレビュー

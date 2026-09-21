@@ -232,6 +232,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         case .codeBlock:
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
             fragment.fillColor = theme.codeBlockBackgroundColor
+            fragment.lineSpacing = theme.lineSpacing
             let edges = codeBlockEdges(forParagraph: paragraph)
             fragment.roundsTop = edges?.isFirst ?? false
             fragment.roundsBottom = edges?.isLast ?? false
