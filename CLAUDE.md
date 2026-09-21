@@ -13,10 +13,14 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`
-    rule (minimum per side + maximum text width in ems, centered). The AppKit view applies it
-    symmetrically via `textContainerInset` from `setFrameSize`; the UIKit view folds the gutter width
-    into `textContainerInset.left` and recomputes in `layoutSubviews` before `super` (UITextView sizes
-    the container from the inset in that pass).
+    rule (minimum per side + maximum text width in ems, centered, rounded up to whole points so the
+    minimum holds and the maximum is not exceeded; non-finite values count as no margin). The AppKit
+    view applies `symmetricHorizontalInset` (the smaller side, so a margin wider than half the view
+    still leaves a positive container width) via `textContainerInset` from `setFrameSize`; the UIKit
+    view folds the gutter width into `textContainerInset.left` and recomputes in `layoutSubviews`
+    before `super` (UITextView sizes the container from the inset in that pass). Toggling
+    `showsLineNumbers` on a wide view leaves the insets unchanged, so the UIKit view re-runs the
+    viewport layout on the next pass to refill the gutter.
   - `Sources/LapermEditor/UIKit/`: `MarkdownTextView: UITextView`, gutter as a viewport-pinned subview
     (text is inset via `textContainerInset.left`), overlays. Links open via the long-press edit menu
     ("Open Link", localized in `Resources/Localizable.xcstrings`) or Cmd+tap; Cmd+hover underlines

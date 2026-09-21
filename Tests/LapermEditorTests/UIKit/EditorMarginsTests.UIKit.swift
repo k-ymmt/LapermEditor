@@ -58,4 +58,57 @@ import UIKit
     #expect(textView.gutterView.lines.map(\.number) == [1, 2])
     #expect(textView.gutterView.lines.first?.yInTextView == textView.textContainerInset.top)
 }
+
+@MainActor @Test func showingLineNumbersOnAWideViewRefreshesTheGutterWithoutAnInsetChange() {
+    // 広いビューでは余白がガターを覆うので inset は変わらない。それでも再表示で幅と行情報が戻ること。
+    let textView = MarkdownTextView()
+    var theme = textView.theme
+    theme.bodyFont = .systemFont(ofSize: 17)
+    textView.theme = theme
+    textView.margins = .readable
+    textView.showsLineNumbers = false
+    textView.frame = CGRect(x: 0, y: 0, width: 1024, height: 600)
+    textView.text = "# A\n\nbody"
+    textView.highlightAll()
+    textView.layoutIfNeeded()
+    #expect(textView.gutterView.isHidden)
+    #expect(textView.gutterView.frame.width == 0)
+    #expect(textView.gutterView.lines.isEmpty)
+
+    let insetBefore = textView.textContainerInset
+    textView.showsLineNumbers = true
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset == insetBefore)
+    #expect(!textView.gutterView.isHidden)
+    #expect(textView.gutterView.frame.width == LineNumberGutterView.width)
+    #expect(textView.gutterView.lines.map(\.number) == [1, 2, 3])
+    #expect(textView.gutterView.lines.first?.foldMarker != nil)
+}
+
+@MainActor @Test func resizingALaidOutDocumentRecentersTheTextInOnePass() {
+    let textView = MarkdownTextView()
+    var theme = textView.theme
+    theme.bodyFont = .systemFont(ofSize: 17)
+    textView.theme = theme
+    textView.margins = .readable
+    textView.frame = CGRect(x: 0, y: 0, width: 390, height: 600)
+    textView.text = String(repeating: "word ", count: 200) + "\n\n![a](a.png)\n"
+    textView.highlightAll()
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset.left == 44)
+    #expect(textView.textContainer.size.width == 326)  // 390 − 44 − 20
+
+    // 幅を変えると通常のレイアウト経路だけで inset とコンテナ幅が同じパスで追従する
+    textView.frame = CGRect(x: 0, y: 0, width: 1024, height: 600)
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset.left == 172)
+    #expect(textView.textContainerInset.right == 172)
+    #expect(textView.textContainer.size.width == 680)
+    #expect(textView.imageContainerWidth == 680 - textView.textContainer.lineFragmentPadding * 2)
+    // 2 回目のレイアウトで値が揺れない(収束)
+    textView.setNeedsLayout()
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset.left == 172)
+    #expect(textView.textContainer.size.width == 680)
+}
 #endif

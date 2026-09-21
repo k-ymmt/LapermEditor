@@ -21,7 +21,9 @@ public struct EditorMargins: Equatable, Sendable {
     /// 読みやすい余白: 左右 20pt 以上、本文は 40em(17pt なら 680pt、全角 40 字 / 半角約 80 字)まで。
     public static let readable = EditorMargins(minimumHorizontal: 20, maximumWidthInEms: 40)
 
-    /// 左右の余白(テキストコンテナの inset)を決める。値は整数 pt に切り下げる。
+    /// 左右の余白(テキストコンテナの inset)を決める。値は整数 pt に切り上げる(最小余白を下回らず、
+    /// 本文が最大幅を超えない向き)。有限でない値(無限大・NaN)は 0 / 制限なしとして扱う。
+    /// 余白がビューより広い設定でも右余白を削って本文幅を負にしない(ガター以上に狭いビューでは 0 になる)。
     /// - Parameters:
     ///   - viewWidth: 本文を置くビューの幅。
     ///   - gutterWidth: 本文と同じビューに重なるガターの幅(ガターがビューの外にあるなら 0)。
@@ -29,14 +31,28 @@ public struct EditorMargins: Equatable, Sendable {
     func horizontalInsets(viewWidth: CGFloat, gutterWidth: CGFloat, fontSize: CGFloat)
         -> (leading: CGFloat, trailing: CGFloat)
     {
-        var symmetric = max(0, minimumHorizontal)
-        if let ems = maximumWidthInEms, ems > 0, fontSize > 0 {
+        let width = viewWidth.isFinite ? max(0, viewWidth) : 0
+        let gutter = gutterWidth.isFinite ? max(0, gutterWidth) : 0
+        let symmetric = symmetricMargin(viewWidth: width, fontSize: fontSize)
+        // ガターの分は幅に関わらず確保する(レイアウト前の幅 0 でも本文がガターに重ならない)。
+        let leading = max(symmetric, gutter)
+        let trailing = min(symmetric, max(0, width - leading))
+        return (leading, trailing)
+    }
+
+    /// 左右同値の余白(`NSTextView.textContainerInset` 用)。`horizontalInsets` の小さい側と同じで、
+    /// 余白がビューの半分を超える設定でも本文幅を負にしない。
+    func symmetricHorizontalInset(viewWidth: CGFloat, fontSize: CGFloat) -> CGFloat {
+        let insets = horizontalInsets(viewWidth: viewWidth, gutterWidth: 0, fontSize: fontSize)
+        return min(insets.leading, insets.trailing)
+    }
+
+    /// 最小余白と最大幅から決まる片側の余白(ガターを考慮しない)。
+    private func symmetricMargin(viewWidth: CGFloat, fontSize: CGFloat) -> CGFloat {
+        var symmetric = minimumHorizontal.isFinite ? max(0, minimumHorizontal) : 0
+        if let ems = maximumWidthInEms, ems.isFinite, ems > 0, fontSize.isFinite, fontSize > 0 {
             symmetric = max(symmetric, (viewWidth - ems * fontSize) / 2)
         }
-        symmetric = symmetric.rounded(.down)
-        // ガターの分は幅に関わらず確保する(レイアウト前の幅 0 でも本文がガターに重ならない)。
-        let leading = max(symmetric, max(0, gutterWidth))
-        let trailing = min(symmetric, max(0, viewWidth - leading))
-        return (leading, trailing)
+        return symmetric.rounded(.up)
     }
 }

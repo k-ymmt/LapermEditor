@@ -44,4 +44,38 @@ import Testing
     MarkdownEditorView(text: .constant("")).apply(to: textView)
     #expect(textView.margins == .none)
 }
+
+@MainActor @Test func togglingTheRulerRecentersTheText() {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    var theme = textView.theme
+    theme.bodyFont = .systemFont(ofSize: 17)
+    textView.theme = theme
+    textView.margins = .readable
+    textView.string = "# A\n\nbody"
+    textView.highlightAll()
+    scrollView.frame = NSRect(x: 0, y: 0, width: 1024, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    // ルーラー(44pt)がテキストビューの幅を削るので、その分だけ余白が縮む: (980 − 680) / 2
+    #expect(textView.frame.width == 980)
+    #expect(textView.textContainerInset.width == 150)
+    #expect(textView.textContainer?.size.width == 680)
+
+    textView.showsLineNumbers = false
+    scrollView.layoutSubtreeIfNeeded()
+    #expect(textView.frame.width == 1024)
+    #expect(textView.textContainerInset.width == 172)
+    #expect(textView.textContainer?.size.width == 680)
+}
+
+@MainActor @Test func marginsWiderThanTheViewKeepAPositiveTextWidth() {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.showsLineNumbers = false
+    textView.margins = EditorMargins(minimumHorizontal: 200, maximumWidthInEms: nil)
+    scrollView.frame = NSRect(x: 0, y: 0, width: 390, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    #expect(textView.textContainerInset.width == 190)
+    #expect(textView.textContainer?.size.width == 10)
+}
 #endif

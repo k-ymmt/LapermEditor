@@ -409,9 +409,9 @@ public final class MarkdownTextView: NSTextView {
     /// `margins` からテキストコンテナの左右 inset を決める(上下は触らない)。中央寄せはビュー幅に
     /// 依るので、幅が変わる `setFrameSize` からも呼ぶ。`NSTextView.textContainerInset` は左右同値。
     private func updateTextInsets() {
-        let insets = margins.horizontalInsets(
-            viewWidth: frame.width, gutterWidth: 0, fontSize: engine.theme.bodyFont.pointSize)
-        let inset = NSSize(width: insets.leading, height: textContainerInset.height)
+        let horizontal = margins.symmetricHorizontalInset(
+            viewWidth: frame.width, fontSize: engine.theme.bodyFont.pointSize)
+        let inset = NSSize(width: horizontal, height: textContainerInset.height)
         if inset != textContainerInset {
             textContainerInset = inset
         }

@@ -1,3 +1,4 @@
+import CoreGraphics
 import Testing
 @testable import LapermEditor
 
@@ -32,9 +33,41 @@ import Testing
     #expect(unlimited.horizontalInsets(viewWidth: 4000, gutterWidth: 0, fontSize: 17) == (12, 12))
 }
 
-@Test func insetsAreRoundedDownToWholePoints() {
-    // 1001 − 680 = 321 → 160.5 → 160
-    #expect(EditorMargins.readable.horizontalInsets(viewWidth: 1001, gutterWidth: 0, fontSize: 17) == (160, 160))
+@Test func insetsAreRoundedUpToWholePoints() {
+    // 1001 − 680 = 321 → 160.5 → 161(本文は最大幅 680 を超えない)
+    #expect(EditorMargins.readable.horizontalInsets(viewWidth: 1001, gutterWidth: 0, fontSize: 17) == (161, 161))
+    // 最小余白も下回らない
+    let fractional = EditorMargins(minimumHorizontal: 20.9, maximumWidthInEms: nil)
+    #expect(fractional.horizontalInsets(viewWidth: 390, gutterWidth: 0, fontSize: 17) == (21, 21))
+}
+
+@Test func textWidthNeverExceedsTheMaximumAsTheViewGrows() {
+    let readable = EditorMargins.readable
+    for width in stride(from: CGFloat(700), through: 1100, by: 1) {
+        let insets = readable.horizontalInsets(viewWidth: width, gutterWidth: 0, fontSize: 17)
+        let textWidth = width - insets.leading - insets.trailing
+        // 最大幅は超えない。最大幅に届くビュー(720pt 以上)では切り上げの 1pt しか損なわない。
+        #expect(textWidth <= 680, "width \(width) → \(textWidth)")
+        #expect(textWidth >= min(678, width - 40), "width \(width) → \(textWidth)")
+        #expect(insets.leading >= 20 && insets.trailing >= 20)
+    }
+}
+
+@Test func symmetricInsetKeepsThePositiveWidthWhenMarginsExceedHalfTheView() {
+    // 左右 200pt を 390pt 幅に求めると非対称には (200, 190)。対称適用(AppKit)は小さい側を取り、本文幅を負にしない。
+    let wide = EditorMargins(minimumHorizontal: 200, maximumWidthInEms: nil)
+    #expect(wide.horizontalInsets(viewWidth: 390, gutterWidth: 0, fontSize: 17) == (200, 190))
+    #expect(wide.symmetricHorizontalInset(viewWidth: 390, fontSize: 17) == 190)
+    #expect(wide.symmetricHorizontalInset(viewWidth: 1024, fontSize: 17) == 200)
+    #expect(wide.symmetricHorizontalInset(viewWidth: 100, fontSize: 17) == 0)
+    #expect(EditorMargins.readable.symmetricHorizontalInset(viewWidth: 1024, fontSize: 17) == 172)
+}
+
+@Test func nonFiniteValuesAreTreatedAsNoMargin() {
+    let infinite = EditorMargins(minimumHorizontal: .infinity, maximumWidthInEms: .nan)
+    #expect(infinite.horizontalInsets(viewWidth: 390, gutterWidth: 44, fontSize: 17) == (44, 0))
+    #expect(EditorMargins.readable.horizontalInsets(viewWidth: .infinity, gutterWidth: 44, fontSize: .nan) == (44, 0))
+    #expect(EditorMargins.readable.horizontalInsets(viewWidth: 390, gutterWidth: .nan, fontSize: 17) == (20, 20))
 }
 
 @Test func insetsNeverExceedTheView() {

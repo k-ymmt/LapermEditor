@@ -59,8 +59,15 @@ public final class MarkdownTextView: UITextView {
         didSet {
             guard showsLineNumbers != oldValue else { return }
             updateTextInsets()
+            // 広いビューでは余白がガターを覆うので inset が変わらず、レイアウトが走らない。ガターの
+            // 幅(0 ↔ 44)と、非表示中は集めていない行情報を次のレイアウトで取り直す。
+            gutterNeedsViewportRefresh = true
+            setNeedsLayout()
         }
     }
+
+    /// 次の `layoutSubviews` でビューポートのレイアウトをやり直してガターの行情報を集め直す。
+    private var gutterNeedsViewportRefresh = false
 
     /// 本文の左右余白(デフォルトは余白なし)。ガターの幅は左余白に含まれる。
     public var margins: EditorMargins = .none {
@@ -409,6 +416,10 @@ public final class MarkdownTextView: UITextView {
         // 画像オーバーレイは描画しない(子ビューだけ)のでコンテンツ全体に広げる。
         gutter.frame = CGRect(x: bounds.minX, y: bounds.minY, width: gutterWidth, height: bounds.height)
         gutter.contentOffsetY = bounds.minY
+        if gutterNeedsViewportRefresh {
+            gutterNeedsViewportRefresh = false
+            textLayoutManager?.textViewportLayoutController.layoutViewport()
+        }
         imageOverlay.frame = CGRect(
             x: 0, y: 0, width: bounds.width, height: max(contentSize.height, bounds.height))
         updateLinkHoverOverlay()
