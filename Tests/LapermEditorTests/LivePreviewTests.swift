@@ -92,9 +92,9 @@ import Testing
     #expect(concealer.isEditorFocused)
     #expect(concealer.isFocused(paragraph: NSRange(location: 0, length: 4)))
 
-    // フォーカスを失う: キャレットの段落だけ作り直し、以後はどの段落にもフォーカスが無い
+    // フォーカスを失う: キャレットの段落のマーカーだけ作り直し(再生成側が段落へ広げる)、以後はどの段落にもフォーカスが無い
     #expect(concealer.editorFocusDidChange(false))
-    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 4)])
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 1), NSRange(location: 2, length: 1)])
     #expect(!concealer.isFocused(paragraph: NSRange(location: 0, length: 4)))
     #expect(concealer.focusedParagraphs == [NSRange(location: 0, length: 4)], "the selection is still tracked")
     #expect(!concealer.editorFocusDidChange(false))
@@ -105,9 +105,9 @@ import Testing
     #expect(concealer.takePendingDirtyRanges().isEmpty)
     #expect(!concealer.isFocused(paragraph: NSRange(location: 10, length: 4)))
 
-    // 戻る: そのときのキャレットの段落だけ作り直す
+    // 戻る: そのときのキャレットの段落(のマーカー)だけ作り直す
     #expect(concealer.editorFocusDidChange(true))
-    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 10, length: 4)])
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 10, length: 1), NSRange(location: 12, length: 1)])
     #expect(concealer.isFocused(paragraph: NSRange(location: 10, length: 4)))
 
     // マーカーの無い行にキャレットがあれば、フォーカスの変化で作り直す段落は無い
@@ -115,6 +115,14 @@ import Testing
     _ = concealer.takePendingDirtyRanges()
     concealer.editorFocusDidChange(false)
     #expect(concealer.takePendingDirtyRanges().isEmpty)
+
+    // 全選択(3 行)でフォーカスを往復しても、無効化されるのはマーカーだけ(マーカーの無い 2 行目は作り直さない)
+    concealer.selectionDidChange([NSRange(location: 0, length: text.length)], text: text)
+    _ = concealer.takePendingDirtyRanges()
+    concealer.editorFocusDidChange(true)
+    #expect(concealer.takePendingDirtyRanges() == concealer.markers)
+    concealer.editorFocusDidChange(false)
+    #expect(concealer.takePendingDirtyRanges() == concealer.markers)
 
     // 無効なら状態だけ追従する
     concealer.isEnabled = false
@@ -467,6 +475,95 @@ private func makeFocusedTextView(_ markdown: String) -> (NSWindow, MarkdownTextV
     loose.isLivePreviewEnabled = true
     loose.setSelectedRange(NSRange(location: 0, length: 0))
     #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: loose.textLayoutManager!).width < 0.1)
+}
+
+@MainActor @Test func textViewLivePreviewFollowsWindowMovesAndIgnoresKeyStatus() {
+    let markdown = "# Title\n\nsome **bold**\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    let scrollView = textView.enclosingScrollView!
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    let layoutManager = textView.textLayoutManager!
+    #expect(window.firstResponder === textView)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5)
+
+    // ウィンドウが key でなくなるだけでは変えない(first responder のまま)
+    window.resignKey()
+    #expect(window.firstResponder === textView)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5)
+
+    // フォーカス中のビューをウィンドウから外す: first responder でなくなり全行隠れる
+    window.contentView = NSView(frame: scrollView.frame)
+    #expect(textView.window == nil)
+    #expect(window.firstResponder !== textView)
+    #expect(!textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1)
+
+    // 別のウィンドウへ載せ直して first responder にする: キャレットの行だけ見える
+    let other = NSWindow(contentRect: scrollView.frame, styleMask: [.titled], backing: .buffered, defer: false)
+    defer { withExtendedLifetime(other) {} }
+    other.contentView = scrollView
+    #expect(textView.window === other)
+    #expect(!textView.engine.livePreview.isEditorFocused, "moving into a window does not focus by itself")
+    #expect(other.makeFirstResponder(textView))
+    #expect(other.firstResponder === textView)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5)
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: layoutManager).width < 0.1)
+}
+
+/// 再生成(processEditing)の通知の中で一度だけエディタへフォーカスを戻す(MainActor 隔離なので Sendable)。
+@MainActor
+private final class RegenerationRefocuser {
+    weak var textView: MarkdownTextView?
+    weak var window: NSWindow?
+    private(set) var fired = false
+    init(textView: MarkdownTextView, window: NSWindow) {
+        self.textView = textView
+        self.window = window
+    }
+    func fire() {
+        guard let textView, let window, !fired, textView.engine.isRegeneratingParagraphs else { return }
+        fired = true
+        _ = window.makeFirstResponder(textView)
+    }
+}
+
+@MainActor @Test func focusChangeDuringParagraphRegenerationIsAppliedWithoutAnotherEvent() {
+    // 非フォーカスで 1 行目("# Title")の表示段落を作らせておき、3 行目の再生成(processEditing の通知の中)で
+    // フォーカスを戻す。1 行目は保留に積まれるが再生成中なので適用が見送られる → 再生成の終わりで拾われるべき。
+    let markdown = "# Title\n\nsome **bold**\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    let layoutManager = textView.textLayoutManager!
+    #expect(window.makeFirstResponder(nil))
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1)
+
+    let storage = textView.textStorage!
+    let refocuser = RegenerationRefocuser(textView: textView, window: window)
+    let observer = NotificationCenter.default.addObserver(
+        forName: NSTextStorage.didProcessEditingNotification, object: storage, queue: nil
+    ) { _ in
+        MainActor.assumeIsolated { refocuser.fire() }
+    }
+    defer { NotificationCenter.default.removeObserver(observer) }
+
+    // 3 行目だけを作り直させる(選択を 3 行目に置いたまま Source ↔ Live Preview ではなく、マーカー更新の経路を使う)
+    textView.engine.livePreview.update(markers: [])
+    textView.engine.livePreview.update(markers: textView.engine.highlighter.currentPlan.concealableMarkers)
+    _ = textView.engine.livePreview.takePendingDirtyRanges()
+    textView.engine.regenerateParagraphs(in: [NSRange(location: 14, length: 2)])
+
+    #expect(refocuser.fired, "the notification must have fired inside the regeneration")
+    #expect(window.firstResponder === textView)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(!textView.engine.livePreview.hasPendingDirtyRanges, "the caret line must not stay pending")
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5, "the caret line shows its markers without another event")
 }
 
 @MainActor @Test func editorViewAppliesLivePreviewSetting() {

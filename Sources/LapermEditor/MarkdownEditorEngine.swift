@@ -243,7 +243,7 @@ final class MarkdownEditorEngine: NSObject {
         regenerateParagraphs(in: dirtyRanges)
     }
 
-    private var isRegeneratingParagraphs = false
+    private(set) var isRegeneratingParagraphs = false
 
     /// `ranges` を含む段落の表示用段落(NSTextParagraph)を作り直させてレイアウトを無効化する。
     /// NSTextContentStorage は `recordEditAction` では既存の段落を使い回すので、textStorage に
@@ -251,7 +251,7 @@ final class MarkdownEditorEngine: NSObject {
     /// 段落の再生成を強制する。ハイライトの属性適用と同じ経路なので、undo・delegate の
     /// テキスト変更通知(textDidChange)・IME には影響しない(文字編集ではないため
     /// `didProcessEditing` のガードで無視される)。
-    private func regenerateParagraphs(in ranges: [NSRange]) {
+    func regenerateParagraphs(in ranges: [NSRange]) {
         guard !ranges.isEmpty,
               let contentStorage = host?.editorContentStorage,
               let storage = contentStorage.textStorage else { return }
@@ -277,6 +277,9 @@ final class MarkdownEditorEngine: NSObject {
         }
         isRegeneratingParagraphs = false
         requestViewportRelayout()
+        // 再生成の最中(processEditing の通知の中)に届いた選択変更・フォーカス変更は無効化レンジを溜めるだけで
+        // 適用を見送っている。次の操作を待たずにここで拾う(1 回だけ: 再帰しても溜まった分を使い切れば止まる)。
+        applyLivePreviewChanges()
     }
 
     private func updateBlockDecorations() {

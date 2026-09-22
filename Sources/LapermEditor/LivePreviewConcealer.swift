@@ -94,15 +94,18 @@ final class LivePreviewConcealer {
         return result
     }
 
-    /// エディタのフォーカス(first responder)の変化。変わったら、選択範囲が触れる段落のうちマーカーを
-    /// 含むものを無効化対象に載せる(失えば隠す、戻れば見せる)。変わったら true。
+    /// エディタのフォーカス(first responder)の変化。変わったら、選択範囲が触れる段落のうち表示が変わるもの
+    /// (マーカーを含む段落)を無効化対象に載せる(失えば隠す、戻れば見せる)。`focusedParagraphs` の要素は
+    /// 選択範囲が触れる全行をまとめた 1 レンジなので、レンジごとではなくその中のマーカーだけを載せる
+    /// (再生成側がマーカーごとに段落へ広げて重複を除く)。全選択でフォーカスを往復しても、マーカーの無い行は
+    /// 作り直さない。変わったら true。
     @discardableResult
     func editorFocusDidChange(_ focused: Bool) -> Bool {
         guard isEditorFocused != focused else { return false }
         isEditorFocused = focused
         guard isEnabled else { return true }
-        for range in focusedParagraphs where containsMarker(in: range) {
-            pendingDirtyRanges.append(range)
+        for range in focusedParagraphs {
+            pendingDirtyRanges += markers(intersecting: range)
         }
         return true
     }

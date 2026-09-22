@@ -102,6 +102,35 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
     #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: loose).width < 0.1)
 }
 
+@MainActor @Test func livePreviewFollowsTheViewLeavingAndRejoiningAWindow() {
+    let markdown = "# Title\n\nsome **bold**\n"
+    let textView = makeLaidOutTextView(markdown)
+    let window = hostInWindow(textView)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.selectedRange = NSRange(location: 0, length: 0)
+    #expect(textView.isFirstResponder)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
+
+    // フォーカス中のビューをウィンドウから外す(resign を経ない): first responder でなくなり全行隠れる
+    let host = textView.superview!
+    textView.removeFromSuperview()
+    #expect(textView.window == nil)
+    #expect(!textView.isFirstResponder)
+    #expect(!textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width < 0.1)
+
+    // 戻して first responder にする: キャレットの行だけ見える
+    host.addSubview(textView)
+    #expect(!textView.engine.livePreview.isEditorFocused, "rejoining a window does not focus by itself")
+    #expect(textView.becomeFirstResponder())
+    #expect(textView.isFirstResponder)
+    #expect(textView.engine.livePreview.isEditorFocused)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: textView).width < 0.1)
+}
+
 @MainActor @Test func livePreviewKeepsMarkerOnlyQuoteLineHeight() {
     let textView = makeLaidOutTextView("> a\n>\n> b\n")
     textView.isLivePreviewEnabled = true

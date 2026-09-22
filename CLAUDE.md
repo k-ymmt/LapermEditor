@@ -21,7 +21,9 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     paragraph whose visible characters are all markers gets `minimumLineHeight` from the markers' own fonts
     (the newline's font does not count in normal line-height computation), and a hidden tab (`#\tTitle`)
     zeroes the paragraph's `defaultTabInterval`. Focus changes (only the symmetric difference of the old / new
-    focused paragraphs), marker changes and the mode toggle (a full-document dirty range) are applied by
+    focused paragraphs; a first-responder change dirties only the markers inside the selection's paragraphs,
+    so select-all plus focus toggles never regenerate marker-free lines), marker changes and the mode toggle
+    (a full-document dirty range) are applied by
     `MarkdownEditorEngine.regenerateParagraphs`, which posts `textStorage.edited(.editedAttributes)` once per
     affected paragraph — `recordEditAction` does NOT make `NSTextContentStorage` rebuild a cached paragraph,
     and the delegate is held weakly (keep a strong reference in tests). Regeneration is deferred while IME
