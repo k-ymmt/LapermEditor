@@ -511,8 +511,12 @@ final class MarkdownEditorEngine: NSObject {
     func updateImagePreviews() {
         guard let host, let contentStorage = host.editorContentStorage else { return }
         imagePreviewController.update(references: highlighter.currentPlan.images)
+        let containerWidth = host.imageContainerWidth
         imagePreviewController.applySpacings(
-            contentStorage: contentStorage, containerWidth: host.imageContainerWidth)
+            contentStorage: contentStorage, containerWidth: containerWidth,
+            availableWidth: { [fragmentProvider] in
+                containerWidth - fragmentProvider.paragraphIndent(forParagraph: $0.paragraphRange)
+            })
     }
 
     /// コンテナ幅が変わったときに呼ぶ。loaded 画像のフィット高さが変わるため spacing を再計算する。
@@ -542,7 +546,9 @@ final class MarkdownEditorEngine: NSObject {
             .filter { $0.paragraphRange.location >= start && $0.paragraphRange.location < end }
             .sorted { $0.range.location < $1.range.location }
         guard !paragraphReferences.isEmpty else { return [] }
+        // 引用の段落は本文がインデントぶん右から始まるので、画像もその幅に収める(予約高さと同じ幅)
         let width = host.imageContainerWidth
+            - fragmentProvider.paragraphIndent(forParagraph: NSRange(location: start, length: max(0, end - start)))
         let sizes = paragraphReferences.map {
             imagePreviewController.displaySize(for: $0, containerWidth: width)
         }

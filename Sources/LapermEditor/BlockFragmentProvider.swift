@@ -75,6 +75,10 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     }
 
     /// 新しい計画から装飾リストを作り直し、変化したレンジのレイアウトを無効化する。
+    /// 表示用の段落スタイル(引用のインデント、コードブロックの余白)もここで作り直される:
+    /// 編集されていない段落(引用の継続行になった行など)でも、下記の `recordEditAction` で
+    /// NSTextParagraph が再生成されて delegate が呼び直される(テスト
+    /// `blockquoteIndentFollowsDecorationChangesInParagraphsThatWereNotEdited`)。
     func update(
         plan: HighlightPlan,
         contentManager: NSTextContentManager,
@@ -194,6 +198,13 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             isLast: NSMaxRange(paragraph) >= NSMaxRange(decoration.range))
     }
 
+    /// 段落の本文を行頭から下げる幅(表示用の段落スタイルの headIndent)。引用の段落は
+    /// `MarkdownTheme.blockquoteIndent`、それ以外は 0。画像プレビューの幅もこのぶん狭くなる。
+    func paragraphIndent(forParagraph paragraph: NSRange) -> CGFloat {
+        guard decoration(forParagraph: paragraph)?.kind == .blockquote else { return 0 }
+        return max(0, theme.blockquoteIndent)
+    }
+
     /// 装飾ブロックの段落に、表示用の段落スタイルを付けた段落を返す
     /// (NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:) 用)。
     /// - コードブロックの先頭 / 末尾段落: 上下余白(paragraphSpacingBefore / paragraphSpacing)。
@@ -219,7 +230,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                 if edges.isLast { style.paragraphSpacing = padding }
             }
         case .blockquote:
-            let indent = theme.blockquoteIndent
+            let indent = paragraphIndent(forParagraph: range)
             guard indent > 0 else { return nil }
             apply = { style in
                 style.firstLineHeadIndent = indent

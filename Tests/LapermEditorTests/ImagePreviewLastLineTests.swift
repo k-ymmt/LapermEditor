@@ -92,4 +92,32 @@ private func textLineBottom(of textView: MarkdownTextView, at location: Int) -> 
     let height = lm.usageBoundsForTextContainer.height
     #expect(height >= 51 + 50 + ImagePreviewController.padding)
 }
+@Test @MainActor func imagePreviewInsideBlockquoteFitsTheIndentedWidth() throws {
+    // 引用の本文は blockquoteIndent ぶん右から始まるので、画像もその幅に収める(右端からはみ出さない)
+    let url = try writeTempPNG(name: "wide.png", width: 2000, height: 100)
+    let textView = MarkdownTextView()
+    textView.setFrameSize(NSSize(width: 500, height: 600))
+    textView.imagePreviewController.options = ImagePreviewOptions(baseURL: url.deletingLastPathComponent())
+    textView.string = "> ![wide](wide.png)\n\n![wide](wide.png)"
+    textView.highlightAll()
+    textView.imagePreviewController.setStateForTesting(
+        .loaded(NSImage(size: NSSize(width: 2000, height: 100))), destination: "wide.png")
+    textView.highlightAll()
+    textView.textLayoutManager?.ensureLayout(for: textView.textLayoutManager!.documentRange)
+    textView.textLayoutManager?.textViewportLayoutController.layoutViewport()
+    let entries = textView.debugImageEntries.sorted { $0.reference.range.location < $1.reference.range.location }
+    try #require(entries.count == 2)
+    let quoted = entries[0].frame
+    let plain = entries[1].frame
+    let indent = textView.theme.blockquoteIndent
+    #expect(quoted.minX == plain.minX + indent)
+    #expect(quoted.width == plain.width - indent)
+    #expect(quoted.maxX == plain.maxX)
+    #expect(quoted.maxX <= textView.textContainer!.size.width + 0.5)
+    // 予約高さ(paragraphSpacing)も狭い幅で計算した高さになる
+    let storage = textView.textStorage!
+    let quotedStyle = storage.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+    #expect(quotedStyle?.paragraphSpacing == quoted.height + ImagePreviewController.padding)
+    #expect(quoted.height < plain.height)
+}
 #endif

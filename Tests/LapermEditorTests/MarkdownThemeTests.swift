@@ -91,5 +91,8 @@ import Testing
         codeBlockBackgroundColor: theme.codeBlockBackgroundColor, blockquoteBarColor: theme.blockquoteBarColor,
         thematicBreakLineColor: theme.thematicBreakLineColor, styles: [:], blockquoteIndent: -3
     ).blockquoteIndent == 0)
+    var theme2 = MarkdownTheme.default
+    theme2.blockquoteIndent = -16
+    #expect(theme2.blockquoteIndent == 0)
 }
 #endif

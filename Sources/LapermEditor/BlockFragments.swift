@@ -199,40 +199,60 @@ extension CGPath {
 /// 引用: 行頭側に縦のアクセントバー。
 ///
 /// バーは `BlockFragmentProvider` が表示用の段落スタイル(headIndent / firstLineHeadIndent)で
-/// 空けた `indent` の余白の中に描く。x はフラグメント原点(= 行頭、段落によらず一定)から決め、
-/// 字形のインク境界(`renderingSurfaceBounds`)には依存させない: インク境界は先頭の字形
-/// (Live Preview で ">" が隠れた行は本文の 1 文字目)で 1〜3pt 変わるので、それを基準にすると
-/// 複数行の引用でバーが行ごとにずれて見える。辺はデバイスピクセルに揃え、隣り合う段落のバーが
-/// 継ぎ目なく 1 本に見えるようにする。
+/// 空けた `indent` の余白の中に描く。x はテキストコンテナの端(段落によらず一定)から決め、
+/// 字形のインク境界(`renderingSurfaceBounds`)や段落ごとに変わるフラグメント原点には依存させない:
+/// インク境界は先頭の字形(Live Preview で ">" が隠れた行は本文の 1 文字目)で 1〜3pt 変わるので、
+/// それを基準にすると複数行の引用でバーが行ごとにずれて見える。辺はデバイスピクセルに揃え、
+/// 隣り合う段落のバーが継ぎ目なく 1 本に見えるようにする。
+/// 右から左へ書く段落(右寄せで、余白も右側に付く)ではバーも右端に置く。
 final class BlockquoteFragment: ReservingTextLayoutFragment {
     /// バーの幅(pt)。
     static let barWidth: CGFloat = 3
-    /// 余白の左端からバーまでの距離(pt)。
+    /// 余白の端からバーまでの距離(pt)。余白が狭ければ `barInset(indent:)` で詰める。
     static let barInset: CGFloat = 1
 
     var barColor: PlatformColor = .systemGray
     /// 本文を行頭から下げた幅(`MarkdownTheme.blockquoteIndent`)。バーはこの中に置く。
     var indent: CGFloat = 0
 
-    /// バーの矩形(フラグメント原点基準)。余白が無い(indent = 0)ときは行頭に重ねる。
+    /// 余白の端からバーまでの実際の距離。余白がバーより狭ければ余白の中に収まる範囲で端に寄せ、
+    /// 余白が無ければ 0(バーは行頭に重なる)。
+    static func barInset(indent: CGFloat) -> CGFloat {
+        min(barInset, max(0, indent - barWidth))
+    }
+
+    /// バーの矩形(フラグメント原点基準)。
     /// 上下は `decorationRect` と同じだが、`decorationRect` は `renderingSurfaceBounds` を参照する
     /// (ここではそれをバーまで広げている)ので、再帰しないよう上下端の値から直接組み立てる。
     var barRect: CGRect {
         let top = decorationTopInset
-        let x = Self.barX(indent: indent, textStart: textLinesStart)
-        return CGRect(x: x, y: top, width: Self.barWidth, height: max(0, decorationBottom - top))
+        return CGRect(x: barX, y: top, width: Self.barWidth, height: max(0, decorationBottom - top))
     }
 
-    /// バーの x(フラグメント原点基準)。本文の行頭 `textStart` から `indent` 戻った余白の左端に
-    /// `barInset` を足した位置。余白がバーより狭ければ余白の中に収まる範囲で左に寄せる。
-    static func barX(indent: CGFloat, textStart: CGFloat) -> CGFloat {
-        let leftEdge = textStart - indent
-        return leftEdge + min(barInset, max(0, indent - barWidth))
+    /// バーの x(フラグメント原点基準)。コンテナ座標で決めてフラグメント座標へ変換する:
+    /// LTR はコンテナ左端 + lineFragmentPadding + inset、RTL はコンテナ右端 - lineFragmentPadding
+    /// - inset - 幅。フラグメント原点はコンテナ左端から `layoutFragmentFrame.minX` にある。
+    private var barX: CGFloat {
+        let frame = layoutFragmentFrame
+        let container = textLayoutManager?.textContainer
+        let padding = container?.lineFragmentPadding ?? 0
+        let inset = Self.barInset(indent: indent)
+        let containerLeft = -frame.minX
+        if isRightToLeft, let width = container?.size.width, width > 0, width.isFinite,
+           width < CodeBlockFragment.unboundedContainerWidth {
+            return containerLeft + width - padding - inset - Self.barWidth
+        }
+        return containerLeft + padding + inset
     }
 
-    /// テキスト行の行頭(フラグメント原点基準)。段落スタイルの headIndent ぶん右にある。
-    private var textLinesStart: CGFloat {
-        textLineFragments.first?.typographicBounds.minX ?? 0
+    /// 段落が右寄せ(右から左へ書く段落)か。LTR の段落は先頭行がコンテナ座標で必ず
+    /// lineFragmentPadding + indent から始まり、RTL の段落はテキストの幅ぶん右にずれる。
+    /// フラグメント原点ではなく先頭行で見るのは、文書末尾の段落のフレームがインデントの無い
+    /// 追加行(改行の後のキャレット行)まで含んで左に広がるため。
+    private var isRightToLeft: Bool {
+        let padding = textLayoutManager?.textContainer?.lineFragmentPadding ?? 0
+        let firstLineX = layoutFragmentFrame.minX + (textLineFragments.first?.typographicBounds.minX ?? 0)
+        return firstLineX - padding - max(0, indent) > 0.5
     }
 
     /// 描画面をバーの矩形まで広げる(UITextView はこの境界でクリップする)。

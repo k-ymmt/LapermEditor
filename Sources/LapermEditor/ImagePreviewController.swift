@@ -89,10 +89,15 @@ final class ImagePreviewController {
     }
 
     /// 段落レンジごとの予約高さ(paragraphSpacing 値)。段落内の全画像 + 各 padding。
-    func reservedHeights(containerWidth: CGFloat) -> [NSRange: CGFloat] {
+    /// `availableWidth` は画像ごとの使える幅(既定はコンテナ幅。引用の段落はインデントぶん狭い)。
+    func reservedHeights(
+        containerWidth: CGFloat,
+        availableWidth: (ImageReference) -> CGFloat = { _ in .infinity }
+    ) -> [NSRange: CGFloat] {
         var result: [NSRange: CGFloat] = [:]
         for reference in references {
-            let height = displaySize(for: reference, containerWidth: containerWidth).height
+            let width = min(containerWidth, availableWidth(reference))
+            let height = displaySize(for: reference, containerWidth: width).height
             result[reference.paragraphRange, default: 0] += height + Self.padding
         }
         return result
@@ -160,9 +165,13 @@ final class ImagePreviewController {
     /// (BlockFragment のような recordEditAction ワークアラウンドは不要)。
     /// 属性のみの編集は .editedAttributes しか発火しないため didProcessEditing の
     /// 文字編集ガードと組み合わせて再入しない。
-    func applySpacings(contentStorage: NSTextContentStorage, containerWidth: CGFloat) {
+    func applySpacings(
+        contentStorage: NSTextContentStorage,
+        containerWidth: CGFloat,
+        availableWidth: (ImageReference) -> CGFloat = { _ in .infinity }
+    ) {
         guard let storage = contentStorage.textStorage else { return }
-        var wanted = reservedHeights(containerWidth: containerWidth)
+        var wanted = reservedHeights(containerWidth: containerWidth, availableWidth: availableWidth)
         // 文書外にはみ出た段落レンジは適用しない(パース結果と storage の不整合の防波堤)
         wanted = wanted.filter { NSMaxRange($0.key) <= storage.length }
 

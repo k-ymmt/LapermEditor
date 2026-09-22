@@ -38,7 +38,10 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     public var codeBlockVerticalPadding: CGFloat
     /// 引用の本文を行頭から下げる幅(pt)。縦バーはこの余白の中に描かれ、バーと文字の間が空く。
     /// 表示用の段落スタイル(headIndent / firstLineHeadIndent)で確保するので、textStorage には残らない。
-    public var blockquoteIndent: CGFloat
+    /// 負値は 0 に丸める(段落の余白とバーの位置が同じ値を見るように、代入時にも丸める)。
+    public var blockquoteIndent: CGFloat {
+        didSet { if blockquoteIndent < 0 { blockquoteIndent = 0 } }
+    }
     /// 行と行の間に足す余白(pt)。`NSParagraphStyle.lineSpacing` として全段落に適用され、
     /// 段落内の折り返し行にも段落の最終行にも同じだけ付く(TextKit 2 の挙動)。
     /// 0 なら段落スタイルを一切付けない(従来どおり)。
