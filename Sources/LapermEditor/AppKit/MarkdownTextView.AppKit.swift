@@ -197,6 +197,28 @@ public final class MarkdownTextView: NSTextView {
 
         imageOverlay.autoresizingMask = [.width, .height]
         addSubview(imageOverlay)
+        syncEditorFocus()
+    }
+
+    // MARK: - フォーカス(Live Preview)
+
+    /// first responder の変化をエンジンへ流す。Live Preview はフォーカスを失うと全行のマーカーを隠し
+    ///(閲覧表示)、戻るとキャレットの行を見せる。ウィンドウが key でなくなるだけでは変えない。
+    public override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        syncEditorFocus()
+        return accepted
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { engine.editorFocusDidChange(false) }
+        return resigned
+    }
+
+    /// ウィンドウの first responder と突き合わせる(become / resign を経ない付け外しにも追従する)。
+    private func syncEditorFocus() {
+        engine.editorFocusDidChange(window?.firstResponder === self)
     }
 
     /// 全文を再ハイライトする。`string` をプログラムで差し替えた後に呼ぶこと。
@@ -276,6 +298,7 @@ public final class MarkdownTextView: NSTextView {
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        syncEditorFocus()
         // NSTrackingArea に .mouseMoved を指定していても、ウィンドウ側が
         // mouseMoved イベントを受け取る設定になっていないと配送されないことがある
         // (特に SwiftUI がホストするウィンドウ)。Cmd+ホバーの下線表示のために明示的に有効化する。

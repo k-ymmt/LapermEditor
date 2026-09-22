@@ -218,6 +218,19 @@ final class MarkdownEditorEngine: NSObject {
         livePreview.selectionDidChange(host.editorSelectedRanges, text: host.editorText as NSString)
     }
 
+    /// エディタ(テキストビュー)が first responder になった / でなくなった。ビューの become / resign
+    /// フックから呼ぶ。Live Preview ではフォーカスを失うと全行のマーカーが隠れ(閲覧表示)、戻ると
+    /// キャレットの行が見える。フォーカスのある段落だけ再生成させる。
+    func editorFocusDidChange(_ focused: Bool) {
+        guard livePreview.isEditorFocused != focused else { return }
+        // 先に選択範囲を最新にしてから切り替える(フォーカスの無い間の選択変更は段落を無効化しないので、
+        // 戻るときはそのときの段落、失うときは今見えている段落が無効化される)。
+        if livePreview.isEnabled { refreshLivePreviewFocus() }
+        livePreview.editorFocusDidChange(focused)
+        guard livePreview.isEnabled, !isRegeneratingParagraphs else { return }
+        applyLivePreviewChanges()
+    }
+
     /// 溜まった無効化レンジの段落を再生成・再レイアウトさせる。IME 変換中は変換セッションを乱さないよう
     /// 見送り(レンジは溜めたまま)、確定後の flush(updateLivePreview)で適用する。
     private func applyLivePreviewChanges() {

@@ -213,6 +213,23 @@ public final class MarkdownTextView: UITextView {
         center.addObserver(
             self, selector: #selector(keyboardWillHide(_:)),
             name: UIResponder.keyboardWillHideNotification, object: nil)
+        engine.editorFocusDidChange(isFirstResponder)
+    }
+
+    // MARK: - フォーカス(Live Preview)
+
+    /// first responder の変化をエンジンへ流す。Live Preview はフォーカスを失う(キーボードを閉じる)と
+    /// 全行のマーカーを隠し(閲覧表示)、戻るとキャレットの行を見せる。
+    public override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        engine.editorFocusDidChange(isFirstResponder)
+        return became
+    }
+
+    public override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        engine.editorFocusDidChange(isFirstResponder)
+        return resigned
     }
 
     // MARK: - キーボード回避
@@ -282,6 +299,8 @@ public final class MarkdownTextView: UITextView {
 
     public override func didMoveToWindow() {
         super.didMoveToWindow()
+        // ウィンドウから外れると first responder でなくなる(resign を経ない)ので突き合わせる
+        engine.editorFocusDidChange(isFirstResponder)
         guard let window else { return }
         // キーボードが出たまま作られた / 付け替えられたビューは画面のキャッシュに追いつく。
         // キャッシュがなければ(キーボードが出ていない)、別画面で受けたフレームは捨てる。

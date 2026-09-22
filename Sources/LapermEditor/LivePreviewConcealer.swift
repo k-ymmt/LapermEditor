@@ -10,7 +10,9 @@ import LapermCore
 /// `NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:)` が返す表示用の段落で、
 /// マーカーの文字にだけ極小フォントを付けて幅を潰す(コードブロックの上下余白と同じ仕組み)。
 ///
-/// フォーカスの有無はキャレット位置(選択範囲が触れる段落)だけで決め、first responder には依存しない。
+/// フォーカスのある段落 = エディタがフォーカス(first responder)を持っていて、選択範囲(キャレット)が
+/// 触れる段落。エディタがフォーカスを失うと(iOS でキーボードを閉じる、macOS でサイドバーをクリックする)
+/// フォーカスのある段落は無くなり、全行のマーカーが隠れる(閲覧表示)。
 /// 状態の変化で再生成が要る段落は `pendingDirtyRanges` に溜め、`MarkdownEditorEngine` が
 /// 段落を作り直させる(`regenerateParagraphs`)。
 @MainActor
@@ -26,9 +28,13 @@ final class LivePreviewConcealer {
 
     /// 隠せるマーカー(開始位置で昇順、互いに交差しない)
     private(set) var markers: [NSRange] = []
-    /// フォーカスのある段落のレンジ(文書座標、改行を含む)。キャレットだけなら 1 つ、選択範囲は
-    /// 触れる段落をまとめて 1 レンジ、複数選択(macOS)は複数。
+    /// 選択範囲が触れる段落のレンジ(文書座標、改行を含む)。キャレットだけなら 1 つ、選択範囲は
+    /// 触れる段落をまとめて 1 レンジ、複数選択(macOS)は複数。エディタのフォーカスとは独立に追従し、
+    /// `isEditorFocused` と合わせて「フォーカスのある段落」になる(`isFocused(paragraph:)`)。
     private(set) var focusedParagraphs: [NSRange] = []
+    /// エディタ(テキストビュー)が first responder か。ビューが `editorFocusDidChange` で流し込む。
+    /// false の間はどの段落にもフォーカスが無い。ビュー無しの既定は true(選択範囲だけで決まる)。
+    private(set) var isEditorFocused = true
     /// 状態の変化で再生成が必要になった段落(文書座標)。`takePendingDirtyRanges` で取り出す。
     private var pendingDirtyRanges: [NSRange] = []
 
@@ -54,7 +60,9 @@ final class LivePreviewConcealer {
         guard focused != focusedParagraphs else { return }
         let previous = focusedParagraphs
         focusedParagraphs = focused
-        guard isEnabled else { return }
+        // エディタにフォーカスが無い間は選択がどこにあっても全行が隠れているので、作り直す段落は無い
+        //(フォーカスが戻るときに `editorFocusDidChange` がそのときの段落を無効化する)。
+        guard isEnabled, isEditorFocused else { return }
         // 新旧の対称差だけを無効化する: 大きな選択を 1 行伸縮しても、重なっている部分は作り直さない。
         for range in Self.subtracting(focused, from: previous) + Self.subtracting(previous, from: focused)
         where containsMarker(in: range) {
@@ -84,6 +92,19 @@ final class LivePreviewConcealer {
             result += pieces.filter { $0.length > 0 }
         }
         return result
+    }
+
+    /// エディタのフォーカス(first responder)の変化。変わったら、選択範囲が触れる段落のうちマーカーを
+    /// 含むものを無効化対象に載せる(失えば隠す、戻れば見せる)。変わったら true。
+    @discardableResult
+    func editorFocusDidChange(_ focused: Bool) -> Bool {
+        guard isEditorFocused != focused else { return false }
+        isEditorFocused = focused
+        guard isEnabled else { return true }
+        for range in focusedParagraphs where containsMarker(in: range) {
+            pendingDirtyRanges.append(range)
+        }
+        return true
     }
 
     /// 有効 / 無効の切替。切り替わったら、それまでの保留を捨てて文書全体(`documentLength`)を
@@ -146,9 +167,11 @@ final class LivePreviewConcealer {
         return result
     }
 
-    /// 段落にフォーカスがあるか。段落と交差する選択、または段落内(空レンジなら先頭を含む)のキャレット。
+    /// 段落にフォーカスがあるか。エディタがフォーカスを持ち、段落と交差する選択、または段落内
+    /// (空レンジなら先頭を含む)のキャレットがあるとき。
     func isFocused(paragraph: NSRange) -> Bool {
-        focusedParagraphs.contains { focused in
+        guard isEditorFocused else { return false }
+        return focusedParagraphs.contains { focused in
             if focused.length == 0 { return NSLocationInRange(focused.location, paragraph) }
             return NSIntersectionRange(focused, paragraph).length > 0
         }

@@ -82,6 +82,47 @@ import Testing
     #expect(concealer.takePendingDirtyRanges().isEmpty)
 }
 
+@MainActor @Test func losingEditorFocusHidesTheCaretLineAndRegainingItShowsItAgain() {
+    let concealer = LivePreviewConcealer()
+    concealer.isEnabled = true
+    let text = "*a*\nplain\n*c*\n" as NSString
+    concealer.update(markers: [0, 2, 10, 12].map { NSRange(location: $0, length: 1) })
+    concealer.selectionDidChange([NSRange(location: 1, length: 0)], text: text)
+    _ = concealer.takePendingDirtyRanges()
+    #expect(concealer.isEditorFocused)
+    #expect(concealer.isFocused(paragraph: NSRange(location: 0, length: 4)))
+
+    // フォーカスを失う: キャレットの段落だけ作り直し、以後はどの段落にもフォーカスが無い
+    #expect(concealer.editorFocusDidChange(false))
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 4)])
+    #expect(!concealer.isFocused(paragraph: NSRange(location: 0, length: 4)))
+    #expect(concealer.focusedParagraphs == [NSRange(location: 0, length: 4)], "the selection is still tracked")
+    #expect(!concealer.editorFocusDidChange(false))
+
+    // フォーカスの無い間の選択変更は追従するだけで、作り直す段落は無い(全行が隠れている)
+    concealer.selectionDidChange([NSRange(location: 11, length: 0)], text: text)
+    #expect(concealer.focusedParagraphs == [NSRange(location: 10, length: 4)])
+    #expect(concealer.takePendingDirtyRanges().isEmpty)
+    #expect(!concealer.isFocused(paragraph: NSRange(location: 10, length: 4)))
+
+    // 戻る: そのときのキャレットの段落だけ作り直す
+    #expect(concealer.editorFocusDidChange(true))
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 10, length: 4)])
+    #expect(concealer.isFocused(paragraph: NSRange(location: 10, length: 4)))
+
+    // マーカーの無い行にキャレットがあれば、フォーカスの変化で作り直す段落は無い
+    concealer.selectionDidChange([NSRange(location: 5, length: 0)], text: text)
+    _ = concealer.takePendingDirtyRanges()
+    concealer.editorFocusDidChange(false)
+    #expect(concealer.takePendingDirtyRanges().isEmpty)
+
+    // 無効なら状態だけ追従する
+    concealer.isEnabled = false
+    concealer.selectionDidChange([NSRange(location: 1, length: 0)], text: text)
+    #expect(concealer.editorFocusDidChange(true))
+    #expect(concealer.takePendingDirtyRanges().isEmpty)
+}
+
 @MainActor @Test func concealerNoteEditShiftsMarkersAndFocus() {
     let concealer = LivePreviewConcealer()
     concealer.isEnabled = true
@@ -315,13 +356,25 @@ func segmentFrame(of range: NSRange, in layoutManager: NSTextLayoutManager) -> C
 
 // MARK: - MarkdownTextView(AppKit)
 
-@MainActor @Test func textViewLivePreviewFollowsCaretAndKeepsString() {
+/// ウィンドウに載せて first responder にした text view(フォーカスのある行のマーカーが見える前提)。
+/// 呼び出し側はウィンドウを生かしておく(`withExtendedLifetime`)。
+@MainActor
+private func makeFocusedTextView(_ markdown: String) -> (NSWindow, MarkdownTextView) {
     let scrollView = MarkdownTextView.scrollableMarkdownEditor()
     let textView = scrollView.documentView as! MarkdownTextView
     scrollView.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
-    let markdown = "# Title\n\nsome **bold** [link](https://x.y)\n"
+    let window = NSWindow(contentRect: scrollView.frame, styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = scrollView
     textView.string = markdown
     textView.highlightAll()
+    #expect(window.makeFirstResponder(textView))
+    return (window, textView)
+}
+
+@MainActor @Test func textViewLivePreviewFollowsCaretAndKeepsString() {
+    let markdown = "# Title\n\nsome **bold** [link](https://x.y)\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
     textView.isLivePreviewEnabled = true
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     let layoutManager = textView.textLayoutManager!
@@ -352,11 +405,8 @@ func segmentFrame(of range: NSRange, in layoutManager: NSTextLayoutManager) -> C
 }
 
 @MainActor @Test func textViewLivePreviewSurvivesEditsAndRehighlight() {
-    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
-    let textView = scrollView.documentView as! MarkdownTextView
-    scrollView.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
-    textView.string = "*a*\n\nplain\n"
-    textView.highlightAll()
+    let (window, textView) = makeFocusedTextView("*a*\n\nplain\n")
+    defer { withExtendedLifetime(window) {} }
     textView.isLivePreviewEnabled = true
     textView.setSelectedRange(NSRange(location: 5, length: 0))
     let layoutManager = textView.textLayoutManager!
@@ -380,6 +430,43 @@ func segmentFrame(of range: NSRange, in layoutManager: NSTextLayoutManager) -> C
     theme.lineSpacing = 4
     textView.theme = theme
     #expect(segmentFrame(of: NSRange(location: 5, length: 2), in: layoutManager).width < 0.1)
+}
+
+@MainActor @Test func textViewLivePreviewHidesEveryLineWhileTheEditorIsNotFirstResponder() {
+    let markdown = "# Title\n\nsome **bold**\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    let layoutManager = textView.textLayoutManager!
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5)
+
+    // サイドバーのクリックなどで first responder を失う: キャレットの行も隠れる(閲覧表示)
+    #expect(window.makeFirstResponder(nil))
+    #expect(window.firstResponder !== textView)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1)
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: layoutManager).width < 0.1)
+
+    // フォーカスの無い間にキャレットを動かしても全行隠れたまま。戻ると新しいキャレットの行だけ見える
+    textView.setSelectedRange(NSRange(location: 14, length: 0))
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: layoutManager).width < 0.1)
+    #expect(window.makeFirstResponder(textView))
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: layoutManager).width > 5)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1)
+
+    // Source ではフォーカスに関わらず全部見える。文字列はそのまま
+    #expect(window.makeFirstResponder(nil))
+    textView.isLivePreviewEnabled = false
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5)
+    #expect(textView.string == markdown)
+
+    // ウィンドウから外れた(first responder でない)まま Live Preview を入れると全行隠れる
+    let loose = MarkdownTextView.scrollableMarkdownEditor().documentView as! MarkdownTextView
+    loose.string = markdown
+    loose.highlightAll()
+    loose.isLivePreviewEnabled = true
+    loose.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: loose.textLayoutManager!).width < 0.1)
 }
 
 @MainActor @Test func editorViewAppliesLivePreviewSetting() {

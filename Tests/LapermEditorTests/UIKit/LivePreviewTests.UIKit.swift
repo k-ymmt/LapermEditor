@@ -24,6 +24,8 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
 @MainActor @Test func livePreviewHidesMarkersOffTheCaretLineAndKeepsText() {
     let markdown = "# Title\n\nsome **bold** [link](https://x.y)\n"
     let textView = makeLaidOutTextView(markdown)
+    let window = hostInWindow(textView)
+    defer { withExtendedLifetime(window) {} }
     textView.isLivePreviewEnabled = true
     textView.selectedRange = NSRange(location: 0, length: 0)
 
@@ -47,6 +49,8 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
 
 @MainActor @Test func livePreviewFollowsSelectedTextRangeAndLeavesUndoAlone() {
     let textView = makeLaidOutTextView("**a**\n\nplain\n")
+    let window = hostInWindow(textView)
+    defer { withExtendedLifetime(window) {} }
     textView.isLivePreviewEnabled = true
     textView.selectedRange = NSRange(location: 8, length: 0)
     #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width < 0.1)
@@ -60,6 +64,42 @@ private func segmentFrame(of range: NSRange, in textView: MarkdownTextView) -> C
     // 段落の再生成は undo 履歴に載らない
     #expect((textView.undoManager?.canUndo ?? false) == canUndoBefore)
     #expect(textView.text == "**a**\n\nplain\n")
+}
+
+@MainActor @Test func livePreviewHidesEveryLineWhileTheKeyboardIsDismissed() {
+    let markdown = "# Title\n\nsome **bold**\n"
+    let textView = makeLaidOutTextView(markdown)
+    let window = hostInWindow(textView)
+    defer { withExtendedLifetime(window) {} }
+    #expect(textView.isFirstResponder)
+    textView.isLivePreviewEnabled = true
+    textView.selectedRange = NSRange(location: 0, length: 0)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
+
+    // キーボードを閉じる(resignFirstResponder): キャレットの行も隠れて閲覧表示になる
+    #expect(textView.resignFirstResponder())
+    #expect(!textView.isFirstResponder)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width < 0.1)
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: textView).width < 0.1)
+
+    // 閉じている間の選択変更では何も見えない。開き直すと新しいキャレットの行だけ見える
+    textView.selectedRange = NSRange(location: 14, length: 0)
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: textView).width < 0.1)
+    #expect(textView.becomeFirstResponder())
+    #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: textView).width > 5)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width < 0.1)
+
+    // Source ではフォーカスに関わらず全部見える。文字列はそのまま
+    #expect(textView.resignFirstResponder())
+    textView.isLivePreviewEnabled = false
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: textView).width > 5)
+    #expect(textView.text == markdown)
+
+    // ウィンドウに載っていない(first responder でない)ビューで Live Preview を入れると全行隠れる
+    let loose = makeLaidOutTextView(markdown)
+    loose.isLivePreviewEnabled = true
+    loose.selectedRange = NSRange(location: 0, length: 0)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: loose).width < 0.1)
 }
 
 @MainActor @Test func livePreviewKeepsMarkerOnlyQuoteLineHeight() {

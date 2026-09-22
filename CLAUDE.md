@@ -12,7 +12,10 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     used by the public `MarkdownTheme` API.
   - `LivePreviewConcealer` (shared): Live Preview hides `HighlightPlan.concealableMarkers` (a subset of the
     `.syntaxMarker` spans, produced by `HighlightMapper`) on every paragraph the caret / selection does
-    not touch. It never touches the text storage: `EditorContentStorageDelegate.textContentStorage(_:textParagraphWith:)`
+    not touch, and on every paragraph while the text view is not first responder (both text views feed
+    `becomeFirstResponder` / `resignFirstResponder` / window moves into `MarkdownEditorEngine.editorFocusDidChange`;
+    a headless concealer defaults to "focused"). Dismissing the keyboard on iOS or clicking the sidebar on
+    macOS therefore gives a pure reading view; a window merely losing key status does not. It never touches the text storage: `EditorContentStorageDelegate.textContentStorage(_:textParagraphWith:)`
     returns a display `NSTextParagraph` whose marker characters carry a 1e-6pt font (TextKit 2 ignores
     `.expansion`; the advance still scales with size, so 0.01pt left ~390pt for a 100k-character URL), a
     paragraph whose visible characters are all markers gets `minimumLineHeight` from the markers' own fonts

@@ -6,7 +6,7 @@ A TextKit 2–based Markdown editor library for macOS and iOS, written in Swift 
 
 - Live syntax highlighting driven by [swift-markdown](https://github.com/swiftlang/swift-markdown) (GFM: tables, task lists, strikethrough, autolinks)
 - Incremental re-highlighting on edit
-- Live Preview (`.livePreviewEnabled(true)` / `isLivePreviewEnabled`): syntax markers (heading `#`, emphasis / strikethrough / inline-code delimiters, link and image brackets, blockquote `>`) are drawn with (practically) zero width on every line except the ones the caret or selection touches. The text storage is never changed — copying still yields plain Markdown. Code fences, task checkboxes and table pipes stay visible.
+- Live Preview (`.livePreviewEnabled(true)` / `isLivePreviewEnabled`): syntax markers (heading `#`, emphasis / strikethrough / inline-code delimiters, link and image brackets, blockquote `>`) are drawn with (practically) zero width on every line except the ones the caret or selection touches; while the editor is not first responder (keyboard dismissed on iOS, another view focused on macOS) every line hides them, so an unfocused note reads like a rendered page. The text storage is never changed — copying still yields plain Markdown. Code fences, task checkboxes and table pipes stay visible.
 - Line-number gutter with heading fold markers
 - Outline (heading) folding and outline change callbacks
 - Inline image preview for image references
