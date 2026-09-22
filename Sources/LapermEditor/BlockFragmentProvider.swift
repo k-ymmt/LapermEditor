@@ -194,21 +194,44 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             isLast: NSMaxRange(paragraph) >= NSMaxRange(decoration.range))
     }
 
-    /// コードブロックの先頭 / 末尾段落に上下余白の段落スタイルを付けた表示用の段落を返す
+    /// 装飾ブロックの段落に、表示用の段落スタイルを付けた段落を返す
     /// (NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:) 用)。
+    /// - コードブロックの先頭 / 末尾段落: 上下余白(paragraphSpacingBefore / paragraphSpacing)。
+    /// - 引用の段落: 本文を `blockquoteIndent` ぶん下げる(headIndent / firstLineHeadIndent)。
+    ///   縦バーはこの余白の中に描く(`BlockquoteFragment`)。折り返した行も同じだけ下がる。
     /// それ以外の段落は nil(既定の段落をそのまま使う)。textStorage の属性は変更しない。
     func textParagraph(with range: NSRange, in contentStorage: NSTextContentStorage) -> NSTextParagraph? {
         guard range.length > 0,
-              let edges = codeBlockEdges(forParagraph: range),
-              edges.isFirst || edges.isLast,
+              let decoration = decoration(forParagraph: range),
               let storage = contentStorage.textStorage,
               NSMaxRange(range) <= storage.length
         else { return nil }
+        let apply: (NSMutableParagraphStyle) -> Void
+        switch decoration.kind {
+        case .codeBlock:
+            let edges = CodeBlockEdges(
+                isFirst: range.location <= decoration.range.location,
+                isLast: NSMaxRange(range) >= NSMaxRange(decoration.range))
+            guard edges.isFirst || edges.isLast else { return nil }
+            let padding = theme.codeBlockVerticalPadding
+            apply = { style in
+                if edges.isFirst { style.paragraphSpacingBefore = padding }
+                if edges.isLast { style.paragraphSpacing = padding }
+            }
+        case .blockquote:
+            let indent = theme.blockquoteIndent
+            guard indent > 0 else { return nil }
+            apply = { style in
+                style.firstLineHeadIndent = indent
+                style.headIndent = indent
+            }
+        case .thematicBreak, .table:
+            return nil
+        }
         let text = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
         let existing = text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
         let style = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
-        if edges.isFirst { style.paragraphSpacingBefore = theme.codeBlockVerticalPadding }
-        if edges.isLast { style.paragraphSpacing = theme.codeBlockVerticalPadding }
+        apply(style)
         text.addAttribute(.paragraphStyle, value: style, range: NSRange(location: 0, length: text.length))
         return NSTextParagraph(attributedString: text)
     }
@@ -246,6 +269,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         case .blockquote:
             let fragment = BlockquoteFragment(textElement: textElement, range: textElement.elementRange)
             fragment.barColor = theme.blockquoteBarColor
+            fragment.indent = theme.blockquoteIndent
             fragment.lineSpacing = theme.lineSpacing
             fragment.isBlockStart = isBlockStart
             fragment.reservedBottomHeight = reservation

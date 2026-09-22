@@ -36,6 +36,9 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     /// 段落スタイル(paragraphSpacingBefore / paragraphSpacing)で確保するため、
     /// 文書の先頭段落から始まるコードブロックには上の余白が付かない(TextKit の仕様)。
     public var codeBlockVerticalPadding: CGFloat
+    /// 引用の本文を行頭から下げる幅(pt)。縦バーはこの余白の中に描かれ、バーと文字の間が空く。
+    /// 表示用の段落スタイル(headIndent / firstLineHeadIndent)で確保するので、textStorage には残らない。
+    public var blockquoteIndent: CGFloat
     /// 行と行の間に足す余白(pt)。`NSParagraphStyle.lineSpacing` として全段落に適用され、
     /// 段落内の折り返し行にも段落の最終行にも同じだけ付く(TextKit 2 の挙動)。
     /// 0 なら段落スタイルを一切付けない(従来どおり)。
@@ -51,6 +54,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         styles: [SyntaxKind: Style],
         tableBackgroundColor: PlatformColor = .quaternarySystemFill,
         codeBlockVerticalPadding: CGFloat = 4,
+        blockquoteIndent: CGFloat = 16,
         lineSpacing: CGFloat = 0
     ) {
         self.bodyFont = bodyFont
@@ -62,6 +66,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         self.styles = styles
         self.tableBackgroundColor = tableBackgroundColor
         self.codeBlockVerticalPadding = codeBlockVerticalPadding
+        self.blockquoteIndent = max(0, blockquoteIndent)
         self.lineSpacing = max(0, lineSpacing)
     }
 

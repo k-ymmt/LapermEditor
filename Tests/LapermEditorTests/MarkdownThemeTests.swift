@@ -82,4 +82,14 @@ import Testing
         thematicBreakLineColor: theme.thematicBreakLineColor, styles: [:], lineSpacing: -3
     ).lineSpacing == 0)
 }
+
+@Test func blockquoteIndentDefaultsAndClampsToZero() {
+    #expect(MarkdownTheme.default.blockquoteIndent == 16)
+    let theme = MarkdownTheme.default
+    #expect(MarkdownTheme(
+        bodyFont: theme.bodyFont, bodyColor: theme.bodyColor, backgroundColor: theme.backgroundColor,
+        codeBlockBackgroundColor: theme.codeBlockBackgroundColor, blockquoteBarColor: theme.blockquoteBarColor,
+        thematicBreakLineColor: theme.thematicBreakLineColor, styles: [:], blockquoteIndent: -3
+    ).blockquoteIndent == 0)
+}
 #endif

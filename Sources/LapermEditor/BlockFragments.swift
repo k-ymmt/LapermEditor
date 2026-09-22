@@ -196,15 +196,55 @@ extension CGPath {
     }
 }
 
-/// 引用: 行頭側に縦のアクセントバー
+/// 引用: 行頭側に縦のアクセントバー。
+///
+/// バーは `BlockFragmentProvider` が表示用の段落スタイル(headIndent / firstLineHeadIndent)で
+/// 空けた `indent` の余白の中に描く。x はフラグメント原点(= 行頭、段落によらず一定)から決め、
+/// 字形のインク境界(`renderingSurfaceBounds`)には依存させない: インク境界は先頭の字形
+/// (Live Preview で ">" が隠れた行は本文の 1 文字目)で 1〜3pt 変わるので、それを基準にすると
+/// 複数行の引用でバーが行ごとにずれて見える。辺はデバイスピクセルに揃え、隣り合う段落のバーが
+/// 継ぎ目なく 1 本に見えるようにする。
 final class BlockquoteFragment: ReservingTextLayoutFragment {
+    /// バーの幅(pt)。
+    static let barWidth: CGFloat = 3
+    /// 余白の左端からバーまでの距離(pt)。
+    static let barInset: CGFloat = 1
+
     var barColor: PlatformColor = .systemGray
+    /// 本文を行頭から下げた幅(`MarkdownTheme.blockquoteIndent`)。バーはこの中に置く。
+    var indent: CGFloat = 0
+
+    /// バーの矩形(フラグメント原点基準)。余白が無い(indent = 0)ときは行頭に重ねる。
+    /// 上下は `decorationRect` と同じだが、`decorationRect` は `renderingSurfaceBounds` を参照する
+    /// (ここではそれをバーまで広げている)ので、再帰しないよう上下端の値から直接組み立てる。
+    var barRect: CGRect {
+        let top = decorationTopInset
+        let x = Self.barX(indent: indent, textStart: textLinesStart)
+        return CGRect(x: x, y: top, width: Self.barWidth, height: max(0, decorationBottom - top))
+    }
+
+    /// バーの x(フラグメント原点基準)。本文の行頭 `textStart` から `indent` 戻った余白の左端に
+    /// `barInset` を足した位置。余白がバーより狭ければ余白の中に収まる範囲で左に寄せる。
+    static func barX(indent: CGFloat, textStart: CGFloat) -> CGFloat {
+        let leftEdge = textStart - indent
+        return leftEdge + min(barInset, max(0, indent - barWidth))
+    }
+
+    /// テキスト行の行頭(フラグメント原点基準)。段落スタイルの headIndent ぶん右にある。
+    private var textLinesStart: CGFloat {
+        textLineFragments.first?.typographicBounds.minX ?? 0
+    }
+
+    /// 描画面をバーの矩形まで広げる(UITextView はこの境界でクリップする)。
+    override var renderingSurfaceBounds: CGRect {
+        super.renderingSurfaceBounds.union(barRect)
+    }
 
     override func draw(at point: CGPoint, in context: CGContext) {
         context.saveGState()
-        let bounds = decorationRect.offsetBy(dx: point.x, dy: point.y)
+        let rect = CodeBlockFragment.pixelAligned(barRect.offsetBy(dx: point.x, dy: point.y), in: context)
         context.setFillColor(barColor.cgColor)
-        context.fill(CGRect(x: bounds.minX + 2, y: bounds.minY, width: 3, height: bounds.height))
+        context.fill(rect)
         context.restoreGState()
         super.draw(at: point, in: context)
     }

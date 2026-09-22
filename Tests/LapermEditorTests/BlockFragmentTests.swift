@@ -288,6 +288,78 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     }
 }
 
+// MARK: - 引用の縦バー
+
+@MainActor @Test func blockquoteParagraphsAreIndentedByTheThemeWithoutTouchingStorage() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.blockquoteIndent = 20
+    textView.theme = theme
+    textView.string = "plain\n\n> one\n> two words that wrap when the line is long enough to need it\n\nafter"
+    textView.highlightAll()
+    let fragments = layoutFragments(in: textView)
+    let padding = textView.textContainer!.lineFragmentPadding
+    let quotes = fragments.compactMap { $0 as? BlockquoteFragment }
+    try #require(quotes.count == 2)
+    // 引用の段落は行頭ごと indent ぶん右へ(折り返した行も同じ)。通常段落は動かない
+    for quote in quotes {
+        #expect(quote.layoutFragmentFrame.minX == padding + 20)
+        for line in quote.textLineFragments { #expect(line.typographicBounds.minX == 0) }
+    }
+    #expect(quotes[1].textLineFragments.count > 1)
+    #expect(fragments.first?.layoutFragmentFrame.minX == padding)
+    #expect(fragments.last?.layoutFragmentFrame.minX == padding)
+    // 表示用の段落だけに段落スタイルが付き、textStorage の属性は変わらない
+    let storage = textView.textStorage!
+    storage.enumerateAttribute(.paragraphStyle, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+        let style = value as? NSParagraphStyle
+        #expect((style?.headIndent ?? 0) == 0)
+        #expect((style?.firstLineHeadIndent ?? 0) == 0)
+    }
+}
+
+@MainActor @Test func blockquoteBarKeepsOneXAcrossLinesAndLeavesAGapBeforeTheText() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    // Live Preview で ">" が隠れると、行の先頭の字形(j / i / ` / 何もない)でインク境界が行ごとに変わる
+    textView.isLivePreviewEnabled = true
+    textView.string = "> jjj\n> *italic*\n> `code`\n>\n> **bold**\n\nplain"
+    textView.highlightAll()
+    textView.engine.editorFocusDidChange(false)
+    textView.highlightNow()
+    let quotes = layoutFragments(in: textView).compactMap { $0 as? BlockquoteFragment }
+    try #require(quotes.count == 5)
+    let inkEdges = Set(quotes.map { $0.textLineFragments.first!.typographicBounds.minX })
+    #expect(inkEdges == [0])
+    let barXs = Set(quotes.map(\.barRect.minX))
+    #expect(barXs.count == 1)
+    let indent = textView.theme.blockquoteIndent
+    for quote in quotes {
+        let bar = quote.barRect
+        // バーは indent の余白の中(左端から barInset)にあり、本文(x = 0)との間が空く
+        #expect(bar.minX == -indent + BlockquoteFragment.barInset)
+        #expect(bar.width == BlockquoteFragment.barWidth)
+        #expect(bar.maxX <= -8)
+        #expect(bar.minY == quote.decorationRect.minY)
+        #expect(bar.maxY == quote.decorationRect.maxY)
+        // 描画面がバーを含む(UITextView はこの境界でクリップする)
+        #expect(quote.renderingSurfaceBounds.contains(bar))
+    }
+}
+
+@Test func blockquoteBarStaysInsideANarrowIndent() {
+    // 余白が十分: 左端 + barInset
+    #expect(BlockquoteFragment.barX(indent: 16, textStart: 0) == -15)
+    #expect(BlockquoteFragment.barX(indent: 16, textStart: 10) == -5)
+    // 余白がバーより少し広いだけ: はみ出さない範囲で寄せる
+    #expect(BlockquoteFragment.barX(indent: 3.5, textStart: 0) == -3)
+    // 余白がバー以下: 余白の左端
+    #expect(BlockquoteFragment.barX(indent: 2, textStart: 0) == -2)
+    // 余白なし: 行頭に重ねる
+    #expect(BlockquoteFragment.barX(indent: 0, textStart: 0) == 0)
+}
+
 @MainActor @Test func gutterLinesKeepAnEvenPitchAcrossEmptyLinesWithLineSpacing() throws {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
