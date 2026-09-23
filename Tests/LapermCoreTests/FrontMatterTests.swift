@@ -105,6 +105,75 @@ private func line(_ text: String, _ index: Int) -> NSRange {
     #expect(fm.properties[6].value == .text("value"))
 }
 
+@Test func unclosedFenceIsNotFrontMatterEvenInALargeDocument() {
+    let md = "---\n" + String(repeating: "key: value\n", count: 20_000)
+    let clock = ContinuousClock()
+    var result: FrontMatter? = nil
+    let elapsed = clock.measure { result = FrontMatterParser.parse(md) }
+    #expect(result == nil)
+    #expect(elapsed < .milliseconds(200))
+}
+
+@Test func commentsAreRemovedBeforeValuesAreClassified() throws {
+    // Codex レビュー(f72e277): `tags: [a, b] # comment` が文字列に、`tags: # comment` の次行のリストが孤立していた
+    let md = """
+    ---
+    flow: [a, b] # comment
+    block: # comment
+      # a comment inside the list
+      - x
+      - y
+    scalar: | # comment
+      # not a comment: body of the block scalar
+    quoted: "a" # comment
+    bad: "a" b
+    ---
+    """
+    let fm = try #require(parse(md))
+    #expect(fm.properties[0].value == .list(["a", "b"]))
+    #expect(fm.properties[1].key == "block")
+    #expect(fm.properties[1].value == .list(["x", "y"]))
+    #expect(fm.properties[2].value == .raw("scalar: | # comment"))
+    #expect(fm.properties[3].value == .raw("  # not a comment: body of the block scalar"))
+    #expect(fm.properties[4].value == .text("a"))
+    #expect(fm.properties[5].value == .raw("bad: \"a\" b"))
+    #expect(fm.properties.count == 6)
+}
+
+@Test func quotedEscapesAndFlowListEdgeCasesAreReadOrLeftRaw() throws {
+    // Codex レビュー(f72e277): `\u0041` が `u0041` になり、`["a\", b", c]` の区切りが壊れ、`["", a]` の空文字列が消えていた
+    let md = """
+    ---
+    unicode: "\\u0041\\x42\\tC"
+    escaped: ["a\\", b", c]
+    explicit: ["", a, , 'b']
+    nested: [[a, b], c]
+    unknown: "\\q"
+    unterminated: "abc
+    single: 'it''s # not a comment'
+    ---
+    """
+    let fm = try #require(parse(md))
+    let byKey = Dictionary(fm.properties.compactMap { p in p.key.map { ($0, p.value) } }, uniquingKeysWith: { a, _ in a })
+    #expect(byKey["unicode"] == .text("AB\tC"))
+    #expect(byKey["escaped"] == .list(["a\", b", "c"]))
+    #expect(byKey["explicit"] == .list(["", "a", "b"]))
+    #expect(byKey["single"] == .text("it's # not a comment"))
+    let raws = fm.properties.filter { $0.key == nil }.map(\.value)
+    #expect(raws == [.raw("nested: [[a, b], c]"), .raw("unknown: \"\\q\""), .raw("unterminated: \"abc")])
+}
+
+@Test func blockListParsingIsLinearInTheNumberOfItems() throws {
+    let md = "---\ntags:\n" + String(repeating: "  - item\n", count: 20_000) + "---\n"
+    let clock = ContinuousClock()
+    var result: FrontMatter? = nil
+    let elapsed = clock.measure { result = parse(md) }
+    let fm = try #require(result)
+    #expect(fm.properties.count == 1)
+    if case .list(let items) = fm.properties[0].value { #expect(items.count == 20_000) } else { Issue.record("not a list") }
+    #expect(elapsed < .milliseconds(300))
+}
+
 @Test func duplicateKeysStayAsSeparateRows() throws {
     let fm = try #require(parse("---\na: 1\na: 2\n---\n"))
     #expect(fm.properties.map(\.value) == [.text("1"), .text("2")])

@@ -82,11 +82,11 @@ private let sample = "---\ntitle: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
     #expect(controller.isCollapsed)
     let wide = try #require(controller.layout?.reservedHeight)
     _ = controller.takePendingDirtyRanges()
-    // 幅を狭めるとチップが折り返して高くなる → 開きの段落(0..<3)だけ作り直す
+    // 幅を狭めるとチップが折り返して高くなる → ブロックの段落を作り直す(開きの段落の予約高さが変わる)
     controller.containerWidthDidChange(200)
     let narrow = try #require(controller.layout?.reservedHeight)
     #expect(narrow > wide)
-    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 3)])
+    #expect(controller.takePendingDirtyRanges() == [controller.blockParagraphsRange])
     // 同じ幅なら何もしない
     controller.containerWidthDidChange(200)
     #expect(controller.takePendingDirtyRanges().isEmpty)
@@ -121,6 +121,127 @@ private let sample = "---\ntitle: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
     #expect(controller.lineRange(atTablePoint: CGPoint(x: 10, y: layout.size.height + 50)) == nil)
 }
 
+@MainActor @Test func controllerRegeneratesTheOldBlockWhenTheFrontMatterDisappears() throws {
+    // Codex レビュー(f72e277): update(nil) が範囲を 0 にしてから再計算していたので、旧表示を解除する作り直しが出なかった
+    let controller = FrontMatterController(theme: .default)
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(sample)), text: sample as NSString)
+    #expect(controller.isCollapsed)
+    _ = controller.takePendingDirtyRanges()
+    // 外部更新で先頭のフェンスが消えた(全文置換 → 再パース → Front Matter 無し)
+    let replaced = "title: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
+    controller.update(frontMatter: nil, text: replaced as NSString)
+    #expect(!controller.isCollapsed)
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 37)], "the old block is regenerated")
+    #expect(controller.shouldEnumerate(paragraphStartingAt: 11))
+    // Front Matter が短くなった(閉じの位置が変わった)ときも旧・新の範囲を作り直す
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(sample)), text: sample as NSString)
+    _ = controller.takePendingDirtyRanges()
+    let shorter = "---\ntitle: Foo\n---\n# H\nbody"
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(shorter)), text: shorter as NSString)
+    #expect(controller.isCollapsed)
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 37), NSRange(location: 0, length: 19)])
+}
+
+@MainActor @Test func controllerExpandsWhileTheModelIsStaleAfterAnEditThatTouchesTheBlock() throws {
+    // Codex レビュー(f72e277): Property 内に長文を貼ると、旧ブロック終端を越えたキャレットで(まだブロック内なのに)折りたたんでいた
+    let controller = FrontMatterController(theme: .default)
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(sample)), text: sample as NSString)
+    controller.selectionDidChange([NSRange(location: 10, length: 0)])  // title の行
+    #expect(!controller.isCollapsed)
+    // 100 文字貼り付け → キャレットは 110(旧ブロック終端 36 より後)。モデルは失効し、次のパースまで折りたたまない
+    controller.noteEdit(editedRange: NSRange(location: 10, length: 100), changeInLength: 100)
+    controller.selectionDidChange([NSRange(location: 110, length: 0)])
+    #expect(controller.isModelStale)
+    #expect(!controller.isCollapsed)
+    #expect(controller.documentLength == (sample as NSString).length + 100)
+    // 再パースで解除
+    let edited = (sample as NSString).replacingCharacters(in: NSRange(location: 10, length: 0), with: String(repeating: "x", count: 100))
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(edited)), text: edited as NSString)
+    #expect(!controller.isModelStale)
+    #expect(!controller.isCollapsed, "the caret (110) is still inside the grown block")
+    controller.selectedRanges.isEmpty ? () : controller.selectionDidChange([NSRange(location: 200, length: 0)])
+    #expect(controller.isCollapsed)
+    _ = controller.takePendingDirtyRanges()
+    // 折りたたみ中に本文の後ろを編集しても失効しない(文書の長さだけ追従)。失効中は表のクリックも受け付けない
+    controller.noteEdit(editedRange: NSRange(location: 150, length: 1), changeInLength: 1)
+    #expect(!controller.isModelStale)
+    #expect(controller.isCollapsed)
+    let layout = try #require(controller.layout)
+    #expect(controller.lineRange(atTablePoint: CGPoint(x: 10, y: layout.rows[0].frame.midY)) != nil)
+    // 全文置換(ブロックに触る編集)は表示が折りたたみのままなら表のクリックを止め、再パースまで展開する
+    controller.noteEdit(editedRange: NSRange(location: 0, length: 5), changeInLength: -200)
+    #expect(controller.isModelStale)
+    #expect(!controller.isCollapsed)
+    #expect(controller.lineRange(atTablePoint: CGPoint(x: 10, y: layout.rows[0].frame.midY)) == nil)
+    #expect(controller.takePendingDirtyRanges().allSatisfy { $0.location == 0 })
+}
+
+@MainActor @Test func controllerDefersThePresentationWhileItCannotPresent() throws {
+    // Codex レビュー(f72e277): IME 変換中の Live Preview 切替で、列挙・表は新状態、開きの段落は旧状態という半適用になった
+    let controller = FrontMatterController(theme: .default)
+    var canPresent = false
+    controller.canPresent = { canPresent }
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(sample)), text: sample as NSString)
+    #expect(!controller.isCollapsed, "nothing is shown to TextKit while presenting is not allowed")
+    #expect(controller.hasPendingPresentation)
+    #expect(controller.shouldEnumerate(paragraphStartingAt: 4))
+    #expect(controller.reservedHeight(forParagraph: NSRange(location: 0, length: 4)) == nil)
+    #expect(controller.takePendingDirtyRanges().isEmpty)
+    // 許可されたら一括で移る
+    canPresent = true
+    #expect(controller.present())
+    #expect(controller.isCollapsed)
+    #expect(!controller.hasPendingPresentation)
+    #expect(!controller.shouldEnumerate(paragraphStartingAt: 4))
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 37)])
+    #expect(!controller.present(), "nothing to move")
+}
+
+@MainActor @Test func controllerKeepsTheCaretVisibleOnTheTrailingEmptyLineOfAFrontMatterOnlyNote() throws {
+    let controller = FrontMatterController(theme: .default)
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    // 閉じの --- の改行で終わる Note: 文末(13)の空行は閉じの段落に描かれるので、そこにキャレットがあれば展開
+    let text = "---\na: 1\n---\n"
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(text)), text: text as NSString)
+    controller.selectionDidChange([NSRange(location: 13, length: 0)])
+    #expect(!controller.isCollapsed)
+    // 本文が続くなら、閉じの改行の次の行頭はブロックに触れない
+    let withBody = "---\na: 1\n---\nb"
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(withBody)), text: withBody as NSString)
+    controller.selectionDidChange([NSRange(location: 13, length: 0)])
+    #expect(controller.isCollapsed)
+    // 改行無しで終わる Note: 閉じの行末(12)は触れる
+    let noNewline = "---\na: 1\n---"
+    controller.update(frontMatter: try #require(FrontMatterParser.parse(noNewline)), text: noNewline as NSString)
+    controller.selectionDidChange([NSRange(location: 12, length: 0)])
+    #expect(!controller.isCollapsed)
+}
+
+@MainActor @Test func controllerReusesTheLayoutWhileTheInputsAreUnchanged() throws {
+    let controller = FrontMatterController(theme: .default)
+    let fm = try #require(FrontMatterParser.parse(sample))
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    controller.update(frontMatter: fm, text: sample as NSString)
+    let first = try #require(controller.layout)
+    controller.selectionDidChange([NSRange(location: 42, length: 0)])
+    controller.selectionDidChange([NSRange(location: 43, length: 0)])
+    #expect(controller.layout == first)
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 37)])
+    #expect(!controller.takeNeedsRedraw())
+    // 展開して戻っても同じ入力なら同じレイアウト
+    controller.selectionDidChange([NSRange(location: 5, length: 0)])
+    controller.selectionDidChange([NSRange(location: 42, length: 0)])
+    #expect(controller.layout == first)
+}
+
 // MARK: - FrontMatterTableLayout
 
 @MainActor @Test func layoutBuildsRowsChipsAndRawLines() throws {
@@ -150,6 +271,24 @@ private let sample = "---\ntitle: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
     #expect(layout.row(at: CGPoint(x: 5, y: layout.rows[2].frame.minY + 1))?.lineRange == fm.properties[2].lineRange)
     #expect(layout.row(at: CGPoint(x: 5, y: -20)) == nil)
     #expect(layout.row(at: CGPoint(x: 5, y: -2))?.lineRange == fm.properties[0].lineRange)
+}
+
+@MainActor @Test func layoutRowsGrowWithALargeKeyFontAndKeysFallBackToTheBodyColor() throws {
+    // Codex レビュー(f72e277 / 5f8c915): キーのフォントが本文より大きいと行からはみ出し、キー色の既定が Source と違った
+    let text = "---\ntitle: Foo\ntags: [a]\n---\n"
+    let fm = try #require(FrontMatterParser.parse(text))
+    var theme = MarkdownTheme.default
+    theme.styles[.frontMatterKey] = .init(font: .systemFont(ofSize: 40))
+    let big = FrontMatterTableLayout.make(frontMatter: fm, width: 400, appearance: .init(theme: theme))
+    let keyHeight = FrontMatterTableLayout.lineHeight(of: .systemFont(ofSize: 40))
+    for row in big.rows {
+        #expect(row.frame.height >= keyHeight + FrontMatterTableLayout.rowVerticalPadding * 2)
+        #expect(row.keyFrame.maxY <= row.frame.maxY)
+    }
+    #expect(big.rows[1].frame.minY == big.rows[0].frame.maxY)
+    let appearance = FrontMatterTableLayout.Appearance(theme: theme)
+    #expect(appearance.keyColor == theme.bodyColor, "no key colour in the theme → body colour, like Source")
+    #expect(FrontMatterTableLayout.Appearance(theme: .default).keyColor == MarkdownTheme.default.renderingColor(for: .frontMatterKey))
 }
 
 @MainActor @Test func layoutWrapsChipsAndLongValuesWithinTheValueColumn() throws {
@@ -223,12 +362,18 @@ private func layoutFragments(_ textView: MarkdownTextView) -> [NSTextLayoutFragm
     let heading = try #require(fragments.dropFirst().first)
     #expect(heading.layoutFragmentFrame.minY >= opening.layoutFragmentFrame.maxY - 0.5)
 
-    // ビューポートレイアウトで表が置かれる
+    // ビューポートレイアウトで表が置かれる: 上端はテキストコンテナの上端(文書先頭)、下端 + 余白の下に見出しが来る。
+    // 期待値はフラグメントではなく textContainerOrigin / 見出しの位置から独立に求める(Codex レビュー f72e277)。
     textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
     let entry = try #require(textView.debugFrontMatterEntry)
     #expect(entry.layout.rows.count == 2)
-    #expect(entry.frame.minY >= opening.layoutFragmentFrame.minY)
+    let containerTop = textView.textContainerOrigin.y
+    #expect(abs(entry.frame.minY - containerTop) < 1, "table starts where the (zero-height) opening line ends: \(entry.frame.minY) vs \(containerTop)")
+    #expect(entry.frame.minX == textView.textContainerOrigin.x)
+    #expect(entry.frame.width == textView.textContainer!.size.width)
     #expect(entry.frame.height == entry.layout.size.height)
+    let headingTop = heading.layoutFragmentFrame.minY + containerTop
+    #expect(abs(headingTop - (entry.frame.maxY + FrontMatterTableLayout.bottomMargin)) < 1, "heading \(headingTop) follows the table \(entry.frame.maxY)")
 
     // 表の 2 行目(tags)をクリック: その行末にキャレットが置かれ、ブロックが展開される
     let clickPoint = CGPoint(x: entry.frame.minX + 20, y: entry.frame.minY + entry.layout.rows[1].frame.midY)

@@ -68,7 +68,8 @@ struct FrontMatterTableLayout: Equatable {
 
         init(theme: MarkdownTheme) {
             keyFont = theme.layoutFont(for: .frontMatterKey) ?? theme.bodyFont
-            keyColor = theme.renderingColor(for: .frontMatterKey) ?? .lapermSecondaryLabel
+            // Source(ハイライト)と同じフォールバック: `frontMatterKey` の色が無ければ本文色
+            keyColor = theme.renderingColor(for: .frontMatterKey) ?? theme.bodyColor
             valueFont = theme.bodyFont
             valueColor = theme.bodyColor
             rawFont = theme.layoutFont(for: .codeBlock)
@@ -128,8 +129,9 @@ struct FrontMatterTableLayout: Equatable {
                 }
                 contentHeight = items.isEmpty ? valueLineHeight : chipY + chipHeight
             }
-            let rowHeight = ceil(contentHeight + rowVerticalPadding * 2)
+            // キーのフォントが本文より大きい Theme でもキーが行からはみ出さないよう、キー側の高さも見る
             let keyHeight = keyText == nil ? 0 : lineHeight(of: appearance.keyFont)
+            let rowHeight = ceil(max(contentHeight, keyHeight) + rowVerticalPadding * 2)
             let contentTop = y + rowVerticalPadding
             rows.append(Row(
                 frame: CGRect(x: 0, y: y, width: width, height: rowHeight),

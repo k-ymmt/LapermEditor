@@ -80,6 +80,8 @@ final class MarkdownEditorEngine: NSObject {
         fragmentProvider.collapsedFrontMatterReservation = { [weak self] paragraph in
             self?.frontMatter.reservedHeight(forParagraph: paragraph)
         }
+        // IME 変換中は表示を切り替えない(段落の作り直しが変換セッションを乱す)。確定後の flush で移す。
+        frontMatter.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
 
         foldingController.onOutlineChanged = { [weak self] in
@@ -233,13 +235,20 @@ final class MarkdownEditorEngine: NSObject {
     /// 溜まった作り直し範囲を要素の再生成(列挙の除外と表示用段落は `recordEditAction` で再問い合わせさせる)と
     /// レイアウト無効化に載せる。IME 変換中は見送り、確定後の flush(updateFrontMatter)で適用する。
     private func applyFrontMatterChanges() {
+        // 変換中で移せなかった表示があれば、確定後の flush(updateFrontMatter → present)で改めて移す
+        if frontMatter.hasPendingPresentation, host?.editorHasMarkedText == true { scheduleHighlight() }
         if frontMatter.takeNeedsRedraw() { requestViewportRelayout() }
         guard frontMatter.hasPendingDirtyRanges else { return }
         if host?.editorHasMarkedText == true {
             scheduleHighlight()
             return
         }
-        let dirtyRanges = frontMatter.takePendingDirtyRanges()
+        let length = host?.editorContentStorage?.textStorage?.length ?? 0
+        // 旧表示の範囲は編集で追従させているが、文書より長くは取らない(textRange(for:) の範囲外を避ける)
+        let dirtyRanges = frontMatter.takePendingDirtyRanges().compactMap { range -> NSRange? in
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            return clipped.length > 0 ? clipped : nil
+        }
         regenerateElements(in: dirtyRanges)
         // 開きの `---` の段落は表示用段落そのもの(文字を隠す / 予約高さ)が変わる。`recordEditAction` は
         // 既存の NSTextParagraph を使い回すので、Live Preview と同じ「属性が編集された」通知で作り直させる。

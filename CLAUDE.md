@@ -47,7 +47,12 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     properties never collapse. Toggling regenerates the block with `recordEditAction` + `invalidateLayout` and the
     opening paragraph additionally with `edited(.editedAttributes)` (`recordEditAction` reuses cached paragraphs).
     A click / tap on the table (`MarkdownTextView.expandFrontMatter(atPoint:)`, from `mouseDown` / the tap
-    gesture) puts the caret at the end of that property's line. The text storage is never changed.
+    gesture; on iOS `shouldInterceptTap` claims touches over the table so UITextView's own tap does not re-place
+    the caret in the expanded layout) puts the caret at the end of that property's line. The controller computes
+    a desired `Presentation` from its inputs and moves it to the presented one only when `canPresent()` is true
+    (the engine returns false during IME marked text, so enumeration / reservation / display paragraph never
+    disagree); an edit touching the block marks the model stale (expanded, no table clicks) until the next parse;
+    the table layout is cached by (front matter, width, appearance). The text storage is never changed.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

@@ -76,85 +76,159 @@ public enum FrontMatterParser {
         guard isFence(NSRange(location: fenceStart, length: NSMaxRange(firstLine) - fenceStart), in: text)
         else { return nil }
 
-        var properties: [FrontMatter.Property] = []
-        /// 値が空だった直近のキーの添字(次行以降の `- 項目` を受け取る)
-        var pendingListIndex: Int?
+        // 先に閉じの `---` を探す(行の判定だけ)。閉じが無ければ Front Matter ではないので、`---` で始まる
+        // だけの巨大な文書で全行を Property として読んでから捨てることはしない。
+        guard let closingFence = closingFenceLine(after: firstLine, in: text) else { return nil }
+
+        var state = ParseState()
         var location = nextLineStart(after: firstLine, in: text)
-        while location < text.length {
+        while location < closingFence.location {
             let line = lineContent(at: location, in: text)
-            if isFence(line, in: text) {
-                return FrontMatter(
-                    range: NSRange(location: 0, length: NSMaxRange(line)),
-                    openingFenceRange: firstLine,
-                    closingFenceRange: line,
-                    properties: properties)
-            }
-            parseLine(line, in: text, into: &properties, pendingListIndex: &pendingListIndex)
+            parseLine(line, in: text, into: &state)
             let next = nextLineStart(after: line, in: text)
             guard next > location else { break }
             location = next
         }
-        // 閉じが無い
+        state.flushPendingList()
+        return FrontMatter(
+            range: NSRange(location: 0, length: NSMaxRange(closingFence)),
+            openingFenceRange: firstLine,
+            closingFenceRange: closingFence,
+            properties: state.properties)
+    }
+
+    /// `firstLine` の次の行以降で最初の `---` だけの行(内容レンジ)。無ければ nil。
+    private static func closingFenceLine(after firstLine: NSRange, in text: NSString) -> NSRange? {
+        var location = nextLineStart(after: firstLine, in: text)
+        while location < text.length {
+            let line = lineContent(at: location, in: text)
+            if isFence(line, in: text) { return line }
+            let next = nextLineStart(after: line, in: text)
+            guard next > location else { return nil }
+            location = next
+        }
         return nil
     }
 
     // MARK: - 行の解釈
 
-    private static func parseLine(
-        _ line: NSRange, in text: NSString,
-        into properties: inout [FrontMatter.Property], pendingListIndex: inout Int?
-    ) {
+    /// 行を順に読むときの状態。ブロック形式のリスト(`key:` の次行以降の `- 項目`)は、項目を別のバッファに
+    /// 溜めて閉じるときに Property へ書く(Property の中の配列へ項目ごとに追記すると、共有ストレージの
+    /// コピーで項目数の二乗のコストになる)。
+    private struct ParseState {
+        var properties: [FrontMatter.Property] = []
+        /// 値が空だった直近のキーの添字(次行以降の `- 項目` を受け取る)
+        var pendingListIndex: Int?
+        var pendingItems: [String] = []
+        var pendingLastLineEnd = 0
+
+        /// 開いているリストを閉じて Property に書く(項目が無ければ `.text("")` のまま)。
+        mutating func flushPendingList() {
+            defer {
+                pendingListIndex = nil
+                pendingItems = []
+            }
+            guard let index = pendingListIndex, !pendingItems.isEmpty else { return }
+            var property = properties[index]
+            property.value = .list(pendingItems)
+            property.lineRange = NSRange(
+                location: property.lineRange.location, length: pendingLastLineEnd - property.lineRange.location)
+            properties[index] = property
+        }
+
+        mutating func appendRaw(_ content: String, line: NSRange) {
+            properties.append(.init(key: nil, value: .raw(content), lineRange: line))
+        }
+    }
+
+    private static func parseLine(_ line: NSRange, in text: NSString, into state: inout ParseState) {
         let content = text.substring(with: line)
         let trimmed = content.drop { $0 == " " || $0 == "\t" }
         let indent = content.count - trimmed.count
-        // 空行・コメント行
-        if trimmed.isEmpty || trimmed.first == "#" { return }
+        if trimmed.isEmpty { return }
+        if trimmed.first == "#" {
+            // 行頭のコメントは読み飛ばす。インデントされた `#` の行は、開いているリストの中ならコメント、
+            // それ以外(複数行スカラーの本文など)は原文のまま残す。
+            if indent == 0 || state.pendingListIndex != nil { return }
+            state.appendRaw(content, line: line)
+            return
+        }
 
-        // "- 項目": 直前が値の無いキー(またはその続きのリスト)なら項目として受け取る
+        // "- 項目": 開いているリストの項目として受け取る
         if trimmed == "-" || trimmed.hasPrefix("- ") {
-            if let index = pendingListIndex {
-                let item = scalar(from: String(trimmed.dropFirst(1)))
-                var property = properties[index]
-                var items: [String]
-                switch property.value {
-                case .list(let existing): items = existing
-                default: items = []
-                }
-                items.append(item)
-                property.value = .list(items)
-                property.lineRange = NSRange(
-                    location: property.lineRange.location, length: NSMaxRange(line) - property.lineRange.location)
-                properties[index] = property
+            guard state.pendingListIndex != nil else {
+                state.appendRaw(content, line: line)
                 return
             }
-            properties.append(.init(key: nil, value: .raw(content), lineRange: line))
+            switch classify(String(trimmed.dropFirst(1))) {
+            case .text(let item):
+                state.pendingItems.append(item)
+                state.pendingLastLineEnd = NSMaxRange(line)
+            case .empty:
+                state.pendingItems.append("")
+                state.pendingLastLineEnd = NSMaxRange(line)
+            case .list, .unsupported:
+                // 入れ子のリストや読めない項目: その行を原文で残す(リスト自体は続く)
+                state.appendRaw(content, line: line)
+            }
             return
         }
 
         // "key: 値"(インデント無し、キーは空でない、コロンの直後は空白か行末)
         if indent == 0, let (key, rest) = splitKey(String(trimmed)) {
-            pendingListIndex = nil
-            if rest.isEmpty {
-                properties.append(.init(key: key, value: .text(""), lineRange: line))
-                pendingListIndex = properties.count - 1
-            } else if rest.hasPrefix("["), rest.hasSuffix("]") {
-                properties.append(.init(key: key, value: .list(flowItems(rest)), lineRange: line))
-            } else if isBlockScalarIndicator(rest) {
-                // "key: |" / "key: >" の複数行スカラーは読まない(続く行はインデントされた行として raw になる)
-                properties.append(.init(key: nil, value: .raw(content), lineRange: line))
-            } else {
-                properties.append(.init(key: key, value: .text(scalar(from: rest)), lineRange: line))
+            state.flushPendingList()
+            switch classify(rest) {
+            case .empty:
+                state.properties.append(.init(key: key, value: .text(""), lineRange: line))
+                state.pendingListIndex = state.properties.count - 1
+                state.pendingLastLineEnd = NSMaxRange(line)
+            case .text(let value):
+                state.properties.append(.init(key: key, value: .text(value), lineRange: line))
+            case .list(let items):
+                state.properties.append(.init(key: key, value: .list(items), lineRange: line))
+            case .unsupported:
+                state.appendRaw(content, line: line)
             }
             return
         }
 
         // それ以外(インデントされた行、コロンの無い行)は解釈できない行
-        pendingListIndex = nil
-        properties.append(.init(key: nil, value: .raw(content), lineRange: line))
+        state.flushPendingList()
+        state.appendRaw(content, line: line)
+    }
+
+    /// 値の解釈結果。
+    enum Scalar: Equatable {
+        /// 値が無い(または行末コメントだけ)
+        case empty
+        case text(String)
+        case list([String])
+        /// 対応しない構文(複数行スカラー、入れ子、閉じていない引用符、未知のエスケープ)。行を原文で残す。
+        case unsupported
+    }
+
+    /// `key:` の後ろ(または `- ` の後ろ)の文字列を解釈する。コメントは引用符を考慮して先に外し、その後で
+    /// 空値・フローリスト・複数行スカラーを判定する(`tags: [a, b] # comment` はリスト、`tags: # comment` は空値)。
+    static func classify(_ raw: String) -> Scalar {
+        let body = raw.trimmingCharacters(in: .whitespaces)
+        guard let first = body.first, first != "#" else { return .empty }
+        if first == "\"" || first == "'" {
+            guard let (value, remainder) = parseQuoted(body) else { return .unsupported }
+            let rest = remainder.trimmingCharacters(in: .whitespaces)
+            guard rest.isEmpty || rest.first == "#" else { return .unsupported }
+            return .text(value)
+        }
+        let unquoted = stripComment(body)
+        if unquoted.first == "[" {
+            guard unquoted.hasSuffix("]"), let items = flowItems(unquoted) else { return .unsupported }
+            return .list(items)
+        }
+        if unquoted.first == "{" || isBlockScalarIndicator(unquoted) { return .unsupported }
+        return .text(unquoted)
     }
 
     /// "key: rest" を分ける。コロンの直後が空白か行末である最初のコロンで切る。
-    /// `{` / `[` で始まる行(フローのマップ / リスト)はキーにしない。
+    /// `{` / `[` / 引用符で始まる行(フローのマップ / リスト、引用符付きキー)はキーにしない。
     private static func splitKey(_ line: String) -> (key: String, rest: String)? {
         guard let first = line.first, first != "{", first != "[", first != "\"", first != "'" else { return nil }
         var index = line.startIndex
@@ -177,40 +251,53 @@ public enum FrontMatterParser {
         return rest.dropFirst().allSatisfy { $0 == "-" || $0 == "+" || $0.isNumber }
     }
 
-    /// スカラー値: 引用符付きなら中身(エスケープを戻す)、そうでなければ行末コメントを外して前後の空白を落とす。
-    static func scalar(from raw: String) -> String {
-        let value = raw.trimmingCharacters(in: .whitespaces)
-        guard let quote = value.first, quote == "\"" || quote == "'" else {
-            return stripComment(value)
-        }
+    /// 引用符で始まる文字列を読み、中身と閉じ引用符の後ろの残りを返す。閉じていない、または対応しない
+    /// エスケープなら nil。`"…"` は YAML の主なエスケープ(`\n` `\t` `\"` `\\` `\/` `\0` `\r` `\uXXXX` `\xXX`
+    /// `\UXXXXXXXX`)、`'…'` は `''` だけを解釈する。
+    static func parseQuoted(_ text: String) -> (value: String, remainder: Substring)? {
+        guard let quote = text.first, quote == "\"" || quote == "'" else { return nil }
         var result = ""
-        var index = value.index(after: value.startIndex)
-        while index < value.endIndex {
-            let c = value[index]
-            if quote == "\"", c == "\\", value.index(after: index) < value.endIndex {
-                let escaped = value[value.index(after: index)]
+        var index = text.index(after: text.startIndex)
+        while index < text.endIndex {
+            let c = text[index]
+            if quote == "\"", c == "\\" {
+                let escapeStart = text.index(after: index)
+                guard escapeStart < text.endIndex else { return nil }
+                let escaped = text[escapeStart]
+                var next = text.index(after: escapeStart)
                 switch escaped {
                 case "n": result.append("\n")
                 case "t": result.append("\t")
-                default: result.append(escaped)
+                case "r": result.append("\r")
+                case "0": result.append("\0")
+                case "\"", "\\", "/", " ": result.append(escaped)
+                case "x", "u", "U":
+                    let digits = escaped == "x" ? 2 : escaped == "u" ? 4 : 8
+                    guard let end = text.index(next, offsetBy: digits, limitedBy: text.endIndex),
+                          let code = UInt32(text[next..<end], radix: 16),
+                          let scalar = Unicode.Scalar(code)
+                    else { return nil }
+                    result.unicodeScalars.append(scalar)
+                    next = end
+                default:
+                    return nil
                 }
-                index = value.index(index, offsetBy: 2)
+                index = next
                 continue
             }
             if c == quote {
-                let after = value.index(after: index)
-                if quote == "'", after < value.endIndex, value[after] == "'" {
+                let after = text.index(after: index)
+                if quote == "'", after < text.endIndex, text[after] == "'" {
                     result.append("'")
-                    index = value.index(after: after)
+                    index = text.index(after: after)
                     continue
                 }
-                return result  // 閉じ引用符の後(コメントなど)は無視
+                return (result, text[after...])
             }
             result.append(c)
-            index = value.index(after: index)
+            index = text.index(after: index)
         }
-        // 閉じ引用符が無い: 引用符も含めて原文のまま
-        return stripComment(value)
+        return nil
     }
 
     /// 空白に続く `#` 以降を落とす(引用符無しの値の行末コメント)。
@@ -228,28 +315,51 @@ public enum FrontMatterParser {
         return value
     }
 
-    /// "[a, "b, c", d]" → ["a", "b, c", "d"]。引用符の外のカンマで分け、空の項目は落とす。
-    static func flowItems(_ flow: String) -> [String] {
-        let inner = flow.dropFirst().dropLast()
+    /// "[a, "b, c", d]" → ["a", "b, c", "d"]。引用符の外のカンマで分け、引用符無しの空の項目(末尾のカンマなど)は
+    /// 落とし、`""` は空文字列として残す。入れ子の `[` / `{`、閉じていない引用符、未知のエスケープは nil。
+    static func flowItems(_ flow: String) -> [String]? {
+        guard flow.hasPrefix("["), flow.hasSuffix("]"), flow.count >= 2 else { return nil }
+        let inner = String(flow.dropFirst().dropLast())
         var items: [String] = []
+        var index = inner.startIndex
         var current = ""
-        var quote: Character?
-        for c in inner {
-            if let open = quote {
-                current.append(c)
-                if c == open { quote = nil }
-            } else if c == "\"" || c == "'" {
-                quote = c
-                current.append(c)
-            } else if c == "," {
-                items.append(current)
+        var currentQuoted: String?
+        func finishItem() -> Bool {
+            defer {
                 current = ""
-            } else {
+                currentQuoted = nil
+            }
+            if let quoted = currentQuoted {
+                guard current.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
+                items.append(quoted)
+                return true
+            }
+            let plain = current.trimmingCharacters(in: .whitespaces)
+            if !plain.isEmpty { items.append(plain) }
+            return true
+        }
+        while index < inner.endIndex {
+            let c = inner[index]
+            switch c {
+            case "\"", "'":
+                guard currentQuoted == nil, current.trimmingCharacters(in: .whitespaces).isEmpty,
+                      let (value, remainder) = parseQuoted(String(inner[index...]))
+                else { return nil }
+                currentQuoted = value
+                current = ""
+                index = inner.index(inner.endIndex, offsetBy: -remainder.count)
+                continue
+            case "[", "{", "]", "}":
+                return nil
+            case ",":
+                guard finishItem() else { return nil }
+            default:
                 current.append(c)
             }
+            index = inner.index(after: index)
         }
-        items.append(current)
-        return items.map { scalar(from: $0) }.filter { !$0.isEmpty }
+        guard finishItem() else { return nil }
+        return items
     }
 
     // MARK: - 行の走査

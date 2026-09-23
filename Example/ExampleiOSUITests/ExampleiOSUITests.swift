@@ -122,11 +122,15 @@ final class ExampleiOSUITests: XCTestCase {
         XCTAssertTrue(original.hasPrefix("---\ntitle: Laperm デモ\n"), original)
         // 起動直後はキーボードが無い = フォーカスの無い閲覧表示 → 表(スクリーンショットで確認)
         saveScreenshot("20-front-matter-table")
-        // 表(先頭付近)をタップすると展開してキャレットが Property の行に置かれ、キーボードが出る
+        // 表の 1 行目(title)をタップすると展開してキャレットがその行の末尾に置かれ、キーボードが出る
         tap(dx: 120, dy: 8 + 24)
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
         saveScreenshot("21-front-matter-expanded")
         XCTAssertEqual(documentText, original)
+        // 入力した文字が title の行末に入る = 表が描かれていて、タップが 1 行目に対応した証拠
+        app.typeText("Z")
+        XCTAssertTrue(documentText.hasPrefix("---\ntitle: Laperm デモZ\n"), documentText)
+        saveScreenshot("22-front-matter-typed-into-title")
     }
 
     /// サンプル文書全体(コードブロック・引用・テーブル・画像プレビュー)をスクロールしながら撮影する。
