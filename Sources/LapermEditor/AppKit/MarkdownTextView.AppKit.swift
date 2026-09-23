@@ -151,9 +151,15 @@ public final class MarkdownTextView: NSTextView {
     private let imageOverlay = ImagePreviewOverlayView()
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
     private var lastImageContainerWidth: CGFloat = 0
+    private let frontMatterTableView = FrontMatterTableView()
+    private var collectedFrontMatterEntry: FrontMatterTableEntry?
 
     /// テスト用: 直近のビューポートレイアウトで収集したオーバーレイ配置。
     var debugImageEntries: [ImagePreviewOverlayEntry] { collectedImageEntries }
+    /// テスト用: 直近のビューポートレイアウトで置いた Front Matter の表(折りたたまれていなければ nil)。
+    var debugFrontMatterEntry: FrontMatterTableEntry? { collectedFrontMatterEntry }
+    /// テスト用: Front Matter の折りたたみ状態。
+    var frontMatterController: FrontMatterController { engine.frontMatter }
 
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
@@ -197,6 +203,8 @@ public final class MarkdownTextView: NSTextView {
 
         imageOverlay.autoresizingMask = [.width, .height]
         addSubview(imageOverlay)
+        frontMatterTableView.isHidden = true
+        addSubview(frontMatterTableView)
         syncEditorFocus()
     }
 
@@ -240,6 +248,7 @@ public final class MarkdownTextView: NSTextView {
         super.textViewportLayoutControllerWillLayout(textViewportLayoutController)
         collectedLines.removeAll(keepingCapacity: true)
         collectedImageEntries.removeAll(keepingCapacity: true)
+        collectedFrontMatterEntry = nil
     }
 
     public override func textViewportLayoutController(
@@ -251,6 +260,7 @@ public final class MarkdownTextView: NSTextView {
             configureRenderingSurfaceFor: textLayoutFragment
         )
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
+        if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
         guard gutterView != nil, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -261,6 +271,7 @@ public final class MarkdownTextView: NSTextView {
         super.textViewportLayoutControllerDidLayout(textViewportLayoutController)
         gutterView?.lines = collectedLines
         imageOverlay.update(entries: collectedImageEntries)
+        frontMatterTableView.update(entry: collectedFrontMatterEntry)
     }
 
     /// ガター付きの推奨構成。documentView は MarkdownTextView。
@@ -584,6 +595,9 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, modifiers == [.command], openLink(atPoint: point) {
             return
         }
+        if event.clickCount == 1, modifiers.isEmpty, expandFrontMatter(atPoint: point) {
+            return
+        }
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,
             modifiers.isEmpty,
@@ -591,6 +605,16 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         super.mouseDown(with: event)
+    }
+
+    /// point(ビュー座標)が Live Preview の Front Matter の表の上なら、その Property の行末にキャレットを置いて
+    /// ブロックを展開する(ADR 0016)。展開したら true。mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
+    @discardableResult
+    func expandFrontMatter(atPoint point: NSPoint) -> Bool {
+        guard let caret = engine.frontMatterCaretRange(atPoint: point) else { return false }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        setSelectedRange(caret)
+        return true
     }
 
     /// point(ビュー座標)のクリックでチェックボックスをトグルする。トグルしたら true。

@@ -1,5 +1,14 @@
 enum SampleDocument {
     static let markdown = """
+    ---
+    title: Laperm デモ
+    description: TextKit2 の Markdown エディタ
+    tags:
+      - Markdown
+      - TextKit2
+      - Live Preview
+    ---
+
     # Laperm デモ
 
     TextKit2 をフル活用した **シンタックスハイライト型** エディタです。\

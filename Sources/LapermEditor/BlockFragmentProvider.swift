@@ -10,6 +10,8 @@ enum BlockDecoration: Equatable {
     case blockquote
     case thematicBreak
     case table
+    /// Front Matter(Source / 展開中はコードブロックと同じ箱。折りたたみ中の表は `FrontMatterController`)
+    case frontMatter
 }
 
 struct Decoration: Hashable {
@@ -28,6 +30,10 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     private var decorations: [Decoration] = [] {
         didSet { rebuildIndex() }
     }
+    /// Live Preview で Front Matter が表に折りたたまれているとき、開きの `---` の段落に予約する表の高さ。
+    /// その段落だけ装飾せず、`ReservingTextLayoutFragment` に予約高さを載せる(表はオーバーレイが描く)。
+    /// 引数は段落の文書内レンジ。該当しなければ nil。`MarkdownEditorEngine` が設定する。
+    var collapsedFrontMatterReservation: ((NSRange) -> CGFloat?)?
     /// 段落 → 装飾の検索用索引。`decorations` を開始位置(同位置なら計画順)で安定ソートしたものと、
     /// その各位置までの終端の最大値(単調増加)。1 万行の文書は段落ごとにこの検索を行う
     /// (フラグメント生成と表示用段落の生成)ので、線形探索だと 段落数 × 装飾数 になり
@@ -90,6 +96,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             case .blockquote: Decoration(range: span.range, kind: .blockquote)
             case .thematicBreak: Decoration(range: span.range, kind: .thematicBreak)
             case .table: Decoration(range: span.range, kind: .table)
+            case .frontMatter: Decoration(range: span.range, kind: .frontMatter)
             default: nil
             }
         }
@@ -191,7 +198,8 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
     }
 
     func codeBlockEdges(forParagraph paragraph: NSRange) -> CodeBlockEdges? {
-        guard let decoration = decoration(forParagraph: paragraph), decoration.kind == .codeBlock
+        guard let decoration = decoration(forParagraph: paragraph),
+              decoration.kind == .codeBlock || decoration.kind == .frontMatter
         else { return nil }
         return CodeBlockEdges(
             isFirst: paragraph.location <= decoration.range.location,
@@ -219,7 +227,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         else { return nil }
         let apply: (NSMutableParagraphStyle) -> Void
         switch decoration.kind {
-        case .codeBlock:
+        case .codeBlock, .frontMatter:
             let edges = CodeBlockEdges(
                 isFirst: range.location <= decoration.range.location,
                 isLast: NSMaxRange(range) >= NSMaxRange(decoration.range))
@@ -256,17 +264,28 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         // 確保できるよう `reservedBottomHeight` を設定する(下記いずれの分岐でも共通)。
         let reservation = reservedBottomHeight(for: textElement)
         guard let contentManager = textLayoutManager.textContentManager,
-              let paragraph = paragraphRange(of: textElement, in: contentManager),
-              let decoration = decoration(forParagraph: paragraph) else {
+              let paragraph = paragraphRange(of: textElement, in: contentManager) else {
+            let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+            fragment.reservedBottomHeight = reservation
+            return fragment
+        }
+        // 折りたたまれた Front Matter の開きの段落: 装飾なし、表の高さを予約(表はオーバーレイが描く)
+        if let tableHeight = collapsedFrontMatterReservation?(paragraph) {
+            let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
+            fragment.reservedBottomHeight = tableHeight
+            return fragment
+        }
+        guard let decoration = decoration(forParagraph: paragraph) else {
             let fragment = ReservingTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
             fragment.reservedBottomHeight = reservation
             return fragment
         }
         let isBlockStart = paragraph.location <= decoration.range.location
         switch decoration.kind {
-        case .codeBlock:
+        case .codeBlock, .frontMatter:
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
-            fragment.fillColor = theme.codeBlockBackgroundColor
+            fragment.fillColor = decoration.kind == .frontMatter
+                ? theme.frontMatterBackgroundColor : theme.codeBlockBackgroundColor
             fragment.lineSpacing = theme.lineSpacing
             fragment.isBlockStart = isBlockStart
             let edges = codeBlockEdges(forParagraph: paragraph)

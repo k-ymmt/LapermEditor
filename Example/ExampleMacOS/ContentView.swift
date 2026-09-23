@@ -13,6 +13,7 @@ struct ContentView: View {
     @State private var text = ContentView.sampleDocument
     @State private var showsLineNumbers = true
     @State private var useAlternateTheme = false
+    @State private var livePreview = ProcessInfo.processInfo.arguments.contains("-livePreview")
     @State private var vim = VimController()
     @State private var outline: [OutlineItem] = []
     @State private var editorProxy = MarkdownEditorProxy()
@@ -38,6 +39,7 @@ struct ContentView: View {
                 text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default
             )
             .showsLineNumbers(showsLineNumbers)
+            .livePreviewEnabled(livePreview)
             .inputInterceptor(vim.isEnabled ? vim : nil)
             .insertionPointStyle(vim.insertionPointStyle)
             .imagePreviewOptions(.init(baseURL: imageDirectory))
@@ -56,6 +58,9 @@ struct ContentView: View {
                 }
                 ToolbarItem {
                     Toggle("テーマ", isOn: $useAlternateTheme)
+                }
+                ToolbarItem {
+                    Toggle("Live Preview", isOn: $livePreview)
                 }
                 ToolbarItem {
                     Toggle("Vim", isOn: $vim.isEnabled)
@@ -99,6 +104,15 @@ struct ContentView: View {
     }()
 
     static let sampleDocument = """
+    ---
+    title: Laperm デモ
+    description: TextKit2 の Markdown エディタ
+    tags:
+      - Markdown
+      - TextKit2
+      - Live Preview
+    ---
+
     # Laperm デモ
 
     TextKit2 をフル活用した **シンタックスハイライト型** エディタです。\

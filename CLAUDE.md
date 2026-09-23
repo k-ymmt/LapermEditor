@@ -29,6 +29,25 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     and the delegate is held weakly (keep a strong reference in tests). Regeneration is deferred while IME
     marked text exists. `HighlightMapper` limits blockquote `>` markers per line to the quote depth so code
     inside a quote keeps its literal `>`.
+  - Front Matter (Laperm ADR 0016): `LapermCore/FrontMatter.swift` recognises an Obsidian-style block (line 1 is
+    exactly `---`, closed by a `---` line; BOM tolerated, no `...`, no leading blank line) and reads a YAML subset
+    (`key: value`, `key: [a, b]`, `key:` + `- item` lines, quotes, `#` comments; anything else becomes a raw row).
+    `MarkdownParser` blanks the block (spaces, newlines kept, UTF-16 length unchanged) before handing the text to
+    swift-markdown so `---` is not a Setext underline / thematic break, then adds `.frontMatter` (block),
+    `.frontMatterKey` and `.syntaxMarker` (fences, NOT concealable) spans and `HighlightPlan.frontMatter`.
+    `FrontMatterController` (shared) collapses the block in Live Preview into a key / value table
+    (`FrontMatterTableLayout` computes rows, chips for lists, raw rows in the code font; `FrontMatterTableRenderer`
+    draws; `FrontMatterTableView.AppKit/UIKit` is a non-hit-testing overlay placed from the viewport layout pass
+    via `MarkdownEditorEngine.frontMatterTableEntry(for:)`): the opening `---` paragraph gets a display paragraph
+    whose characters carry the 1e-6pt font and whose `paragraphSpacing` reserves the table height
+    (`BlockFragmentProvider.collapsedFrontMatterReservation`), the other block paragraphs are excluded from
+    enumeration (`EditorContentStorageDelegate.shouldEnumerate`, same mechanism as folding). Focus is per block:
+    the block is expanded (Source look, `CodeBlockFragment` filled with `frontMatterBackgroundColor`) while the
+    text view is first responder and a selection starts at or before the closing fence's line end; zero
+    properties never collapse. Toggling regenerates the block with `recordEditAction` + `invalidateLayout` and the
+    opening paragraph additionally with `edited(.editedAttributes)` (`recordEditAction` reuses cached paragraphs).
+    A click / tap on the table (`MarkdownTextView.expandFrontMatter(atPoint:)`, from `mouseDown` / the tap
+    gesture) puts the caret at the end of that property's line. The text storage is never changed.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

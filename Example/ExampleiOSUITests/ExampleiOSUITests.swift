@@ -14,8 +14,8 @@ final class ExampleiOSUITests: XCTestCase {
         }
     }
 
-    private func launch(uiTestDocument: Bool) {
-        app.launchArguments = uiTestDocument ? ["-uiTestDocument"] : []
+    private func launch(uiTestDocument: Bool, livePreview: Bool = false) {
+        app.launchArguments = (uiTestDocument ? ["-uiTestDocument"] : []) + (livePreview ? ["-livePreview"] : [])
         app.launch()
     }
 
@@ -111,6 +111,22 @@ final class ExampleiOSUITests: XCTestCase {
         saveScreenshot("08-line-numbers-off")
         app.buttons["themeToggle"].firstMatch.tap()
         saveScreenshot("09-alternate-theme")
+    }
+
+    /// Live Preview で文書先頭の Front Matter が Property の表になり(キーボードが無い間は閲覧表示)、
+    /// 表をタップすると YAML の生テキストに展開される(ADR 0016)。文字列は終始そのまま。
+    func testFrontMatterCollapsesIntoATableInLivePreview() {
+        launch(uiTestDocument: false, livePreview: true)
+        XCTAssertTrue(textView.waitForExistence(timeout: 10))
+        let original = documentText
+        XCTAssertTrue(original.hasPrefix("---\ntitle: Laperm デモ\n"), original)
+        // 起動直後はキーボードが無い = フォーカスの無い閲覧表示 → 表(スクリーンショットで確認)
+        saveScreenshot("20-front-matter-table")
+        // 表(先頭付近)をタップすると展開してキャレットが Property の行に置かれ、キーボードが出る
+        tap(dx: 120, dy: 8 + 24)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+        saveScreenshot("21-front-matter-expanded")
+        XCTAssertEqual(documentText, original)
     }
 
     /// サンプル文書全体(コードブロック・引用・テーブル・画像プレビュー)をスクロールしながら撮影する。

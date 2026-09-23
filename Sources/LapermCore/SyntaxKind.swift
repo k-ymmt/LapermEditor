@@ -15,4 +15,8 @@ public enum SyntaxKind: Hashable, Sendable {
     case table
     case tableHeader
     case syntaxMarker
+    /// Front Matter のブロック全体(背景の装飾。中身は Markdown として解釈されない)
+    case frontMatter
+    /// Front Matter の Property のキー名
+    case frontMatterKey
 }

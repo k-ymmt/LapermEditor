@@ -10,6 +10,7 @@ struct ContentView: View {
         ? SampleDocument.uiTest : SampleDocument.markdown
     @State private var showsLineNumbers = true
     @State private var useAlternateTheme = false
+    @State private var livePreview = ProcessInfo.processInfo.arguments.contains("-livePreview")
     @State private var outline: [OutlineItem] = []
     @State private var editorProxy = MarkdownEditorProxy()
     @State private var lastOpenedURL: URL?
@@ -22,6 +23,7 @@ struct ContentView: View {
                 text: $text, theme: useAlternateTheme ? Self.alternateTheme : .default
             )
             .showsLineNumbers(showsLineNumbers)
+            .livePreviewEnabled(livePreview)
             .imagePreviewOptions(.init(baseURL: imageDirectory))
             .linkOptions(.init(baseURL: imageDirectory))
             .onOpenLink { url in
@@ -46,6 +48,8 @@ struct ContentView: View {
                         .accessibilityIdentifier("lineNumbersToggle")
                     Toggle("テーマ", systemImage: "paintpalette", isOn: $useAlternateTheme)
                         .accessibilityIdentifier("themeToggle")
+                    Toggle("Live Preview", systemImage: "eye", isOn: $livePreview)
+                        .accessibilityIdentifier("livePreviewToggle")
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {

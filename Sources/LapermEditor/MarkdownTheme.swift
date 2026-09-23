@@ -32,6 +32,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     public var thematicBreakLineColor: PlatformColor
     public var styles: [SyntaxKind: Style]
     public var tableBackgroundColor: PlatformColor
+    /// Front Matter のブロック背景(Source / 展開中)と、Live Preview の Property 表の背景。
+    public var frontMatterBackgroundColor: PlatformColor
     /// コードブロックの箱の内側に取る上下の余白(先頭行の上・末尾行の下)。
     /// 段落スタイル(paragraphSpacingBefore / paragraphSpacing)で確保するため、
     /// 文書の先頭段落から始まるコードブロックには上の余白が付かない(TextKit の仕様)。
@@ -58,7 +60,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         tableBackgroundColor: PlatformColor = .quaternarySystemFill,
         codeBlockVerticalPadding: CGFloat = 4,
         blockquoteIndent: CGFloat = 16,
-        lineSpacing: CGFloat = 0
+        lineSpacing: CGFloat = 0,
+        frontMatterBackgroundColor: PlatformColor? = nil
     ) {
         self.bodyFont = bodyFont
         self.bodyColor = bodyColor
@@ -68,6 +71,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         self.thematicBreakLineColor = thematicBreakLineColor
         self.styles = styles
         self.tableBackgroundColor = tableBackgroundColor
+        // 指定が無ければコードブロックの背景に落とす(Theme JSON に項目が無い既存テーマとの互換)。
+        self.frontMatterBackgroundColor = frontMatterBackgroundColor ?? codeBlockBackgroundColor
         self.codeBlockVerticalPadding = codeBlockVerticalPadding
         self.blockquoteIndent = max(0, blockquoteIndent)
         self.lineSpacing = max(0, lineSpacing)
@@ -102,6 +107,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         styles[.taskChecked] = Style(foregroundColor: .lapermTertiaryLabel)
         styles[.syntaxMarker] = Style(foregroundColor: .lapermTertiaryLabel)
         styles[.tableHeader] = Style(font: .monospacedSystemFont(ofSize: bodySize, weight: .bold))
+        styles[.frontMatterKey] = Style(foregroundColor: .lapermSecondaryLabel)
 
         return MarkdownTheme(
             bodyFont: body,

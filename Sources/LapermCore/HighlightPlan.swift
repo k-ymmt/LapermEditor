@@ -22,15 +22,18 @@ public struct HighlightPlan: Equatable, Sendable {
     /// 部分集合: 見出しの `#`、強調・打ち消し線・インラインコードの記号、リンク・画像の括弧、引用の `>`)。
     /// コードフェンス・チェックボックス・テーブルの記号は含まない(Source と同じ表示のまま)。
     public var concealableMarkers: [NSRange]
+    /// 文書先頭の Front Matter(無ければ nil)。Live Preview が表として描くために使う。
+    public var frontMatter: FrontMatter?
 
     public init(
         spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
-        concealableMarkers: [NSRange] = []
+        concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil
     ) {
         self.spans = spans
         self.images = images
         self.links = links
         self.concealableMarkers = concealableMarkers
+        self.frontMatter = frontMatter
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -80,8 +83,12 @@ public struct HighlightPlan: Equatable, Sendable {
             guard let range = Self.shift(marker, preEditRange: preEditRange, delta: delta) else { continue }
             resultMarkers.append(range)
         }
+        // Front Matter は文書先頭に固定なので平行移動できない。ブロック(閉じの `---` の行末を含む)に
+        // 触る編集、またはそれより前の編集では破棄する(次のパース結果から再生成される)。
+        let resultFrontMatter = frontMatter.flatMap { preEditRange.location > NSMaxRange($0.range) ? $0 : nil }
         return HighlightPlan(
-            spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers)
+            spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers,
+            frontMatter: resultFrontMatter)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。

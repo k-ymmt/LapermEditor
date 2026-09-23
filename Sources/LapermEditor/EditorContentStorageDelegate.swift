@@ -11,16 +11,24 @@ import UIKit
 ///   次の段落へ余白が引き継がれることがない。
 /// - Live Preview: フォーカスの無い段落の Syntax Marker を幅ゼロで隠した表示用段落を返す
 ///   (`LivePreviewConcealer`)。コードブロックの表示用段落の上に重ねる。
+/// - Front Matter: 表に折りたたまれている間、開きの `---` 以外の段落を列挙から除外し、開きの段落には
+///   文字を隠して表の高さを予約した表示用段落を返す(`FrontMatterController`、ADR 0016)。
 @MainActor
 final class EditorContentStorageDelegate: NSObject {
     let foldingController: FoldingController
     let fragmentProvider: BlockFragmentProvider
     let livePreview: LivePreviewConcealer
+    /// nil なら Front Matter の折りたたみ無し(単体テストの継ぎ目)。
+    let frontMatter: FrontMatterController?
 
-    init(foldingController: FoldingController, fragmentProvider: BlockFragmentProvider, livePreview: LivePreviewConcealer) {
+    init(
+        foldingController: FoldingController, fragmentProvider: BlockFragmentProvider,
+        livePreview: LivePreviewConcealer, frontMatter: FrontMatterController? = nil
+    ) {
         self.foldingController = foldingController
         self.fragmentProvider = fragmentProvider
         self.livePreview = livePreview
+        self.frontMatter = frontMatter
     }
 }
 
@@ -30,13 +38,20 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         shouldEnumerate textElement: NSTextElement,
         options: NSTextContentManager.EnumerationOptions
     ) -> Bool {
-        foldingController.textContentManager(
+        // 折りたたまれた Front Matter の段落(開きの `---` 以外)は列挙しない
+        if let frontMatter, frontMatter.isCollapsed, let location = textElement.elementRange?.location {
+            let offset = textContentManager.offset(from: textContentManager.documentRange.location, to: location)
+            guard frontMatter.shouldEnumerate(paragraphStartingAt: offset) else { return false }
+        }
+        return foldingController.textContentManager(
             textContentManager, shouldEnumerate: textElement, options: options)
     }
 
     func textContentStorage(
         _ textContentStorage: NSTextContentStorage, textParagraphWith range: NSRange
     ) -> NSTextParagraph? {
+        // 折りたたまれた Front Matter の開きの段落(文字を隠し、表の高さを予約)は他の仕組みより優先
+        if let collapsed = frontMatter?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
         return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
