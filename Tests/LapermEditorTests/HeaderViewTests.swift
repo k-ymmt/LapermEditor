@@ -59,6 +59,25 @@ import Testing
     #expect((textView.accessibilityChildren() ?? []).isEmpty)
 }
 
+/// 幅追従を切ったテキストコンテナでは、ヘッダの幅はビュー幅ではなくコンテナの幅(行のパディングを除く)に合わせる。
+@MainActor @Test func headerWidthFollowsANonTrackingContainer() {
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor()
+    let textView = scrollView.documentView as! MarkdownTextView
+    textView.showsLineNumbers = false
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    let container = textView.textContainer!
+    container.widthTracksTextView = false
+    container.size = NSSize(width: 200, height: container.size.height)
+    let header = NSView()
+    textView.headerView = header
+    textView.headerHeight = 40
+    textView.layoutSubtreeIfNeeded()
+    let padding = container.lineFragmentPadding
+    #expect(header.frame.minX == padding)
+    #expect(header.frame.width == 200 - 2 * padding, "\(header.frame)")
+}
+
 @MainActor @Test func headerHeightIsSanitized() {
     let textView = MarkdownTextView()
     textView.headerView = NSView()

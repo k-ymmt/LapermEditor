@@ -506,11 +506,17 @@ public final class MarkdownTextView: NSTextView {
         return children
     }
 
-    /// ヘッダをテキストコンテナの左右位置に合わせて上端に置く。
+    /// ヘッダをテキストコンテナの左右位置に合わせて上端に置く。幅はテキストコンテナの実際の幅(行のパディングを除く)
+    /// に合わせる(幅追従を切った構成ではビュー幅より狭い)。
     private func layoutHeader() {
         guard let headerView else { return }
-        let x = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0)
-        let frame = NSRect(x: x, y: 0, width: max(0, bounds.width - 2 * x), height: textContainerInset.height)
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let x = textContainerInset.width + padding
+        var width = max(0, bounds.width - 2 * x)
+        if let containerWidth = textContainer?.size.width, containerWidth.isFinite, containerWidth > 0 {
+            width = min(width, max(0, containerWidth - 2 * padding))
+        }
+        let frame = NSRect(x: x, y: 0, width: width, height: textContainerInset.height)
         if headerView.frame != frame { headerView.frame = frame }
     }
 

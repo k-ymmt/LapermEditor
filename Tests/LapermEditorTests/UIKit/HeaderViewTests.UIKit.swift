@@ -38,6 +38,85 @@ import UIKit
     #expect(textView.textContainerInset.top == defaultTop, "removing the header restores the default top inset")
 }
 
+/// ヘッダを使わない利用側が設定した上余白はレイアウトで保たれ、ヘッダを付けて外すとその値に戻る。
+@MainActor @Test func customTopInsetSurvivesLayoutAndHeaderRemoval() {
+    let textView = MarkdownTextView()
+    textView.frame = CGRect(x: 0, y: 0, width: 400, height: 300)
+    textView.textContainerInset.top = 24
+    textView.margins = .readable
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset.top == 24, "layout must not touch the top inset without a header")
+    textView.showsLineNumbers = false
+    textView.layoutIfNeeded()
+    #expect(textView.textContainerInset.top == 24)
+
+    textView.headerView = UIView()
+    textView.headerHeight = 50
+    #expect(textView.textContainerInset.top == 50)
+    textView.headerView = nil
+    #expect(textView.textContainerInset.top == 24, "removal restores the caller's inset, not the UITextView default")
+}
+
+/// `headerView` を直接差し替えると、そのビューを持っていたコントローラは親からも外れ、`headerViewController` も消える。
+@MainActor @Test func replacingTheHeaderViewDirectlyDetachesTheController() {
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
+    let parent = UIViewController()
+    window.rootViewController = parent
+    window.isHidden = false
+    let textView = MarkdownTextView()
+    parent.view.addSubview(textView)
+    let controller = UIViewController()
+    textView.headerViewController = controller
+    #expect(controller.parent === parent)
+
+    let plain = UIView()
+    textView.headerView = plain
+    #expect(controller.parent == nil, "the controller must not linger in the parent's children")
+    #expect(textView.headerViewController == nil)
+    #expect(controller.view.superview == nil)
+    #expect(plain.superview === textView)
+
+    textView.headerViewController = controller
+    #expect(controller.parent === parent, "the same controller can be installed again")
+    #expect(textView.headerView === controller.view)
+    textView.headerView = nil
+    #expect(controller.parent == nil)
+    #expect(textView.headerViewController == nil)
+    window.isHidden = true
+}
+
+/// 設置・撤去は UIKit のコンテナの契約の順(addChild → view を足す → didMove、willMove(nil) → view を外す → removeFromParent)。
+@MainActor @Test func childControllerCallbacksFollowTheContainerContract() {
+    final class Recording: UIViewController {
+        var events: [String] = []
+        override func willMove(toParent parent: UIViewController?) {
+            super.willMove(toParent: parent)
+            events.append("willMove(\(parent == nil ? "nil" : "parent")) superview=\(view.superview == nil ? "nil" : "set") parent=\(self.parent == nil ? "nil" : "set")")
+        }
+        override func didMove(toParent parent: UIViewController?) {
+            super.didMove(toParent: parent)
+            events.append("didMove(\(parent == nil ? "nil" : "parent")) superview=\(view.superview == nil ? "nil" : "set") parent=\(self.parent == nil ? "nil" : "set")")
+        }
+    }
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
+    let parent = UIViewController()
+    window.rootViewController = parent
+    window.isHidden = false
+    let textView = MarkdownTextView()
+    parent.view.addSubview(textView)
+    let controller = Recording()
+
+    textView.headerViewController = controller
+    // addChild が willMove(parent) を呼び(親は設定済み、view はまだ無い)、view を足してから didMove(parent)
+    #expect(controller.events == ["willMove(parent) superview=nil parent=set", "didMove(parent) superview=set parent=set"], "\(controller.events)")
+
+    controller.events.removeAll()
+    textView.headerViewController = nil
+    // willMove(nil) の時点では view も親も残り、view を外してから removeFromParent(didMove(nil) は removeFromParent が呼ぶ)
+    #expect(controller.events == ["willMove(nil) superview=set parent=set", "didMove(nil) superview=nil parent=nil"], "\(controller.events)")
+    window.isHidden = true
+}
+
 /// ヘッダの上ではテキストビュー自身のタップは始まらず、スクロールのパンだけ通る。
 @MainActor @Test func gesturesOverTheHeaderAreLeftToTheHeader() {
     let textView = MarkdownTextView()

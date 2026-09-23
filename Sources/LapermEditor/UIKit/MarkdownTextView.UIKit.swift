@@ -90,8 +90,22 @@ public final class MarkdownTextView: UITextView {
     public var headerView: UIView? {
         didSet {
             guard headerView !== oldValue else { return }
+            // ビューを直接差し替えたら、そのビューを持っていたコントローラも外す(親の children に残さない)。
+            // `headerViewController` の didSet からの変更では、そちらが親子関係を扱う。
+            if !isUpdatingHeaderViewController, let controller = headerViewController, controller.view !== headerView {
+                headerViewController = nil
+            }
+            if oldValue == nil, headerView != nil {
+                topInsetWithoutHeader = textContainerInset.top
+            }
             oldValue?.removeFromSuperview()
             if let headerView { addSubview(headerView) }
+            if headerView == nil {
+                // 外したら、ヘッダを付ける前の上余白(利用側が設定した値か UITextView の既定値)に戻す。
+                var inset = textContainerInset
+                inset.top = topInsetWithoutHeader
+                if inset != textContainerInset { textContainerInset = inset }
+            }
             updateTextInsets()
             setNeedsLayout()
         }
@@ -112,14 +126,30 @@ public final class MarkdownTextView: UITextView {
     public var headerViewController: UIViewController? {
         didSet {
             guard headerViewController !== oldValue else { return }
-            detachHeaderViewController(oldValue)
-            headerView = headerViewController?.view
-            attachHeaderViewControllerIfNeeded()
+            isUpdatingHeaderViewController = true
+            defer { isUpdatingHeaderViewController = false }
+            // 撤去は willMove(nil) → view を外す → removeFromParent、設置は addChild → view を足す → didMove の順
+            // (UIKit のコンテナの契約)。
+            if let oldValue {
+                if oldValue.parent != nil { oldValue.willMove(toParent: nil) }
+                if headerView === oldValue.view { headerView = nil }
+                if oldValue.parent != nil { oldValue.removeFromParent() }
+            }
+            guard let controller = headerViewController else { return }
+            if window != nil, let parent = nearestViewController {
+                parent.addChild(controller)
+                headerView = controller.view
+                controller.didMove(toParent: parent)
+            } else {
+                headerView = controller.view
+            }
         }
     }
 
-    /// ヘッダが無いときの本文の上余白(UITextView の既定値)。
-    private var defaultTopInset: CGFloat = 8
+    /// ヘッダを付ける前の本文の上余白(利用側が設定した値か UITextView の既定値)。外したときに戻す。
+    private var topInsetWithoutHeader: CGFloat = 8
+    /// `headerViewController` の didSet が `headerView` を変えている間(そちらが親子関係を扱う)。
+    private var isUpdatingHeaderViewController = false
 
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
@@ -237,7 +267,6 @@ public final class MarkdownTextView: UITextView {
         addSubview(gutter)
         addSubview(imageOverlay)
         addSubview(frontMatterTableView)
-        defaultTopInset = textContainerInset.top
         updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
@@ -556,7 +585,8 @@ public final class MarkdownTextView: UITextView {
 
     private var gutterWidth: CGFloat { showsLineNumbers ? LineNumberGutterView.width : 0 }
 
-    /// ガターの表示と `margins` から左右の `textContainerInset` を、ヘッダから上の inset を決める(下は触らない)。
+    /// ガターの表示と `margins` から左右の `textContainerInset` を、ヘッダがあればその高さから上の inset を決める
+    /// (ヘッダが無ければ上下は触らない: 利用側が設定した上余白を保つ)。
     /// 中央寄せはビュー幅に依るので、幅が変わる `layoutSubviews` からも呼ぶ。値が同じなら何もしない
     /// (inset の変更はレイアウトを無効化するので、layoutSubviews からの再入で無限にならないように)。
     private func updateTextInsets() {
@@ -566,7 +596,9 @@ public final class MarkdownTextView: UITextView {
         var inset = textContainerInset
         inset.left = insets.leading
         inset.right = insets.trailing
-        inset.top = headerView == nil || !headerHeight.isFinite ? defaultTopInset : max(0, headerHeight)
+        if headerView != nil {
+            inset.top = headerHeight.isFinite ? max(0, headerHeight) : 0
+        }
         if inset != textContainerInset {
             textContainerInset = inset
             setNeedsLayout()
@@ -612,6 +644,7 @@ public final class MarkdownTextView: UITextView {
     }
 
     /// ウィンドウに付いていれば `headerViewController` を最寄りのビューコントローラの子にする(既に子なら何もしない)。
+    /// 親が変わっていたら付け直す。view は既にサブビューなので、addChild → didMove の順になる。
     private func attachHeaderViewControllerIfNeeded() {
         guard let headerViewController, window != nil, let parent = nearestViewController,
               headerViewController.parent !== parent
@@ -621,6 +654,7 @@ public final class MarkdownTextView: UITextView {
         headerViewController.didMove(toParent: parent)
     }
 
+    /// 親から外す(view はそのまま: ウィンドウから外れたときの一時的な撤去なので、ヘッダとしての表示は保つ)。
     private func detachHeaderViewController(_ controller: UIViewController?) {
         guard let controller, controller.parent != nil else { return }
         controller.willMove(toParent: nil)
