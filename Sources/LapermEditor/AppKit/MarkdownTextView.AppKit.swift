@@ -465,7 +465,13 @@ public final class MarkdownTextView: NSTextView {
         updateTextInsets()
     }
 
+    /// `layout()` の実行中か。その中で立てた `needsLayout` は AppKit が `layout()` の後で下ろすので、
+    /// 中から要求された再レイアウト(幅の変化で Front Matter の表を作り直すなど)は次のランループで改めて要求する。
+    private var isPerformingLayout = false
+
     public override func layout() {
+        isPerformingLayout = true
+        defer { isPerformingLayout = false }
         super.layout()
         updateInsertionPointOverlay()
         updateLinkHoverOverlay()
@@ -716,6 +722,17 @@ extension MarkdownTextView: MarkdownEditorHost {
     func editorNeedsViewportRelayout() {
         gutterView?.needsDisplay = true
         needsLayout = true
+        if isPerformingLayout {
+            // 幅の変化を layout() の中で受け取って作り直した場合、この needsLayout は layout() の終わりで下ろされ、
+            // Note を開いた直後は他の契機が無いまま古いフラグメント(初期の極小幅で計測した Front Matter の表)が
+            // 残る(Laperm で確認)。次のランループでビューポートを直接レイアウトし直す。
+            RunLoop.main.perform { [weak self] in
+                guard let self else { return }
+                self.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                self.gutterView?.needsDisplay = true
+                self.needsDisplay = true
+            }
+        }
     }
 
     var editorSelectedRanges: [NSRange] { selectedRanges.map(\.rangeValue) }
