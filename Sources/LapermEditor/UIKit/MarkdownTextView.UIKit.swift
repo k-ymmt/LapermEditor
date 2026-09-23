@@ -83,6 +83,44 @@ public final class MarkdownTextView: UITextView {
         }
     }
 
+    /// 本文の上に置くヘッダ(サブビュー)。スクロールの内容に含まれ、本文と一緒にスクロールする。本文は
+    /// `headerHeight` だけ下から始まり(`textContainerInset.top`)、ヘッダはテキストコンテナと同じ左右位置
+    /// (余白 + lineFragmentPadding)に `layoutSubviews` で置かれる。ヘッダの上のタッチはテキストビュー自身の
+    /// ジェスチャ(キャレット移動・編集用タップ)に渡さず、スクロールのパンだけ通す。
+    public var headerView: UIView? {
+        didSet {
+            guard headerView !== oldValue else { return }
+            oldValue?.removeFromSuperview()
+            if let headerView { addSubview(headerView) }
+            updateTextInsets()
+            setNeedsLayout()
+        }
+    }
+
+    /// ヘッダの高さ(`headerView` が無ければ使われない)。
+    public var headerHeight: CGFloat = 0 {
+        didSet {
+            guard headerHeight != oldValue else { return }
+            updateTextInsets()
+            setNeedsLayout()
+        }
+    }
+
+    /// ヘッダをビューコントローラ(`UIHostingController` など)として載せる。その view が `headerView` になり、
+    /// テキストビューがウィンドウに付いている間だけ最寄りのビューコントローラの子にする(外れたら親から外す)。SwiftUI の `@FocusState`
+    /// (テキストフィールドのキーボード)はビューコントローラ階層につながっていないと効かない。
+    public var headerViewController: UIViewController? {
+        didSet {
+            guard headerViewController !== oldValue else { return }
+            detachHeaderViewController(oldValue)
+            headerView = headerViewController?.view
+            attachHeaderViewControllerIfNeeded()
+        }
+    }
+
+    /// ヘッダが無いときの本文の上余白(UITextView の既定値)。
+    private var defaultTopInset: CGFloat = 8
+
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
 
@@ -199,6 +237,7 @@ public final class MarkdownTextView: UITextView {
         addSubview(gutter)
         addSubview(imageOverlay)
         addSubview(frontMatterTableView)
+        defaultTopInset = textContainerInset.top
         updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
@@ -308,6 +347,8 @@ public final class MarkdownTextView: UITextView {
         super.didMoveToWindow()
         // ウィンドウから外れると first responder でなくなる(resign を経ない)ので突き合わせる
         engine.editorFocusDidChange(isFirstResponder)
+        // ウィンドウから外れたら親からも外す(親の children に残ると、Note を切り替えるたびにホストが漏れる)。
+        if window == nil { detachHeaderViewController(headerViewController) } else { attachHeaderViewControllerIfNeeded() }
         guard let window else { return }
         // キーボードが出たまま作られた / 付け替えられたビューは画面のキャッシュに追いつく。
         // キャッシュがなければ(キーボードが出ていない)、別画面で受けたフレームは捨てる。
@@ -515,7 +556,7 @@ public final class MarkdownTextView: UITextView {
 
     private var gutterWidth: CGFloat { showsLineNumbers ? LineNumberGutterView.width : 0 }
 
-    /// ガターの表示と `margins` から左右の `textContainerInset` を決める(上下は触らない)。
+    /// ガターの表示と `margins` から左右の `textContainerInset` を、ヘッダから上の inset を決める(下は触らない)。
     /// 中央寄せはビュー幅に依るので、幅が変わる `layoutSubviews` からも呼ぶ。値が同じなら何もしない
     /// (inset の変更はレイアウトを無効化するので、layoutSubviews からの再入で無限にならないように)。
     private func updateTextInsets() {
@@ -525,6 +566,7 @@ public final class MarkdownTextView: UITextView {
         var inset = textContainerInset
         inset.left = insets.leading
         inset.right = insets.trailing
+        inset.top = headerView == nil || !headerHeight.isFinite ? defaultTopInset : max(0, headerHeight)
         if inset != textContainerInset {
             textContainerInset = inset
             setNeedsLayout()
@@ -543,6 +585,7 @@ public final class MarkdownTextView: UITextView {
         let gutterRange = keyboardScrollTraversedBounds.map { bounds.union($0) } ?? bounds
         gutter.frame = CGRect(x: bounds.minX, y: gutterRange.minY, width: gutterWidth, height: gutterRange.height)
         gutter.contentOffsetY = gutterRange.minY
+        layoutHeader()
         if gutterNeedsViewportRefresh {
             gutterNeedsViewportRefresh = false
             textLayoutManager?.textViewportLayoutController.layoutViewport()
@@ -556,6 +599,53 @@ public final class MarkdownTextView: UITextView {
         }
         // 回転やウィンドウの付け替えでキーボードとの重なりが変わる(値が同じなら何もしない)。
         if keyboardFrameOnScreen != nil { updateKeyboardInset() }
+    }
+
+    /// 応答チェーン上の最寄りのビューコントローラ。
+    private var nearestViewController: UIViewController? {
+        var responder: UIResponder? = next
+        while let current = responder {
+            if let controller = current as? UIViewController { return controller }
+            responder = current.next
+        }
+        return nil
+    }
+
+    /// ウィンドウに付いていれば `headerViewController` を最寄りのビューコントローラの子にする(既に子なら何もしない)。
+    private func attachHeaderViewControllerIfNeeded() {
+        guard let headerViewController, window != nil, let parent = nearestViewController,
+              headerViewController.parent !== parent
+        else { return }
+        if headerViewController.parent != nil { detachHeaderViewController(headerViewController) }
+        parent.addChild(headerViewController)
+        headerViewController.didMove(toParent: parent)
+    }
+
+    private func detachHeaderViewController(_ controller: UIViewController?) {
+        guard let controller, controller.parent != nil else { return }
+        controller.willMove(toParent: nil)
+        controller.removeFromParent()
+    }
+
+    /// ヘッダをテキストコンテナの左右位置に合わせてコンテンツの上端に置く(サブビューはコンテンツ座標)。
+    private func layoutHeader() {
+        guard let headerView else { return }
+        let padding = textContainer.lineFragmentPadding
+        let x = textContainerInset.left + padding
+        let width = max(0, bounds.width - x - textContainerInset.right - padding)
+        let frame = CGRect(x: x, y: 0, width: width, height: textContainerInset.top)
+        if headerView.frame != frame { headerView.frame = frame }
+    }
+
+    /// ヘッダの上ではテキストビュー自身のジェスチャ(UITextView のキャレット移動・編集用タップ・ホバー)を
+    /// 始めない。ヘッダの中身(ボタン・テキストフィールド)が触れるように、スクロールのパンとピンチだけ通す。
+    public override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        if let headerView, gestureRecognizer !== panGestureRecognizer, gestureRecognizer !== pinchGestureRecognizer,
+           headerView.frame.contains(gestureRecognizer.location(in: self))
+        {
+            return false
+        }
+        return super.gestureRecognizerShouldBegin(gestureRecognizer)
     }
 
     public override func textViewportLayoutControllerWillLayout(

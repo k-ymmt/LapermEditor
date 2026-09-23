@@ -43,6 +43,28 @@ public final class MarkdownTextView: NSTextView {
         }
     }
 
+    /// 本文の上に置くヘッダ(サブビュー)。スクロールの内容に含まれ、本文と一緒にスクロールする。本文は
+    /// `headerHeight` だけ下から始まり(`textContainerInset.height`。NSTextView では上下同値なので同じ余白が
+    /// 下にも付く)、ヘッダはテキストコンテナと同じ左右位置(余白 + lineFragmentPadding)に `layout()` で置かれる。
+    public var headerView: NSView? {
+        didSet {
+            guard headerView !== oldValue else { return }
+            oldValue?.removeFromSuperview()
+            if let headerView { addSubview(headerView) }
+            updateHeaderInset()
+            needsLayout = true
+        }
+    }
+
+    /// ヘッダの高さ(`headerView` が無ければ使われない)。
+    public var headerHeight: CGFloat = 0 {
+        didSet {
+            guard headerHeight != oldValue else { return }
+            updateHeaderInset()
+            needsLayout = true
+        }
+    }
+
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
 
@@ -465,6 +487,33 @@ public final class MarkdownTextView: NSTextView {
         updateTextInsets()
     }
 
+    /// ヘッダの分だけ本文を下げる(左右は `updateTextInsets` が持つ)。有限でない高さは 0 として扱う。
+    private func updateHeaderInset() {
+        let top = headerView == nil || !headerHeight.isFinite ? 0 : max(0, headerHeight)
+        let inset = NSSize(width: textContainerInset.width, height: top)
+        if inset != textContainerInset {
+            textContainerInset = inset
+        }
+    }
+
+    /// NSTextView(AXTextArea)は子要素を公開しないので、ヘッダの中のコントロール(ボタン・テキストフィールド)を
+    /// 支援技術と XCUITest から見えるように、ヘッダを子として返す。
+    public override func accessibilityChildren() -> [Any]? {
+        var children = super.accessibilityChildren() ?? []
+        if let headerView {
+            children.append(contentsOf: NSAccessibility.unignoredChildren(from: [headerView]))
+        }
+        return children
+    }
+
+    /// ヘッダをテキストコンテナの左右位置に合わせて上端に置く。
+    private func layoutHeader() {
+        guard let headerView else { return }
+        let x = textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0)
+        let frame = NSRect(x: x, y: 0, width: max(0, bounds.width - 2 * x), height: textContainerInset.height)
+        if headerView.frame != frame { headerView.frame = frame }
+    }
+
     /// `layout()` の実行中か。その中で立てた `needsLayout` は AppKit が `layout()` の後で下ろすので、
     /// 中から要求された再レイアウト(幅の変化で Front Matter の表を作り直すなど)は次のランループで改めて要求する。
     private var isPerformingLayout = false
@@ -473,6 +522,7 @@ public final class MarkdownTextView: NSTextView {
         isPerformingLayout = true
         defer { isPerformingLayout = false }
         super.layout()
+        layoutHeader()
         updateInsertionPointOverlay()
         updateLinkHoverOverlay()
         imageOverlay.frame = bounds

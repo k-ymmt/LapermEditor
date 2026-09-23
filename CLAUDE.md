@@ -53,6 +53,21 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     (the engine returns false during IME marked text, so enumeration / reservation / display paragraph never
     disagree); an edit touching the block marks the model stale (expanded, no table clicks) until the next parse;
     the table layout is cached by (front matter, width, appearance). The text storage is never changed.
+  - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
+    `MarkdownTextView.headerView` / `headerHeight`) puts a SwiftUI view above the text *inside the scrolled
+    content* (Laperm shows the note title there, Obsidian-style). The text view hosts it (`NSHostingView` /
+    `UIHostingController` with `sizingOptions = []`, kept on the coordinator and reused on updates), pushes the
+    text down by the fixed height (`textContainerInset.height` on AppKit — symmetric, so the same space appears
+    below the text — and `textContainerInset.top` on UIKit, restored to the UITextView default when removed)
+    and places the header at the text container's horizontal position (margins + `lineFragmentPadding`) in
+    `layout()` / `layoutSubviews()`. On UIKit `gestureRecognizerShouldBegin` refuses the text view's own
+    recognizers (caret placement, edit tap, hover) over the header so its controls receive the touch; the scroll
+    pan and pinch still begin there. On UIKit the host is set through `headerViewController`, which the text view
+    adds as a child of the nearest view controller while it is in a window (SwiftUI `@FocusState` / keyboard focus
+    needs the view-controller hierarchy) and detaches when it leaves the window or is replaced. On AppKit the
+    text view returns the header in `accessibilityChildren()` (an AXTextArea hides its subviews otherwise), so
+    XCUITest and assistive technologies can reach its controls. Programmatic `@FocusState` focus inside the
+    AppKit host does not work (a click does). The header does not inherit the SwiftUI environment of the host view.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

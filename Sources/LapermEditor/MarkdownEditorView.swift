@@ -20,6 +20,8 @@ public struct MarkdownEditorView {
     private var livePreviewEnabled = false
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
+    private var header: AnyView?
+    private var headerHeight: CGFloat = 0
     #if canImport(UIKit)
     private var keyboardAccessory: AnyView?
     private var adjustsContentInsetForKeyboard = true
@@ -136,6 +138,17 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// 本文の上に置くヘッダ(Note のタイトル欄など)。スクロールの内容に含まれ、本文と一緒にスクロールする。
+    /// 本文と同じ左右位置(`editorMargins` の余白 + 行のパディング)に幅いっぱいで置かれ、高さは `height` に固定、
+    /// 本文はその分だけ下から始まる。親の SwiftUI 環境(Environment)は引き継がない。
+    /// macOS では `NSTextView.textContainerInset` が上下同値のため、同じ高さの余白が本文の下にも付く。
+    public func headerView<Content: View>(height: CGFloat, @ViewBuilder _ content: () -> Content) -> MarkdownEditorView {
+        var copy = self
+        copy.header = AnyView(content())
+        copy.headerHeight = height
+        return copy
+    }
+
     #if canImport(UIKit)
     /// キーボードの上に出すアクセサリ(iOS)。UITextView の `inputAccessoryView` に SwiftUI ビューを載せる。
     /// SwiftUI の `.toolbar(placement: .keyboard)` は UIViewRepresentable のテキストビューには付かないための口。
@@ -195,6 +208,7 @@ extension MarkdownEditorView: NSViewRepresentable {
         let textView = scrollView.documentView as! MarkdownTextView
         textView.delegate = context.coordinator
         apply(to: textView)
+        applyHeader(to: textView, coordinator: context.coordinator)
         textView.string = text
         textView.highlightAll()
         textView.showsLineNumbers = showsLineNumbers
@@ -215,6 +229,32 @@ extension MarkdownEditorView: NSViewRepresentable {
         }
         textView.showsLineNumbers = showsLineNumbers
         apply(to: textView)
+        applyHeader(to: textView, coordinator: context.coordinator)
+    }
+
+    /// ヘッダの SwiftUI ビューをホスティングしてテキストビューに載せる(なければ外す)。
+    /// 再適用では同じホストを使い回し、内容だけ差し替える。
+    @MainActor
+    func applyHeader(to textView: MarkdownTextView, coordinator: Coordinator) {
+        guard let header else {
+            guard coordinator.headerHost != nil else { return }
+            coordinator.headerHost = nil
+            textView.headerView = nil
+            return
+        }
+        let host: NSHostingView<AnyView>
+        if let existing = coordinator.headerHost {
+            existing.rootView = header
+            host = existing
+        } else {
+            host = NSHostingView(rootView: header)
+            // 大きさはテキストビューが決める(固有サイズの制約を張らせない)。
+            host.sizingOptions = []
+            host.translatesAutoresizingMaskIntoConstraints = true
+            coordinator.headerHost = host
+        }
+        textView.headerHeight = headerHeight
+        if textView.headerView !== host { textView.headerView = host }
     }
 
     public func makeCoordinator() -> Coordinator {
@@ -227,6 +267,8 @@ extension MarkdownEditorView: NSViewRepresentable {
         var isUpdatingFromSwiftUI = false
         /// 直近にビューから binding へ書いた文字列(同一インスタンス判定用)
         var lastPushedText: String?
+        /// ヘッダのホスト(`headerView` が設定されているときだけ)
+        var headerHost: NSHostingView<AnyView>?
 
         init(text: Binding<String>) {
             self.text = text
@@ -259,6 +301,7 @@ extension MarkdownEditorView: UIViewRepresentable {
         textView.delegate = context.coordinator
         apply(to: textView)
         applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
+        applyHeader(to: textView, coordinator: context.coordinator)
         textView.text = text
         textView.highlightAll()
         textView.showsLineNumbers = showsLineNumbers
@@ -279,6 +322,35 @@ extension MarkdownEditorView: UIViewRepresentable {
         textView.showsLineNumbers = showsLineNumbers
         apply(to: textView)
         applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
+        applyHeader(to: textView, coordinator: context.coordinator)
+    }
+
+    /// ヘッダの SwiftUI ビューをホスティングしてテキストビューに載せる(なければ外す)。
+    /// 再適用では同じホストを使い回し、内容だけ差し替える。
+    @MainActor
+    func applyHeader(to textView: MarkdownTextView, coordinator: Coordinator) {
+        guard let header else {
+            guard coordinator.headerHost != nil else { return }
+            coordinator.headerHost = nil
+            textView.headerViewController = nil
+            return
+        }
+        let host: UIHostingController<AnyView>
+        if let existing = coordinator.headerHost {
+            existing.rootView = header
+            host = existing
+        } else {
+            host = UIHostingController(rootView: header)
+            host.view.backgroundColor = .clear
+            // 大きさはテキストビューが決める(固有サイズの制約を張らせない)。スクロールの内容に置くので
+            // safe area やキーボードで中身を動かさない。
+            host.sizingOptions = []
+            host.safeAreaRegions = []
+            coordinator.headerHost = host
+        }
+        textView.headerHeight = headerHeight
+        // 子ビューコントローラとして載せる(SwiftUI のフォーカスがビューコントローラ階層を要する)。
+        if textView.headerViewController !== host { textView.headerViewController = host }
     }
 
     /// アクセサリの SwiftUI ビューをホスティングして inputAccessoryView に付ける(なければ外す)。
@@ -328,6 +400,8 @@ extension MarkdownEditorView: UIViewRepresentable {
         var lastPushedText: String?
         /// キーボードアクセサリのホスト(`keyboardAccessory` が設定されているときだけ)
         var accessoryHost: UIHostingController<AnyView>?
+        /// ヘッダのホスト(`headerView` が設定されているときだけ)
+        var headerHost: UIHostingController<AnyView>?
 
         init(text: Binding<String>) {
             self.text = text
