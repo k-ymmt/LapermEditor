@@ -152,7 +152,8 @@ public struct MarkdownEditorView {
 
     /// 高さが中身に追従するヘッダ。中身はヘッダの幅(テキストコンテナの幅)で理想の高さに置かれ(縦は `fixedSize`)、
     /// その高さが変わるたび(タイトルが折り返して 2 行になるなど)に本文の開始位置も追従する。
-    /// それ以外は `headerView(height:_:)` と同じ。
+    /// 複数のビューを並べたら縦に積んだ全体の高さになる。この形ではテキストビューの `headerHeight` はエディタが
+    /// 持つ(利用側が直接書いた値は次の計測で上書きされる)。それ以外は `headerView(height:_:)` と同じ。
     public func headerView<Content: View>(@ViewBuilder _ content: () -> Content) -> MarkdownEditorView {
         var copy = self
         copy.header = AnyView(content())
@@ -465,7 +466,8 @@ struct AutoHeightHeader: View {
     let onHeightChange: (CGFloat) -> Void
 
     var body: some View {
-        content
+        // 中身が複数のビュー(Group や ViewBuilder の並び)でも、modifier を要素ごとではなく全体に掛けるために積む。
+        VStack(alignment: .leading, spacing: 0) { content }
             .fixedSize(horizontal: false, vertical: true)
             .onGeometryChange(for: CGFloat.self) { proxy in
                 proxy.size.height

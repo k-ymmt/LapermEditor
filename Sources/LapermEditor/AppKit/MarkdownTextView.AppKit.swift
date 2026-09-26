@@ -57,13 +57,22 @@ public final class MarkdownTextView: NSTextView {
     }
 
     /// ヘッダの高さ(`headerView` が無ければ使われない)。中身の計測から(ヘッダ自身のレイアウトの中で)変わることも
-    /// あるので、frame はその場で合わせる(レイアウト中に立てた `needsLayout` は落ちることがある)。
+    /// あるので、frame はその場で合わせ(レイアウト中に立てた `needsLayout` は落ちることがある)、本文のビューポート
+    /// (ガターの行番号・画像・Front Matter の表は `textContainerOrigin` 基準で集めてある)は次のランループで
+    /// 描き直す。
     public var headerHeight: CGFloat = 0 {
         didSet {
             guard headerHeight != oldValue else { return }
             updateHeaderInset()
             layoutHeader()
             needsLayout = true
+            guard headerView != nil else { return }
+            RunLoop.main.perform { [weak self] in
+                guard let self else { return }
+                self.textLayoutManager?.textViewportLayoutController.layoutViewport()
+                self.gutterView?.needsDisplay = true
+                self.needsDisplay = true
+            }
         }
     }
 

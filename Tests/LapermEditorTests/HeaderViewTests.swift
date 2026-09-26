@@ -126,6 +126,26 @@ private struct AutoHeaderHost: View {
     }
 }
 
+/// 期限までランループを回しながら条件を待つ(固定の待ち時間はフレークと無駄な待ちの両方を生む)。
+@MainActor
+private func waitUntil(_ timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        if Date() > deadline { return false }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    return true
+}
+
+@MainActor
+private func makeWindow(_ hosting: NSView, width: CGFloat = 600) -> NSWindow {
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: width, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = hosting
+    hosting.frame = CGRect(x: 0, y: 0, width: width, height: 400)
+    window.layoutIfNeeded()
+    return window
+}
+
 @MainActor
 private func findTextView(_ view: NSView) -> MarkdownTextView? {
     if let textView = view as? MarkdownTextView { return textView }
@@ -138,25 +158,75 @@ private func findTextView(_ view: NSView) -> MarkdownTextView? {
 @MainActor @Test func autoHeightHeaderFollowsItsContent() throws {
     let model = HeaderHeightModel()
     let hosting = NSHostingView(rootView: AutoHeaderHost(model: model))
-    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
-    window.contentView = hosting
-    hosting.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
-    window.layoutIfNeeded()
-    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let window = makeWindow(hosting)
     let textView = try #require(findTextView(hosting))
+    #expect(waitUntil { textView.headerHeight == 40 }, "the first measurement arrives: \(textView.headerHeight)")
     let header = try #require(textView.headerView)
-    #expect(textView.headerHeight == 40)
     #expect(textView.textContainerInset.height == 40)
     #expect(header.frame.height == 40)
     #expect(header.frame.minX == textView.textContainerInset.width + textView.textContainer!.lineFragmentPadding)
 
     model.height = 90
-    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    #expect(waitUntil { textView.headerHeight == 90 }, "the header grows with its content: \(textView.headerHeight)")
     window.layoutIfNeeded()
-    #expect(textView.headerHeight == 90, "the header grows with its content")
     #expect(textView.textContainerInset.height == 90)
     #expect(header.frame.height == 90)
     #expect(textView.textContainerOrigin.y == 90, "the text starts below the taller header")
+    withExtendedLifetime(window) {}
+}
+
+private struct WrappingHeaderHost: View {
+    var body: some View {
+        MarkdownEditorView(text: .constant("Body"), theme: .default)
+            .editorMargins(.readable)
+            .headerView {
+                Text("A rather long title that does not fit on one line and has to wrap in a narrow window")
+                    .font(.system(size: 26, weight: .bold))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+    }
+}
+
+/// 折り返す中身(Laperm の Note のタイトル)は、ヘッダの幅で計った行数ぶんの高さになり、幅が広がって行数が減れば
+/// 低くなる(縦の `fixedSize` が幅に対する理想の高さを取る)。
+@MainActor @Test func wrappingHeaderHeightFollowsTheWidth() throws {
+    let hosting = NSHostingView(rootView: WrappingHeaderHost())
+    let window = makeWindow(hosting, width: 360)
+    let textView = try #require(findTextView(hosting))
+    #expect(waitUntil { textView.headerHeight > 0 }, "the first measurement arrives")
+    let narrow = textView.headerHeight
+    #expect(narrow > 60, "the title wraps onto several lines in a 360pt window: \(narrow)")
+    #expect(textView.textContainerInset.height == narrow)
+    #expect(textView.textContainerOrigin.y == narrow, "the text starts below the wrapped title")
+
+    window.setContentSize(NSSize(width: 1400, height: 400))
+    hosting.frame = CGRect(x: 0, y: 0, width: 1400, height: 400)
+    window.layoutIfNeeded()
+    #expect(waitUntil { textView.headerHeight < narrow }, "a wider header needs fewer lines: \(textView.headerHeight) vs \(narrow)")
+    #expect(textView.headerHeight > 0)
+    #expect(textView.textContainerInset.height == textView.headerHeight)
+    #expect(textView.headerView?.frame.height == textView.headerHeight)
+    withExtendedLifetime(window) {}
+}
+
+private struct GroupHeaderHost: View {
+    var body: some View {
+        MarkdownEditorView(text: .constant("Body"), theme: .default)
+            .headerView {
+                Group {
+                    Color.clear.frame(height: 40)
+                    Color.clear.frame(height: 90)
+                }
+            }
+    }
+}
+
+/// 中身が複数のビュー(Group)なら、要素ごとの高さではなく縦に積んだ全体の高さになる。
+@MainActor @Test func autoHeightHeaderStacksMultipleRoots() throws {
+    let hosting = NSHostingView(rootView: GroupHeaderHost())
+    let window = makeWindow(hosting)
+    let textView = try #require(findTextView(hosting))
+    #expect(waitUntil { textView.headerHeight == 130 }, "40 + 90, not one of them: \(textView.headerHeight)")
     withExtendedLifetime(window) {}
 }
 

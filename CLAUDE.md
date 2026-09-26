@@ -68,11 +68,13 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     text view returns the header in `accessibilityChildren()` (an AXTextArea hides its subviews otherwise), so
     XCUITest and assistive technologies can reach its controls. Programmatic `@FocusState` focus inside the
     AppKit host does not work (a click does). The header does not inherit the SwiftUI environment of the host view.
-    `.headerView(_:)` (no height) wraps the content in `AutoHeightHeader` (content at its ideal height via
-    `fixedSize(horizontal: false, vertical: true)`, measured with `onGeometryChange`) and writes the measured height
-    to `MarkdownTextView.headerHeight`, so a wrapping title grows the header; `headerHeight.didSet` also calls
-    `layoutHeader()` directly because the measurement can arrive from inside the header's own layout pass, where a
-    `needsLayout` set on AppKit is dropped.
+    `.headerView(_:)` (no height) wraps the content in `AutoHeightHeader` (a `VStack` of the content at its ideal
+    height via `fixedSize(horizontal: false, vertical: true)`, measured with `onGeometryChange`) and writes the
+    measured height to `MarkdownTextView.headerHeight`, so a wrapping title grows the header; in that mode the editor
+    view owns `headerHeight`. `headerHeight.didSet` also calls `layoutHeader()` directly because the measurement can
+    arrive from inside the header's own layout pass, where a `needsLayout` set on AppKit is dropped, and on AppKit
+    re-lays out the viewport on the next run loop (line numbers, images and the Front Matter table were collected
+    against the old `textContainerOrigin`).
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

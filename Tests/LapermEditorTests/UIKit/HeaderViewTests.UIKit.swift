@@ -203,6 +203,17 @@ private struct AutoHeaderHost: View {
     }
 }
 
+/// 期限までランループを回しながら条件を待つ(固定の待ち時間はフレークと無駄な待ちの両方を生む)。
+@MainActor
+private func waitUntil(_ timeout: TimeInterval = 3, _ condition: () -> Bool) -> Bool {
+    let deadline = Date().addingTimeInterval(timeout)
+    while !condition() {
+        if Date() > deadline { return false }
+        RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+    }
+    return true
+}
+
 @MainActor
 private func findTextView(_ view: UIView) -> MarkdownTextView? {
     if let textView = view as? MarkdownTextView { return textView }
@@ -219,17 +230,15 @@ private func findTextView(_ view: UIView) -> MarkdownTextView? {
     window.rootViewController = host
     window.isHidden = false
     window.layoutIfNeeded()
-    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
     let textView = try #require(findTextView(host.view))
+    #expect(waitUntil { textView.headerHeight == 40 }, "the first measurement arrives: \(textView.headerHeight)")
     let header = try #require(textView.headerView)
-    #expect(textView.headerHeight == 40)
     #expect(textView.textContainerInset.top == 40)
     #expect(header.frame.height == 40)
 
     model.height = 90
-    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    #expect(waitUntil { textView.headerHeight == 90 }, "the header grows with its content: \(textView.headerHeight)")
     window.layoutIfNeeded()
-    #expect(textView.headerHeight == 90, "the header grows with its content")
     #expect(textView.textContainerInset.top == 90)
     #expect(header.frame.height == 90)
     window.isHidden = true
