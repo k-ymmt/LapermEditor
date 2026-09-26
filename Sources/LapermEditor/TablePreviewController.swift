@@ -17,7 +17,7 @@ typealias TablePreviewController = BlockPreviewController<TablePreviewSource>
 struct TablePreviewSource: BlockPreviewSource {
     /// セルの内容が同じかを、位置に依らず判定する鍵(前の編集で位置だけ動いたテーブルのモデルを使い回す)。テーブルの
     /// 外の変化でセルの見た目が変わるもの(参照リンクの定義の増減でリンクになる / ならなくなる)はスパンとマーカーで拾う。
-    struct Key: Equatable {
+    struct Key: Hashable {
         var text: String
         var relativeTable: MarkdownTable
         var relativeSpans: [HighlightSpan]

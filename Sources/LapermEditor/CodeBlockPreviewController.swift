@@ -6,16 +6,16 @@ import UIKit
 import LapermCore
 
 /// Live Preview でコードブロックを箱に折りたたむ(Laperm ADR 0020)。折りたたみの状態機械は `BlockPreviewController`、
-/// ここはコードブロック固有の部分: 折りたたみ候補(行頭(空白だけの接頭辞は許す)から始まる、閉じたブロック。
-/// リスト項目や引用の中のものは段落の先頭がブロックの先頭ではないので Source のまま、閉じていないフェンスは
-/// 書きかけなので Source のまま)、本文(`CodeBlockPreviewModel`)とレイアウト(`CodeBlockPreviewLayout`)、
-/// 箱のクリック先とコピーする本文。
+/// ここはコードブロック固有の部分: 折りたたみ候補(文書直下の閉じたブロック。リスト項目や引用の中のものは段落の
+/// 先頭がブロックの先頭ではない(継続行の空白だけの接頭辞も含めてパーサの `isNested` で判定)ので Source のまま、
+/// 閉じていないフェンスは書きかけなので Source のまま)、本文(`CodeBlockPreviewModel`)とレイアウト
+/// (`CodeBlockPreviewLayout`)、箱のクリック先とコピーする本文。
 typealias CodeBlockPreviewController = BlockPreviewController<CodeBlockPreviewSource>
 
 /// コードブロック 1 つの材料: パース結果 + 本文のキャッシュ。本文(`model`)は折りたたむときに初めて作る。
 struct CodeBlockPreviewSource: BlockPreviewSource {
     /// 本文が同じかを、位置に依らず判定する鍵(前の編集で位置だけ動いたブロックのモデルを使い回す)。
-    struct Key: Equatable {
+    struct Key: Hashable {
         var text: String
         var relativeBlock: MarkdownCodeBlock
         var themeGeneration: Int
@@ -62,8 +62,8 @@ extension BlockPreviewController where Source == CodeBlockPreviewSource {
     /// パース確定後の同期。`storage` はハイライト適用済みのテキストストレージ、`text` はその文字列。
     func update(plan: HighlightPlan, storage: NSTextStorage, text: NSString) {
         let blocks = plan.codeBlocks.filter { block in
-            block.isClosed && block.range.length > 0 && NSMaxRange(block.range) <= text.length
-                && Self.startsAtLineStart(block, in: text)
+            block.isClosed && !block.isNested && block.range.length > 0 && NSMaxRange(block.range) <= text.length
+                && block.lineStart >= 0 && block.lineStart <= block.range.location
         }
         let sources = blocks.map { block -> CodeBlockPreviewSource in
             CodeBlockPreviewSource(
@@ -73,17 +73,6 @@ extension BlockPreviewController where Source == CodeBlockPreviewSource {
                 model: nil)
         }
         update(sources: sources, storage: storage, text: text)
-    }
-
-    /// ブロックの先頭がその行の先頭(空白だけの接頭辞は許す: インデントされたフェンスとインデント型)か。リスト項目や
-    /// 引用の中(`- ` / `> ` が前にある)なら false。
-    static func startsAtLineStart(_ block: MarkdownCodeBlock, in text: NSString) -> Bool {
-        let lineStart = text.lineRange(for: NSRange(location: block.range.location, length: 0)).location
-        for i in lineStart..<block.range.location {
-            let c = text.character(at: i)
-            if c != 0x20 /* space */ && c != 0x09 /* tab */ { return false }
-        }
-        return true
     }
 
     /// `location` から始まる折りたたまれたコードブロックの表示(ビューポートレイアウトパスが箱を置くために使う)。

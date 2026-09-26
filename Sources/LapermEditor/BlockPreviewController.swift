@@ -44,7 +44,7 @@ protocol BlockPreviewSource {
     associatedtype Block: PreviewableBlock
     associatedtype Layout: BlockPreviewLayout
     associatedtype Appearance: BlockPreviewAppearance
-    associatedtype Key: Equatable
+    associatedtype Key: Hashable
 
     var block: Block { get set }
     /// 内容が同じかを位置に依らず判定する鍵(前の編集で位置だけ動いたブロックのモデルを使い回す)。
@@ -156,7 +156,9 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
     /// パース確定後の同期。`sources` は折りたたみ候補(位置順、互いに重ならない)、`storage` はハイライト適用済みの
     /// テキストストレージ、`text` はその文字列。同じ鍵の前回の材料からモデルを引き継ぐ。
     func update(sources: [Source], storage: NSTextStorage, text: NSString) {
-        let old = entries
+        // 前回の材料を鍵で引く(同じ内容のブロックが複数あれば位置順に対応させる)。ブロック数 × ブロック数にしない。
+        var old: [Source.Key: [Entry]] = [:]
+        for entry in entries.reversed() { old[entry.source.key, default: []].append(entry) }
         self.storage = storage
         documentLength = text.length
         entries = sources.map { source -> Entry in
@@ -164,11 +166,15 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
             // 最後の行の改行まで
             let origin = text.lineRange(for: NSRange(location: source.block.range.location, length: 0)).location
             let block = NSRange(location: origin, length: Self.endIncludingNewline(of: source.block.range, in: text) - origin)
-            var adopted = source
-            if let previous = old.first(where: { $0.source.key == source.key }) {
-                adopted.adoptCache(from: previous.source)
+            var entry = Entry(source: source, blockParagraphsRange: block)
+            // 同じ鍵の前回の材料からモデルとレイアウトを引き継ぐ(パースのたびに全ブロックを作り直さない)
+            if let previous = old[source.key]?.popLast() {
+                entry.source.adoptCache(from: previous.source)
+                entry.layout = previous.layout
+                entry.layoutWidth = previous.layoutWidth
+                entry.layoutAppearance = previous.layoutAppearance
             }
-            return Entry(source: adopted, blockParagraphsRange: block)
+            return entry
         }
         present()
         refreshExemptRanges()
@@ -247,15 +253,18 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
         presented = presented.compactMap { item -> PresentedBlock? in
             var moved = item
             let merged = Self.shiftMerging(item.blockParagraphsRange, editedRange: editedRange, preEdit: preEdit, delta: delta)
-            if item.blockParagraphsRange.location >= NSMaxRange(preEdit) {
-                // 編集より後ろ: そのまま平行移動
-                moved.block = item.block.shifted(by: delta)
-            } else if preEdit.location <= item.blockParagraphsRange.location, NSMaxRange(preEdit) >= item.blockParagraphsRange.location {
-                // 編集が先頭の段落の先頭を含む(先頭の削除・置換): 先頭の段落がどこから始まるか分からなくなるので、
-                // `canPresent` に関わらず表示から外す(古い先頭位置のままだと、本当の先頭の段落まで列挙から外れて
-                // ブロックが丸ごと消える)。旧ブロックは作り直す。
-                appendDirty(merged)
+            let start = item.blockParagraphsRange.location
+            if preEdit.location <= start, NSMaxRange(preEdit) >= start {
+                // 編集が先頭の段落の先頭に触れる(先頭への挿入、直前の改行の削除、先頭の削除・置換): 先頭の段落がどこから
+                // 始まるか分からなくなる(挿入した文字はこの段落に入り、改行を消せば前の段落と繋がる)ので、`canPresent` に
+                // 関わらず表示から外す(古い先頭位置のままだと、本当の先頭の段落まで列挙から外れてブロックが丸ごと
+                // 消える)。旧ブロック(編集と合併した範囲)は作り直す。
+                let dirtyStart = min(start, editedRange.location)
+                appendDirty(NSRange(location: dirtyStart, length: max(NSMaxRange(editedRange), NSMaxRange(item.blockParagraphsRange) + delta) - dirtyStart))
                 return nil
+            } else if start >= NSMaxRange(preEdit) {
+                // 編集より前(触れない): そのまま平行移動
+                moved.block = item.block.shifted(by: delta)
             }
             // 編集が先頭より後ろでブロックに触る: 先頭の段落の先頭は変わらないので位置は保ち、
             // 作り直す範囲だけ編集と合併して追従させる(モデルからは外れるので次の `present` で解除される)
@@ -264,11 +273,8 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
         }
         let before = entries.count
         entries = entries.compactMap { entry in
-            // 触る編集の判定は先頭の段落の行頭から(ブロックの先頭がインデントの後にあるとき、その前の編集も含める)
-            if entry.block.isTouched(byEditBefore: preEdit)
-                || (preEdit.location <= NSMaxRange(entry.block.range) && NSMaxRange(preEdit) >= entry.blockParagraphsRange.location) {
-                return nil
-            }
+            // 触る編集の判定はブロックの規則(`isTouched`: 行頭から内容の末尾まで。`HighlightPlan.shifted` と同じ)
+            if entry.block.isTouched(byEditBefore: preEdit) { return nil }
             guard entry.blockParagraphsRange.location >= NSMaxRange(preEdit) else { return entry }
             var moved = entry
             moved.source = entry.source.shifted(by: delta)

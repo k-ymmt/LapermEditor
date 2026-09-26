@@ -998,6 +998,8 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         frontMatter.noteEdit(editedRange: editedRange, changeInLength: delta)
         tables.noteEdit(editedRange: editedRange, changeInLength: delta)
         codeBlocks.noteEdit(editedRange: editedRange, changeInLength: delta)
+        // 編集で表 / 箱が動くので、前回のビューポートレイアウトの矩形では当たり判定しない(次のレイアウトが置き直す)
+        viewportLayoutWillBegin()
         scheduleHighlight()
         host?.editorTextDidChange()
     }

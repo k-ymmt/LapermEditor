@@ -132,10 +132,21 @@ enum HighlightMapper {
         mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
             guard let range = nsRange(of: codeBlock), range.length > 0 else { return }
             blockSpans.append(HighlightSpan(range: range, kind: .codeBlock))
-            // フェンス行をマーカーに(インデント型コードブロックはフェンスなし)
+            let lineStart = text.lineRange(for: NSRange(location: range.location, length: 0)).location
+            let isNested = !(codeBlock.parent is Document)
+            // 最後の行の行末(cmark はインデント型で最後の行の改行までを報告する)
+            var lastContentsEnd = 0
+            text.getLineStart(nil, end: nil, contentsEnd: &lastContentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
+            let contentEndOfBlock = min(NSMaxRange(range), max(range.location, lastContentsEnd))
+            let blockRange = NSRange(location: range.location, length: contentEndOfBlock - range.location)
+            // 文書直下では、インデント型かフェンス付きかをブロックの先頭の前のインデントで決める(4 桁以上ならインデント型:
+            // 先頭行が "```" で始まっていてもリテラルのコード。フェンスは最大 3 個の空白しか許されない)。リスト項目や
+            // 引用の中では先頭の前にマーカーがあって桁数では決められないので、先頭行の形で決める(従来どおり)。
             let firstLine = clippedLineRange(at: range.location, within: range)
             let lastLine = clippedLineRange(at: max(range.location, NSMaxRange(range) - 1), within: range)
-            if let fence = openingFence(of: firstLine) {
+            let indentColumns = MarkdownCodeBlock.indentColumns(from: lineStart, to: range.location, in: text)
+            if isNested || indentColumns < 4, let fence = openingFence(of: firstLine) {
+                // フェンス行をマーカーに
                 markerSpans.append(HighlightSpan(range: firstLine, kind: .syntaxMarker))
                 let isClosed = lastLine != firstLine && isClosingFence(lastLine, of: fence)
                 if isClosed {
@@ -158,16 +169,13 @@ enum HighlightMapper {
                     contentRange = NSRange(location: contentStart, length: lastContentEnd - contentStart)
                 }
                 codeBlocks.append(MarkdownCodeBlock(
-                    range: range, isFenced: true, isClosed: isClosed, language: fence.language,
-                    contentRange: contentRange, contentIndent: range.location - text.lineRange(for: NSRange(location: range.location, length: 0)).location))
+                    range: blockRange, lineStart: lineStart, isFenced: true, isClosed: isClosed, isNested: isNested,
+                    language: fence.language, contentRange: contentRange, contentIndent: indentColumns))
             } else {
-                // インデント型: 全行が本文。cmark のレンジは最後の行の改行を含むことがあるので、行末まででそろえる
-                var contentsEnd = 0
-                text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
-                let end = min(NSMaxRange(range), max(range.location, contentsEnd))
+                // インデント型: 全行が本文。最初の行も行頭から(インデントは各行から一度だけ、4 桁を取り除く)
                 codeBlocks.append(MarkdownCodeBlock(
-                    range: range, isFenced: false, isClosed: true, language: nil,
-                    contentRange: NSRange(location: range.location, length: end - range.location), contentIndent: 4))
+                    range: blockRange, lineStart: lineStart, isFenced: false, isClosed: true, isNested: isNested, language: nil,
+                    contentRange: NSRange(location: lineStart, length: contentEndOfBlock - lineStart), contentIndent: 4))
             }
             // コードブロック内部は descend しない(強調等を解釈しない)
         }

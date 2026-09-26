@@ -186,10 +186,11 @@ struct CodeBlockPreviewLayout: Equatable {
         let index = text.layoutManager.characterIndex(
             for: local, in: text.container, fractionOfDistanceBetweenInsertionPoints: &fraction)
         let string = text.storage.string as NSString
-        var insertion = min(string.length, index + (fraction > 0.5 ? 1 : 0))
-        // 行の末尾の改行の後ろへ丸めない(次の行の先頭ではなくこの行の末尾)
-        if insertion > 0, insertion <= string.length, index < string.length, string.character(at: index) == 0x0A {
-            insertion = index
+        var insertion = min(index, string.length)
+        // 右半分なら次の挿入位置へ(サロゲートペアや結合文字の内部ではなく、合成文字の後ろ)。行の末尾の改行の後ろへは
+        // 丸めない(次の行の先頭ではなくこの行の末尾)。
+        if fraction > 0.5, index < string.length, string.character(at: index) != 0x0A {
+            insertion = NSMaxRange(string.rangeOfComposedCharacterSequence(at: index))
         }
         guard let lineIndex = text.lineRanges.firstIndex(where: { insertion <= NSMaxRange($0) }) else { return last.lineEndOffset }
         let line = model.lines[lineIndex]

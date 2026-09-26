@@ -58,8 +58,11 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     to the presented one only while `canPresent()`; `noteEdit` shifts blocks after an edit and drops a touched one until
     the next parse; hidden-font display paragraph for the block's first paragraph with `paragraphSpacing` =
     `Layout.reservedHeight`, the other paragraphs excluded from enumeration; `exemptRanges` for the expanded blocks;
-    pending dirty ranges / redraw). A `BlockPreviewSource` (table / code block) supplies the block (`PreviewableBlock`),
-    a position-independent cache key, the cached model and `makeLayout`. Both text views draw the overlays through one
+    pending dirty ranges / redraw; an edit that touches a presented block's paragraph start — insertion at it, deletion
+    of the newline before it — drops the presentation even while `canPresent()` is false; the engine clears the overlay
+    hit-test frames on every edit). A `BlockPreviewSource` (table / code block) supplies the block (`PreviewableBlock`),
+    a position-independent `Hashable` cache key (the previous entries are looked up through it, model **and** layout are
+    carried over), the cached model and `makeLayout`. Both text views draw the overlays through one
     generic `BlockPreviewOverlayView<Entry: BlockPreviewOverlayEntry>` (one non-hit-testing item view per block keyed by
     its start offset). `TablePreviewController` / `CodeBlockPreviewController` are typealiases with the block-specific
     `update(plan:storage:text:)` (candidate filter), hit tests and copy text in extensions.
@@ -99,16 +102,20 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     `tableCaretRange(atPoint:)` maps a click / tap to the end of the cell (`MarkdownTextView.expandTable(atPoint:)`,
     and `shouldInterceptTap` on iOS).
   - Code blocks (Laperm ADR 0020): `LapermCore/MarkdownCodeBlock.swift` carries what `HighlightMapper.visitCodeBlock`
-    finds for every fenced / indented code block (`range` = the `.codeBlock` span, `isFenced`, `isClosed` — the closing
-    fence must be the same character, at least as long as the opening one and followed by whitespace only —,
-    `language` = first word of the info string, `contentRange` = the content lines without fences (nil when there is
-    none), `contentIndent` = the opening fence's indent / 4 for indented blocks; `contentLineRanges(in:)` and
-    `displayRange(ofContentLine:in:)` strip that indent, tab = next multiple of 4) as `HighlightPlan.codeBlocks`
-    (`shifted` uses the table rule). `CodeBlockPreviewController` collapses, while Live Preview is on, every **closed**
-    block whose start is preceded only by spaces / tabs on its line (a block in a list item / quote and an unclosed
-    fence stay Source) unless the editor is first responder and the selection touches the block's paragraphs (from the
-    first line's line start — the indentation of an indented block counts — to the content end, trailing empty line of
-    a block-ending document included). Collapsed = the first line's paragraph (the opening fence, or the first code line
+    finds for every fenced / indented code block (`range` = the `.codeBlock` span minus the trailing newline cmark
+    reports for indented blocks, `lineStart` = the physical line start before the indent, `isFenced` — decided by the
+    indent columns before the start for top-level blocks: 4 or more means indented even when the first line looks like
+    a fence —, `isClosed` — the closing fence must be the same character, at least as long as the opening one and
+    followed by whitespace only —, `isNested` = inside a list item / quote (parent is not the Document), `language` =
+    first word of the info string, `contentRange` = the content lines without fences, from the physical line start
+    (nil when there is none; a trailing blank line counts as a line), `contentIndent` = the opening fence's indent
+    columns / 4 for indented blocks; `contentLineRanges(in:)` and `displayRange(ofContentLine:in:)` strip that indent
+    once per line, tab = next multiple of 4, a tab crossing the indent is removed whole) as `HighlightPlan.codeBlocks`
+    (`shifted` uses `isTouched`, which is the table rule applied from `lineStart`). `CodeBlockPreviewController`
+    collapses, while Live Preview is on, every **closed, not nested** block (a block in a list item / quote — also on a
+    continuation line — and an unclosed fence stay Source) unless the editor is first responder and the selection
+    touches the block's paragraphs (from `lineStart` — the indentation of an indented block counts — to the content
+    end, trailing empty line of a block-ending document included). Collapsed = the first line's paragraph (the opening fence, or the first code line
     of an indented block, which starts at its line start even though `range.location` is after the indent) gets the
     hidden-font display paragraph with `paragraphSpacing` = `CodeBlockPreviewLayout.reservedHeight`, the other paragraphs
     are excluded, no `CodeBlockFragment` decoration, and `BlockPreviewOverlayView<CodeBlockPreviewEntry>` draws the box:
@@ -122,7 +129,8 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     exempt from line-level concealing. A click / tap (`MarkdownTextView.expandCodeBlock(atPoint:)` after
     `copyCodeBlock(atPoint:)`, via `MarkdownEditorEngine.codeBlockCaretRange` / `codeBlockCopyTarget`; on iOS
     `shouldInterceptTap` claims touches over the box and the button) puts the caret at the character nearest the point
-    (`caretOffset(at:)`: header / above → first line start, below → last line end, box + 4pt slack otherwise nil) or
+    (`caretOffset(at:)`: header / above → first line start, below → last line end, box + 4pt slack otherwise nil; the
+    right half of a glyph rounds to the end of its composed character sequence, never inside a surrogate pair) or
     copies `copyText` to the pasteboard (`NSPasteboard.general` / `UIPasteboard.general`) without expanding and shows
     the checkmark (`noteCodeBlockCopied`, redraw only). No syntax highlighting inside the box (deferred).
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or

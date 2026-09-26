@@ -78,9 +78,11 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     let unclosed = makeController("```\nstill typing")
     #expect(unclosed.codeBlocks.isEmpty)
     #expect(unclosed.collapsedLocations.isEmpty)
-    // リスト項目 / 引用の中は段落の先頭がブロックの先頭ではない
+    // リスト項目 / 引用の中は段落の先頭がブロックの先頭ではない(リスト項目の継続行にあるものも)
     let listed = makeController("- ```\n  x\n  ```")
     #expect(listed.codeBlocks.isEmpty)
+    let continued = makeController("- item\n\n  ~~~\n  x\n  ~~~\n\n      deeper")
+    #expect(continued.codeBlocks.isEmpty)
     let quoted = makeController("> ```\n> x\n> ```")
     #expect(quoted.codeBlocks.isEmpty)
     // 空白だけの接頭辞(インデントされたフェンス)は折りたたむ
@@ -152,6 +154,30 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(controller.collapsedLocations == [0, 21])
 }
 
+@MainActor @Test func codeBlockControllerDropsAPresentedBlockWhoseStartIsTouchedEvenWhileItCannotPresent() {
+    let controller = makeController(two)
+    _ = controller.takePendingDirtyRanges()
+    controller.canPresent = { false }
+    // IME 変換中にブロック 1 の先頭(0)へ 1 文字挿入: 先頭の段落は 0 のまま(挿入した文字がその段落に入る)なので、
+    // 表示を平行移動せずに外す(残すと本当の先頭の段落が列挙され、残りの段落だけ隠れたままになる)
+    controller.noteEdit(editedRange: NSRange(location: 0, length: 1), changeInLength: 1)
+    #expect(controller.collapsedLocations == [22])
+    #expect(controller.shouldEnumerate(paragraphStartingAt: 0))
+    #expect(controller.shouldEnumerate(paragraphStartingAt: 5), "the body line of the dropped block is enumerated again")
+    #expect(controller.takePendingDirtyRanges().first == NSRange(location: 0, length: 11))
+    // インデント型(段落 18..<29、ブロック 22..<29)の直前の改行(17)を消す: 同じく外す
+    controller.noteEdit(editedRange: NSRange(location: 17, length: 0), changeInLength: -1)
+    #expect(controller.collapsedLocations.isEmpty)
+    // 先頭の行の前の行への挿入は触れない: 平行移動するだけ
+    update(controller, with: two)
+    controller.canPresent = { true }
+    controller.present()
+    #expect(controller.collapsedLocations == [0, 21])
+    controller.canPresent = { false }
+    controller.noteEdit(editedRange: NSRange(location: 16, length: 1), changeInLength: 1)
+    #expect(controller.collapsedLocations == [0, 22])
+}
+
 @MainActor @Test func codeBlockControllerBuildsContentOnlyForBlocksItCollapsesAndReusesLayouts() throws {
     let controller = makeController(two)
     #expect(controller.isModelBuilt(forBlockAt: 0) && controller.isModelBuilt(forBlockAt: 21))
@@ -159,6 +185,14 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     update(controller, with: "```\na!\n```\n\ntext\n\n    b\n    c")
     #expect(!controller.isModelBuilt(forBlockAt: 0), "the expanded block's content is not rebuilt")
     #expect(controller.isModelBuilt(forBlockAt: 22), "the collapsed block reuses the content it built before")
+    // 同じ内容の再パース(他の場所の編集)ではレイアウトも使い回す(描き直しも作り直しも無い)
+    let kept = try #require(controller.presentedCodeBlock(at: 22)?.layout)
+    _ = controller.takePendingDirtyRanges()
+    _ = controller.takeNeedsRedraw()
+    update(controller, with: "```\na!\n```\n\ntext\n\n    b\n    c")
+    #expect(controller.presentedCodeBlock(at: 22)?.layout.text === kept.text)
+    #expect(!controller.takeNeedsRedraw())
+    #expect(controller.takePendingDirtyRanges().isEmpty)
     // 幅が変わっても高さが変わらなければ描き直しだけ
     let before = try #require(controller.presentedCodeBlock(at: 22)?.layout)
     _ = controller.takePendingDirtyRanges()
@@ -219,6 +253,14 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     let offset = try #require(layout.caretOffset(at: wrappedSecondRow))
     #expect(offset > 0 && offset < 200)
     #expect(layout.caretOffset(at: CGPoint(x: layout.contentFrame.maxX, y: layout.contentFrame.maxY - 1)) == 202)
+    // 絵文字の右半分をクリックしても合成文字の内部(UTF-16 の途中)にはならない
+    let emoji = CodeBlockPreviewModel(language: nil, lines: [.init(text: "😀b", displayOffset: 0, lineEndOffset: 3)])
+    let emojiLayout = CodeBlockPreviewLayout.make(model: emoji, maxWidth: 300, appearance: appearance)
+    let emojiRect = emojiLayout.text.layoutManager.boundingRect(forGlyphRange: NSRange(location: 0, length: 1), in: emojiLayout.text.container)
+    let rightHalf = CGPoint(x: emojiLayout.contentFrame.minX + emojiRect.maxX - 1, y: emojiLayout.contentFrame.minY + emojiRect.midY)
+    #expect(emojiLayout.caretOffset(at: rightHalf) == 2)
+    let leftHalf = CGPoint(x: emojiLayout.contentFrame.minX + emojiRect.minX + 1, y: emojiLayout.contentFrame.minY + emojiRect.midY)
+    #expect(emojiLayout.caretOffset(at: leftHalf) == 0)
     // 言語無し・本文無し: 帯だけの箱
     let empty = CodeBlockPreviewLayout.make(model: .init(language: nil, lines: []), maxWidth: 300, appearance: appearance)
     #expect(empty.labelFrame == nil)
@@ -358,6 +400,10 @@ private func layoutFragments(_ textView: MarkdownTextView) -> [NSTextLayoutFragm
     #expect(textView.debugCodeBlockEntries.first?.showsCopied == true)
     // ボタンの上のクリックは展開しない(mouseDown はコピーを先に試す)
     #expect(textView.engine.codeBlockCaretRange(atPoint: point) == nil)
+    // 編集の後、次のビューポートレイアウトまでは前回の矩形で当たり判定しない(動いたブロックに古いボタンを当てない)
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 0, length: 0), with: "# ")
+    #expect(!textView.copyCodeBlock(atPoint: point))
+    #expect(textView.engine.codeBlockCaretRange(atPoint: CGPoint(x: entry.frame.minX + 20, y: entry.frame.midY)) == nil)
 }
 
 @MainActor @Test func textViewShowsEveryFenceOfAnExpandedBlockAndCollapsesOnFocusLoss() throws {
