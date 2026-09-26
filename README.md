@@ -77,6 +77,9 @@ struct ContentView: View {
 
 `.headerView(height:) { ... }` puts a SwiftUI view above the text inside the scrolled content (a
 note title, for example); it is aligned with the text's margins and the text starts below it.
+`.headerView { ... }` (no height) sizes the header to its content instead: the content is laid out at
+the header's width with its ideal height, and the text follows when that height changes (a title that
+wraps onto a second line, for example).
 
 On iOS, `.keyboardAccessory { ... }` puts a SwiftUI view above the keyboard, and
 `.adjustsContentInsetForKeyboard(false)` hands keyboard avoidance back to SwiftUI (drop the

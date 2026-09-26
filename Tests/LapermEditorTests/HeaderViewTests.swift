@@ -112,4 +112,62 @@ import Testing
     #expect(textView.headerView == nil)
     #expect(textView.textContainerInset.height == 0)
 }
+
+@MainActor private final class HeaderHeightModel: ObservableObject {
+    @Published var height: CGFloat = 40
+}
+
+private struct AutoHeaderHost: View {
+    @ObservedObject var model: HeaderHeightModel
+    var body: some View {
+        MarkdownEditorView(text: .constant("Body"), theme: .default)
+            .editorMargins(.readable)
+            .headerView { Color.clear.frame(height: model.height) }
+    }
+}
+
+@MainActor
+private func findTextView(_ view: NSView) -> MarkdownTextView? {
+    if let textView = view as? MarkdownTextView { return textView }
+    for subview in view.subviews { if let found = findTextView(subview) { return found } }
+    return nil
+}
+
+/// `.headerView(_:)`(高さ指定なし)は中身の理想の高さをヘッダの高さにし、中身の高さが変わる(タイトルが折り返して
+/// 2 行になるなど)と本文の開始位置とホストの frame も追従する。
+@MainActor @Test func autoHeightHeaderFollowsItsContent() throws {
+    let model = HeaderHeightModel()
+    let hosting = NSHostingView(rootView: AutoHeaderHost(model: model))
+    let window = NSWindow(contentRect: CGRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+    window.contentView = hosting
+    hosting.frame = CGRect(x: 0, y: 0, width: 600, height: 400)
+    window.layoutIfNeeded()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let textView = try #require(findTextView(hosting))
+    let header = try #require(textView.headerView)
+    #expect(textView.headerHeight == 40)
+    #expect(textView.textContainerInset.height == 40)
+    #expect(header.frame.height == 40)
+    #expect(header.frame.minX == textView.textContainerInset.width + textView.textContainer!.lineFragmentPadding)
+
+    model.height = 90
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    window.layoutIfNeeded()
+    #expect(textView.headerHeight == 90, "the header grows with its content")
+    #expect(textView.textContainerInset.height == 90)
+    #expect(header.frame.height == 90)
+    #expect(textView.textContainerOrigin.y == 90, "the text starts below the taller header")
+    withExtendedLifetime(window) {}
+}
+
+/// 高さ指定なしのヘッダを載せても、計測が届くまでテキストビューの `headerHeight` は触らない(0 のまま)。
+@MainActor @Test func editorViewLeavesTheAutoHeightToTheMeasurement() {
+    let textView = MarkdownTextView()
+    let coordinator = MarkdownEditorView.Coordinator(text: .constant(""))
+    textView.headerHeight = 12
+    MarkdownEditorView(text: .constant("")).headerView { Text("title") }
+        .applyHeader(to: textView, coordinator: coordinator)
+    #expect(textView.headerView === coordinator.headerHost)
+    #expect(textView.headerHeight == 12, "no fixed height is pushed; the content reports its own")
+}
 #endif

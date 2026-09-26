@@ -189,4 +189,49 @@ import UIKit
     #expect(textView.textContainerInset.top == 8)
     window.isHidden = true
 }
+
+@MainActor private final class HeaderHeightModel: ObservableObject {
+    @Published var height: CGFloat = 40
+}
+
+private struct AutoHeaderHost: View {
+    @ObservedObject var model: HeaderHeightModel
+    var body: some View {
+        MarkdownEditorView(text: .constant("Body"), theme: .default)
+            .editorMargins(.readable)
+            .headerView { Color.clear.frame(height: model.height) }
+    }
+}
+
+@MainActor
+private func findTextView(_ view: UIView) -> MarkdownTextView? {
+    if let textView = view as? MarkdownTextView { return textView }
+    for subview in view.subviews { if let found = findTextView(subview) { return found } }
+    return nil
+}
+
+/// `.headerView(_:)`(高さ指定なし)は中身の理想の高さをヘッダの高さにし、中身の高さが変わると本文の開始位置と
+/// ホストの frame も追従する。
+@MainActor @Test func autoHeightHeaderFollowsItsContent() throws {
+    let model = HeaderHeightModel()
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 400, height: 800))
+    let host = UIHostingController(rootView: AutoHeaderHost(model: model))
+    window.rootViewController = host
+    window.isHidden = false
+    window.layoutIfNeeded()
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    let textView = try #require(findTextView(host.view))
+    let header = try #require(textView.headerView)
+    #expect(textView.headerHeight == 40)
+    #expect(textView.textContainerInset.top == 40)
+    #expect(header.frame.height == 40)
+
+    model.height = 90
+    RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+    window.layoutIfNeeded()
+    #expect(textView.headerHeight == 90, "the header grows with its content")
+    #expect(textView.textContainerInset.top == 90)
+    #expect(header.frame.height == 90)
+    window.isHidden = true
+}
 #endif

@@ -111,11 +111,13 @@ public final class MarkdownTextView: UITextView {
         }
     }
 
-    /// ヘッダの高さ(`headerView` が無ければ使われない)。
+    /// ヘッダの高さ(`headerView` が無ければ使われない)。中身の計測から(ヘッダ自身のレイアウトの中で)変わることも
+    /// あるので、frame はその場で合わせる。
     public var headerHeight: CGFloat = 0 {
         didSet {
             guard headerHeight != oldValue else { return }
             updateTextInsets()
+            layoutHeader()
             setNeedsLayout()
         }
     }

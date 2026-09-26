@@ -21,7 +21,8 @@ public struct MarkdownEditorView {
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
     private var header: AnyView?
-    private var headerHeight: CGFloat = 0
+    /// ヘッダの高さ。nil なら中身の理想の高さに追従する(`headerView(_:)`)。
+    private var headerHeight: CGFloat?
     #if canImport(UIKit)
     private var keyboardAccessory: AnyView?
     private var adjustsContentInsetForKeyboard = true
@@ -149,6 +150,27 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// 高さが中身に追従するヘッダ。中身はヘッダの幅(テキストコンテナの幅)で理想の高さに置かれ(縦は `fixedSize`)、
+    /// その高さが変わるたび(タイトルが折り返して 2 行になるなど)に本文の開始位置も追従する。
+    /// それ以外は `headerView(height:_:)` と同じ。
+    public func headerView<Content: View>(@ViewBuilder _ content: () -> Content) -> MarkdownEditorView {
+        var copy = self
+        copy.header = AnyView(content())
+        copy.headerHeight = nil
+        return copy
+    }
+
+    /// ホストに載せるヘッダのルート。高さ固定なら中身そのまま、追従なら計測するラッパーで包む。
+    /// 計測した高さはテキストビューの `headerHeight` に入る(ホストの frame の高さはテキストビューが決める)。
+    @MainActor
+    func headerRootView(for textView: MarkdownTextView) -> AnyView? {
+        guard let header else { return nil }
+        guard headerHeight == nil else { return header }
+        return AnyView(AutoHeightHeader(content: header) { [weak textView] height in
+            textView?.headerHeight = height
+        })
+    }
+
     #if canImport(UIKit)
     /// キーボードの上に出すアクセサリ(iOS)。UITextView の `inputAccessoryView` に SwiftUI ビューを載せる。
     /// SwiftUI の `.toolbar(placement: .keyboard)` は UIViewRepresentable のテキストビューには付かないための口。
@@ -242,18 +264,20 @@ extension MarkdownEditorView: NSViewRepresentable {
             textView.headerView = nil
             return
         }
+        let root = headerRootView(for: textView) ?? header
         let host: NSHostingView<AnyView>
         if let existing = coordinator.headerHost {
-            existing.rootView = header
+            existing.rootView = root
             host = existing
         } else {
-            host = NSHostingView(rootView: header)
+            host = NSHostingView(rootView: root)
             // 大きさはテキストビューが決める(固有サイズの制約を張らせない)。
             host.sizingOptions = []
             host.translatesAutoresizingMaskIntoConstraints = true
             coordinator.headerHost = host
         }
-        textView.headerHeight = headerHeight
+        // 追従する高さは中身の計測(AutoHeightHeader)がテキストビューに入れるので、ここでは触らない。
+        if let headerHeight { textView.headerHeight = headerHeight }
         if textView.headerView !== host { textView.headerView = host }
     }
 
@@ -335,12 +359,13 @@ extension MarkdownEditorView: UIViewRepresentable {
             textView.headerViewController = nil
             return
         }
+        let root = headerRootView(for: textView) ?? header
         let host: UIHostingController<AnyView>
         if let existing = coordinator.headerHost {
-            existing.rootView = header
+            existing.rootView = root
             host = existing
         } else {
-            host = UIHostingController(rootView: header)
+            host = UIHostingController(rootView: root)
             host.view.backgroundColor = .clear
             // 大きさはテキストビューが決める(固有サイズの制約を張らせない)。スクロールの内容に置くので
             // safe area やキーボードで中身を動かさない。
@@ -348,7 +373,8 @@ extension MarkdownEditorView: UIViewRepresentable {
             host.safeAreaRegions = []
             coordinator.headerHost = host
         }
-        textView.headerHeight = headerHeight
+        // 追従する高さは中身の計測(AutoHeightHeader)がテキストビューに入れるので、ここでは触らない。
+        if let headerHeight { textView.headerHeight = headerHeight }
         // 子ビューコントローラとして載せる(SwiftUI のフォーカスがビューコントローラ階層を要する)。
         if textView.headerViewController !== host { textView.headerViewController = host }
     }
@@ -430,3 +456,22 @@ extension MarkdownEditorView: UIViewRepresentable {
     }
 }
 #endif
+
+/// 高さが中身に追従するヘッダ(`headerView(_:)`)のルート。中身をホストの幅で理想の高さに置き(縦は `fixedSize`)、
+/// その高さを `onHeightChange` で報告する(初回と、折り返しが変わるなど高さが変わるたび)。ホストの frame の高さは
+/// テキストビューが報告された値から決めるので、中身は上端に寄せる(ホストがまだ低くても中身の高さは変わらない)。
+struct AutoHeightHeader: View {
+    let content: AnyView
+    let onHeightChange: (CGFloat) -> Void
+
+    var body: some View {
+        content
+            .fixedSize(horizontal: false, vertical: true)
+            .onGeometryChange(for: CGFloat.self) { proxy in
+                proxy.size.height
+            } action: { height in
+                onHeightChange(height)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
