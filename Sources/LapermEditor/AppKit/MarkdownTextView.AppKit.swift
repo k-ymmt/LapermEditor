@@ -186,6 +186,8 @@ public final class MarkdownTextView: NSTextView {
     private var lastImageContainerWidth: CGFloat = 0
     private let frontMatterTableView = FrontMatterTableView()
     private var collectedFrontMatterEntry: FrontMatterTableEntry?
+    private let tablePreviewOverlay = TablePreviewOverlayView()
+    private var collectedTableEntries: [TablePreviewEntry] = []
 
     /// テスト用: 直近のビューポートレイアウトで収集したオーバーレイ配置。
     var debugImageEntries: [ImagePreviewOverlayEntry] { collectedImageEntries }
@@ -193,6 +195,10 @@ public final class MarkdownTextView: NSTextView {
     var debugFrontMatterEntry: FrontMatterTableEntry? { collectedFrontMatterEntry }
     /// テスト用: Front Matter の折りたたみ状態。
     var frontMatterController: FrontMatterController { engine.frontMatter }
+    /// テスト用: 直近のビューポートレイアウトで置いたテーブルの表(折りたたまれているものだけ)。
+    var debugTableEntries: [TablePreviewEntry] { collectedTableEntries }
+    /// テスト用: テーブルの折りたたみ状態。
+    var tablePreviewController: TablePreviewController { engine.tables }
 
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
@@ -238,6 +244,8 @@ public final class MarkdownTextView: NSTextView {
         addSubview(imageOverlay)
         frontMatterTableView.isHidden = true
         addSubview(frontMatterTableView)
+        tablePreviewOverlay.autoresizingMask = [.width, .height]
+        addSubview(tablePreviewOverlay)
         syncEditorFocus()
     }
 
@@ -282,6 +290,8 @@ public final class MarkdownTextView: NSTextView {
         collectedLines.removeAll(keepingCapacity: true)
         collectedImageEntries.removeAll(keepingCapacity: true)
         collectedFrontMatterEntry = nil
+        collectedTableEntries.removeAll(keepingCapacity: true)
+        engine.viewportLayoutWillBegin()
     }
 
     public override func textViewportLayoutController(
@@ -294,6 +304,7 @@ public final class MarkdownTextView: NSTextView {
         )
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
+        if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
         guard gutterView != nil, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -305,6 +316,7 @@ public final class MarkdownTextView: NSTextView {
         gutterView?.lines = collectedLines
         imageOverlay.update(entries: collectedImageEntries)
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
+        tablePreviewOverlay.update(entries: collectedTableEntries)
     }
 
     /// ガター付きの推奨構成。documentView は MarkdownTextView。
@@ -671,6 +683,9 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, modifiers.isEmpty, expandFrontMatter(atPoint: point) {
             return
         }
+        if event.clickCount == 1, modifiers.isEmpty, expandTable(atPoint: point) {
+            return
+        }
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,
             modifiers.isEmpty,
@@ -685,6 +700,16 @@ public final class MarkdownTextView: NSTextView {
     @discardableResult
     func expandFrontMatter(atPoint point: NSPoint) -> Bool {
         guard let caret = engine.frontMatterCaretRange(atPoint: point) else { return false }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        setSelectedRange(caret)
+        return true
+    }
+
+    /// point(ビュー座標)が Live Preview のテーブルの表の上なら、そのセルの内容の末尾にキャレットを置いて
+    /// ブロックを展開する(ADR 0019)。展開したら true。
+    @discardableResult
+    func expandTable(atPoint point: NSPoint) -> Bool {
+        guard let caret = engine.tableCaretRange(atPoint: point) else { return false }
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         setSelectedRange(caret)
         return true

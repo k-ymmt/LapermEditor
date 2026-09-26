@@ -53,6 +53,29 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     (the engine returns false during IME marked text, so enumeration / reservation / display paragraph never
     disagree); an edit touching the block marks the model stale (expanded, no table clicks) until the next parse;
     the table layout is cached by (front matter, width, appearance). The text storage is never changed.
+  - Tables (Laperm ADR 0019): `LapermCore/MarkdownTable.swift` (`MarkdownTable` + `MarkdownTableParser`) scans the
+    table range that `HighlightMapper.visitTable` already clamps (header line, delimiter line → per-column `Alignment`,
+    body rows; cells split on unescaped `|`, trimmed, padded / truncated to the column count like GFM) and
+    `HighlightPlan.tables` carries the result (`shifted` moves / drops them like spans). `TablePreviewController`
+    (shared) is `FrontMatterController` generalised to N blocks anywhere in the document: while Live Preview is on,
+    every table that starts at a line start (not in a list item / quote) is collapsed unless the editor is first
+    responder and the selection touches it (caret from the header line start to the last row's line end, both
+    inclusive; the trailing empty line of a table-ending document counts; a selection ending right before the table
+    does not). Collapsed = the header paragraph gets the hidden-font display paragraph with `paragraphSpacing` =
+    `TablePreviewLayout.reservedHeight` (`BlockFragmentProvider.collapsedBlockReservation` serves Front Matter and
+    tables), the delimiter / body paragraphs are excluded from enumeration, and `TablePreviewOverlayView`
+    (AppKit / UIKit, one item view per table keyed by its start offset, non-hit-testing) draws
+    `TablePreviewLayout` (natural column widths, shrunk proportionally above `minimumColumnWidth` and wrapped when the
+    sum exceeds the text width, header row first) with `TablePreviewRenderer`. Cell text is `TablePreviewModel`:
+    the storage's attributed substring (fonts, strikethrough) + Theme colours from the plan's spans (macOS keeps colours
+    in rendering attributes) minus the concealable markers and the `\` of `\|`; models are reused across parses by
+    (text, table relative to its start, theme generation) and layouts by (model, width, appearance). Edits that touch a
+    table (including an insertion at its first character or the deletion of the newline before it, but not an insertion
+    on the line after it) drop it from the model until the next parse (expanded, no clicks); later tables shift.
+    `MarkdownEditorEngine.tablePreviewEntry(for:)` places the grid at the text's left edge (`lineFragmentPadding`)
+    below the hidden header line + `topMargin`; `viewportLayoutWillBegin()` clears the per-table frames so a stale
+    frame of a table scrolled out of the viewport never catches a click; `tableCaretRange(atPoint:)` maps a click / tap
+    to the end of the cell (`MarkdownTextView.expandTable(atPoint:)`, and `shouldInterceptTap` on iOS).
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
     `MarkdownTextView.headerView` / `headerHeight`) puts a SwiftUI view above the text *inside the scrolled
     content* (Laperm shows the note title there, Obsidian-style). The text view hosts it (`NSHostingView` /

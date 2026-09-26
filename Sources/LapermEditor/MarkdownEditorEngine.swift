@@ -46,6 +46,8 @@ final class MarkdownEditorEngine: NSObject {
     let livePreview = LivePreviewConcealer()
     /// Live Preview で Front Matter を Property の表に折りたたむ(ADR 0016)。
     let frontMatter: FrontMatterController
+    /// Live Preview でテーブルを格子の表に折りたたむ(ADR 0019)。
+    let tables: TablePreviewController
     /// NSTextContentStorage の delegate(折畳の列挙除外とコードブロック段落の表示用スタイル)。
     /// delegate は weak 参照なのでここで保持する。
     private var contentStorageDelegate: EditorContentStorageDelegate?
@@ -69,6 +71,7 @@ final class MarkdownEditorEngine: NSObject {
             fragmentProvider.theme = newValue
             imagePreviewController.baseParagraphStyle = newValue.baseParagraphStyle
             frontMatter.themeDidChange(newValue)
+            tables.themeDidChange(newValue)
         }
     }
 
@@ -76,12 +79,15 @@ final class MarkdownEditorEngine: NSObject {
         highlighter = Highlighter(theme: theme)
         fragmentProvider = BlockFragmentProvider(theme: theme)
         frontMatter = FrontMatterController(theme: theme)
+        tables = TablePreviewController(theme: theme)
         super.init()
-        fragmentProvider.collapsedFrontMatterReservation = { [weak self] paragraph in
-            self?.frontMatter.reservedHeight(forParagraph: paragraph)
+        fragmentProvider.collapsedBlockReservation = { [weak self] paragraph in
+            guard let self else { return nil }
+            return self.frontMatter.reservedHeight(forParagraph: paragraph) ?? self.tables.reservedHeight(forParagraph: paragraph)
         }
         // IME 変換中は表示を切り替えない(段落の作り直しが変換セッションを乱す)。確定後の flush で移す。
         frontMatter.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
+        tables.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
 
         foldingController.onOutlineChanged = { [weak self] in
@@ -125,7 +131,7 @@ final class MarkdownEditorEngine: NSObject {
         // コードブロック先頭 / 末尾段落に上下余白の段落スタイルを付ける(いずれもストレージ無変更)。
         let delegate = EditorContentStorageDelegate(
             foldingController: foldingController, fragmentProvider: fragmentProvider, livePreview: livePreview,
-            frontMatter: frontMatter)
+            frontMatter: frontMatter, tables: tables)
         contentStorageDelegate = delegate
         contentStorage.delegate = delegate
         fragmentProvider.fallbackDelegate = layoutManager.delegate
@@ -187,6 +193,7 @@ final class MarkdownEditorEngine: NSObject {
         updateBlockDecorations()
         updateLivePreview()
         updateFrontMatter()
+        updateTables()
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
@@ -207,6 +214,9 @@ final class MarkdownEditorEngine: NSObject {
             refreshFrontMatterInputs()
             frontMatter.setEnabled(newValue)
             applyFrontMatterChanges()
+            refreshTableInputs()
+            tables.setEnabled(newValue)
+            applyTableChanges()
         }
     }
 
@@ -296,6 +306,84 @@ final class MarkdownEditorEngine: NSObject {
         return NSRange(location: TextMotions.lineEnd(text: text, at: lineRange.location), length: 0)
     }
 
+    // MARK: - テーブル(ADR 0019)
+
+    /// パース確定後にテーブルを最新プラン(とハイライト適用済みのストレージ)へ同期し、折りたたみ / 表の高さが
+    /// 変われば作り直す。
+    private func updateTables() {
+        guard let host, let storage = host.editorContentStorage?.textStorage else { return }
+        refreshTableInputs()
+        tables.update(plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString)
+        applyTableChanges()
+    }
+
+    /// 選択範囲と表の最大幅(本文の幅 = テキストコンテナの幅から行のパディングを除いたもの)を最新にする。
+    private func refreshTableInputs() {
+        guard let host else { return }
+        tables.selectionDidChange(host.editorSelectedRanges)
+        tables.containerWidthDidChange(host.imageContainerWidth)
+    }
+
+    /// 溜まった作り直し範囲を要素の再生成とレイアウト無効化に載せる(Front Matter と同じ)。各範囲の先頭の段落
+    /// (ヘッダー行: 表示用段落そのものが変わる)は `edited(.editedAttributes)` でも作り直させる。
+    private func applyTableChanges() {
+        if tables.hasPendingPresentation, host?.editorHasMarkedText == true { scheduleHighlight() }
+        if tables.takeNeedsRedraw() { requestViewportRelayout() }
+        guard tables.hasPendingDirtyRanges else { return }
+        if host?.editorHasMarkedText == true {
+            scheduleHighlight()
+            return
+        }
+        let length = host?.editorContentStorage?.textStorage?.length ?? 0
+        let dirtyRanges = tables.takePendingDirtyRanges().compactMap { range -> NSRange? in
+            let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
+            return clipped.length > 0 ? clipped : nil
+        }
+        regenerateElements(in: dirtyRanges)
+        regenerateParagraphs(in: dirtyRanges.map { NSRange(location: $0.location, length: 1) })
+    }
+
+    /// 直近のビューポートレイアウトで表を置いた矩形(ビュー座標)。ブロックの先頭位置がキー。クリック判定に使う。
+    private var tablePreviewFrames: [Int: CGRect] = [:]
+
+    /// ビューポートレイアウトの開始。前回置いた表の矩形を捨てる(ビューポートの外へ出た表の古い矩形が
+    /// 本文の上に残らないように)。
+    func viewportLayoutWillBegin() {
+        tablePreviewFrames.removeAll(keepingCapacity: true)
+    }
+
+    /// このフラグメント(1 テキスト段落)が折りたたまれたテーブルのヘッダー行なら、表の配置を返す。
+    /// ビューポートレイアウトパスから呼ぶ。表の左端は本文の左端(行のパディングの内側)。
+    func tablePreviewEntry(for fragment: NSTextLayoutFragment) -> TablePreviewEntry? {
+        guard !tables.presented.isEmpty,
+              let host, let contentManager = host.editorLayoutManager?.textContentManager,
+              let elementRange = fragment.textElement?.elementRange else { return nil }
+        let location = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
+        guard let table = tables.presentedTable(at: location) else { return nil }
+        let origin = host.editorTextContainerOrigin
+        let frame = fragment.layoutFragmentFrame
+        let textLinesBottom = fragment.textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
+        let tableFrame = CGRect(
+            x: origin.x + host.editorLineFragmentPadding,
+            y: frame.minY + textLinesBottom + origin.y + TablePreviewLayout.topMargin,
+            width: table.layout.size.width, height: table.layout.size.height)
+        tablePreviewFrames[location] = tableFrame
+        return TablePreviewEntry(location: location, layout: table.layout, appearance: tables.appearance, frame: tableFrame)
+    }
+
+    /// point(ビュー座標)が折りたたまれたテーブルの表の上なら、そのセルの内容の末尾にキャレットを置くレンジを返す
+    /// (呼び出し側が選択して、ブロックが展開される)。表の外なら nil。
+    func tableCaretRange(atPoint point: CGPoint) -> NSRange? {
+        for (location, frame) in tablePreviewFrames where frame.insetBy(dx: -2, dy: -2).contains(point) {
+            guard let caret = tables.caretLocation(
+                inTableAt: location, tablePoint: CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)),
+                  caret <= (host?.editorText as NSString?)?.length ?? 0
+            else { continue }
+            return NSRange(location: caret, length: 0)
+        }
+        return nil
+    }
+
     /// パース確定後に隠すマーカーを最新プランへ同期し、変わった段落を再生成させる。
     private func updateLivePreview() {
         refreshLivePreviewFocus()
@@ -309,6 +397,10 @@ final class MarkdownEditorEngine: NSObject {
         if frontMatter.isEnabled, let host {
             frontMatter.selectionDidChange(host.editorSelectedRanges)
             if !isRegeneratingParagraphs { applyFrontMatterChanges() }
+        }
+        if tables.isEnabled, let host {
+            tables.selectionDidChange(host.editorSelectedRanges)
+            if !isRegeneratingParagraphs { applyTableChanges() }
         }
         guard livePreview.isEnabled else { return }
         // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush)に回す。
@@ -332,6 +424,13 @@ final class MarkdownEditorEngine: NSObject {
             if !isRegeneratingParagraphs { applyFrontMatterChanges() }
         } else {
             frontMatter.editorFocusDidChange(focused)
+        }
+        if tables.isEnabled, tables.isEditorFocused != focused, let host {
+            tables.selectionDidChange(host.editorSelectedRanges)
+            tables.editorFocusDidChange(focused)
+            if !isRegeneratingParagraphs { applyTableChanges() }
+        } else {
+            tables.editorFocusDidChange(focused)
         }
         guard livePreview.isEditorFocused != focused else { return }
         // 先に選択範囲を最新にしてから切り替える(フォーカスの無い間の選択変更は段落を無効化しないので、
@@ -392,6 +491,7 @@ final class MarkdownEditorEngine: NSObject {
         // 適用を見送っている。次の操作を待たずにここで拾う(1 回だけ: 再帰しても溜まった分を使い切れば止まる)。
         applyLivePreviewChanges()
         applyFrontMatterChanges()
+        applyTableChanges()
     }
 
     private func updateBlockDecorations() {
@@ -648,6 +748,10 @@ final class MarkdownEditorEngine: NSObject {
                 frontMatter.containerWidthDidChange(frontMatterTableWidth(host))
                 applyFrontMatterChanges()
             }
+            if tables.isEnabled, let host {
+                tables.containerWidthDidChange(host.imageContainerWidth)
+                applyTableChanges()
+            }
         }
     }
 
@@ -767,6 +871,7 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         fragmentProvider.noteEdit(editedRange: editedRange, changeInLength: delta)
         livePreview.noteEdit(editedRange: editedRange, changeInLength: delta)
         frontMatter.noteEdit(editedRange: editedRange, changeInLength: delta)
+        tables.noteEdit(editedRange: editedRange, changeInLength: delta)
         scheduleHighlight()
         host?.editorTextDidChange()
     }

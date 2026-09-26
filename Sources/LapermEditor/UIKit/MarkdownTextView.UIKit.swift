@@ -20,6 +20,8 @@ public final class MarkdownTextView: UITextView {
     private let imageOverlay = ImagePreviewOverlayView()
     private let frontMatterTableView = FrontMatterTableView()
     private var collectedFrontMatterEntry: FrontMatterTableEntry?
+    private let tablePreviewOverlay = TablePreviewOverlayView()
+    private var collectedTableEntries: [TablePreviewEntry] = []
     private let linkHoverOverlay = LinkHoverOverlayView()
     private var collectedLines: [GutterLine] = []
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
@@ -47,6 +49,10 @@ public final class MarkdownTextView: UITextView {
     var debugFrontMatterEntry: FrontMatterTableEntry? { collectedFrontMatterEntry }
     /// テスト用: Front Matter の折りたたみ状態。
     var frontMatterController: FrontMatterController { engine.frontMatter }
+    /// テスト用: 直近のビューポートレイアウトで置いたテーブルの表(折りたたまれているものだけ)。
+    var debugTableEntries: [TablePreviewEntry] { collectedTableEntries }
+    /// テスト用: テーブルの折りたたみ状態。
+    var tablePreviewController: TablePreviewController { engine.tables }
 
     public var theme: MarkdownTheme {
         get { engine.theme }
@@ -269,6 +275,7 @@ public final class MarkdownTextView: UITextView {
         addSubview(gutter)
         addSubview(imageOverlay)
         addSubview(frontMatterTableView)
+        addSubview(tablePreviewOverlay)
         updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
@@ -626,6 +633,7 @@ public final class MarkdownTextView: UITextView {
         }
         imageOverlay.frame = CGRect(
             x: 0, y: 0, width: bounds.width, height: max(contentSize.height, bounds.height))
+        tablePreviewOverlay.frame = imageOverlay.frame
         updateLinkHoverOverlay()
         if imageContainerWidth != lastImageContainerWidth {
             lastImageContainerWidth = imageContainerWidth
@@ -691,6 +699,8 @@ public final class MarkdownTextView: UITextView {
         collectedLines.removeAll(keepingCapacity: true)
         collectedImageEntries.removeAll(keepingCapacity: true)
         collectedFrontMatterEntry = nil
+        collectedTableEntries.removeAll(keepingCapacity: true)
+        engine.viewportLayoutWillBegin()
     }
 
     public override func textViewportLayoutController(
@@ -703,6 +713,7 @@ public final class MarkdownTextView: UITextView {
         )
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
+        if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
         guard showsLineNumbers, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -714,6 +725,7 @@ public final class MarkdownTextView: UITextView {
         gutter.lines = collectedLines
         imageOverlay.update(entries: collectedImageEntries)
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
+        tablePreviewOverlay.update(entries: collectedTableEntries)
     }
 
     // MARK: - 座標
@@ -732,6 +744,7 @@ public final class MarkdownTextView: UITextView {
         let modifiers = recognizer.modifierFlags.intersection([.shift, .control, .alternate, .command])
         if modifiers == [.command], openLink(atPoint: point) { return }
         if modifiers.isEmpty, expandFrontMatter(atPoint: point) { return }
+        if modifiers.isEmpty, expandTable(atPoint: point) { return }
         if editingOptions.togglesCheckboxOnClick, modifiers.isEmpty {
             _ = toggleCheckbox(atPoint: point)
         }
@@ -748,6 +761,7 @@ public final class MarkdownTextView: UITextView {
         // Live Preview の Front Matter の表: 標準のタップ(展開後のレイアウトで最寄りの文字にキャレットを置く)
         // より先に、タップした Property の行へキャレットを置く
         if engine.frontMatterCaretRange(atPoint: point) != nil { return true }
+        if engine.tableCaretRange(atPoint: point) != nil { return true }
         guard editingOptions.togglesCheckboxOnClick else { return false }
         return EditingAssistant.toggleCheckbox(
             text: text as NSString, at: characterIndex(at: point)) != nil
@@ -775,6 +789,18 @@ public final class MarkdownTextView: UITextView {
     @discardableResult
     func expandFrontMatter(atPoint point: CGPoint) -> Bool {
         guard let caret = engine.frontMatterCaretRange(atPoint: point) else { return false }
+        if !isFirstResponder { becomeFirstResponder() }
+        selectedRange = caret
+        return true
+    }
+
+    // MARK: - テーブル(ADR 0019)
+
+    /// point(ビュー座標)が Live Preview のテーブルの表の上なら、そのセルの内容の末尾にキャレットを置いて
+    /// ブロックを展開する。展開したら true。表の上のタッチは `shouldInterceptTap` が受け取る(Front Matter と同じ)。
+    @discardableResult
+    func expandTable(atPoint point: CGPoint) -> Bool {
+        guard let caret = engine.tableCaretRange(atPoint: point) else { return false }
         if !isFirstResponder { becomeFirstResponder() }
         selectedRange = caret
         return true

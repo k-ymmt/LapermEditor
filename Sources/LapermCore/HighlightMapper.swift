@@ -15,7 +15,8 @@ enum HighlightMapper {
             spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans,
             images: visitor.imageReferences,
             links: visitor.linkReferences,
-            concealableMarkers: visitor.concealableMarkers
+            concealableMarkers: visitor.concealableMarkers,
+            tables: visitor.tables
         )
     }
 
@@ -29,6 +30,8 @@ enum HighlightMapper {
         var concealableMarkers: [NSRange] = []
         var imageReferences: [ImageReference] = []
         var linkReferences: [LinkReference] = []
+        /// テーブルの構造(セルのレンジ)。Live Preview の表が使う。
+        var tables: [MarkdownTable] = []
         private var tableDepth = 0
         /// リンク・画像の内側を走査中はベア URL 検出を止める(二重検出防止)
         private var inlineLinkDepth = 0
@@ -141,6 +144,7 @@ enum HighlightMapper {
                     blockSpans.append(HighlightSpan(range: headRange, kind: .tableHeader))
                 }
                 appendTableMarkers(in: range)
+                if let table = MarkdownTableParser.parse(range: range, in: text) { tables.append(table) }
             }
             tableDepth += 1
             descendInto(table)
@@ -166,36 +170,9 @@ enum HighlightMapper {
             return nil
         }
 
-        /// GFM の区切り行か: パイプ区切りの各セルが `:?-+:?`(空白は許容)で、"-" を 1 つ以上含む。
+        /// GFM の区切り行か(判定は `MarkdownTableParser` と共有)。
         private func isTableDelimiterLine(_ line: NSRange) -> Bool {
-            var i = line.location
-            let end = NSMaxRange(line)
-            var sawDash = false
-            var cellHasDash = false
-            var cellHasColonAfterDash = false
-            var cells = 0
-            while i < end {
-                let c = text.character(at: i)
-                switch c {
-                case ASCII.space, ASCII.tab:
-                    break
-                case ASCII.dash:
-                    guard !cellHasColonAfterDash else { return false }
-                    cellHasDash = true
-                    sawDash = true
-                case ASCII.colon:
-                    if cellHasDash { cellHasColonAfterDash = true }
-                case ASCII.pipe:
-                    if cellHasDash { cells += 1 }
-                    cellHasDash = false
-                    cellHasColonAfterDash = false
-                default:
-                    return false
-                }
-                i += 1
-            }
-            if cellHasDash { cells += 1 }
-            return sawDash && cells > 0
+            MarkdownTableParser.delimiterAlignments(line: line, in: text) != nil
         }
 
         mutating func visitListItem(_ listItem: ListItem) {

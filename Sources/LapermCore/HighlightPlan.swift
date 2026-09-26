@@ -24,16 +24,19 @@ public struct HighlightPlan: Equatable, Sendable {
     public var concealableMarkers: [NSRange]
     /// 文書先頭の Front Matter(無ければ nil)。Live Preview が表として描くために使う。
     public var frontMatter: FrontMatter?
+    /// GFM のテーブル(出現順)。Live Preview が表として描くために使う(Laperm ADR 0019)。
+    public var tables: [MarkdownTable]
 
     public init(
         spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
-        concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil
+        concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil, tables: [MarkdownTable] = []
     ) {
         self.spans = spans
         self.images = images
         self.links = links
         self.concealableMarkers = concealableMarkers
         self.frontMatter = frontMatter
+        self.tables = tables
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -86,9 +89,14 @@ public struct HighlightPlan: Equatable, Sendable {
         // Front Matter は文書先頭に固定なので平行移動できない。ブロック(閉じの `---` の行末を含む)に
         // 触る編集、またはそれより前の編集では破棄する(次のパース結果から再生成される)。
         let resultFrontMatter = frontMatter.flatMap { preEditRange.location > NSMaxRange($0.range) ? $0 : nil }
+        // テーブルはスパンと同じ規約: 編集より前なら不変、後なら平行移動、交差なら破棄(次のパースで再生成)。
+        let resultTables = tables.compactMap { table -> MarkdownTable? in
+            guard let range = Self.shift(table.range, preEditRange: preEditRange, delta: delta) else { return nil }
+            return range == table.range ? table : table.shifted(by: delta)
+        }
         return HighlightPlan(
             spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers,
-            frontMatter: resultFrontMatter)
+            frontMatter: resultFrontMatter, tables: resultTables)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。
