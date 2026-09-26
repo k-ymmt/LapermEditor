@@ -15,6 +15,8 @@ import UIKit
 ///   文字を隠して表の高さを予約した表示用段落を返す(`FrontMatterController`、ADR 0016)。
 /// - テーブル: 同じく、折りたたまれている間はヘッダー行以外の段落を列挙から除外し、ヘッダー行の段落に
 ///   表の高さを予約する(`TablePreviewController`、ADR 0019)。
+/// - コードブロック: 同じく、折りたたまれている間は先頭の行以外の段落を列挙から除外し、先頭の行の段落に
+///   箱の高さを予約する(`CodeBlockPreviewController`、ADR 0020)。
 @MainActor
 final class EditorContentStorageDelegate: NSObject {
     let foldingController: FoldingController
@@ -24,17 +26,20 @@ final class EditorContentStorageDelegate: NSObject {
     let frontMatter: FrontMatterController?
     /// nil ならテーブルの折りたたみ無し(単体テストの継ぎ目)。
     let tables: TablePreviewController?
+    /// nil ならコードブロックの折りたたみ無し(単体テストの継ぎ目)。
+    let codeBlocks: CodeBlockPreviewController?
 
     init(
         foldingController: FoldingController, fragmentProvider: BlockFragmentProvider,
         livePreview: LivePreviewConcealer, frontMatter: FrontMatterController? = nil,
-        tables: TablePreviewController? = nil
+        tables: TablePreviewController? = nil, codeBlocks: CodeBlockPreviewController? = nil
     ) {
         self.foldingController = foldingController
         self.fragmentProvider = fragmentProvider
         self.livePreview = livePreview
         self.frontMatter = frontMatter
         self.tables = tables
+        self.codeBlocks = codeBlocks
     }
 }
 
@@ -44,12 +49,14 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         shouldEnumerate textElement: NSTextElement,
         options: NSTextContentManager.EnumerationOptions
     ) -> Bool {
-        // 折りたたまれた Front Matter の段落(開きの `---` 以外)とテーブルの段落(ヘッダー行以外)は列挙しない
-        if frontMatter?.isCollapsed == true || tables?.presented.isEmpty == false,
+        // 折りたたまれた Front Matter の段落(開きの `---` 以外)、テーブルの段落(ヘッダー行以外)、コードブロックの
+        // 段落(先頭の行以外)は列挙しない
+        if frontMatter?.isCollapsed == true || tables?.presented.isEmpty == false || codeBlocks?.presented.isEmpty == false,
            let location = textElement.elementRange?.location {
             let offset = textContentManager.offset(from: textContentManager.documentRange.location, to: location)
             if let frontMatter, frontMatter.isCollapsed, !frontMatter.shouldEnumerate(paragraphStartingAt: offset) { return false }
             if let tables, !tables.shouldEnumerate(paragraphStartingAt: offset) { return false }
+            if let codeBlocks, !codeBlocks.shouldEnumerate(paragraphStartingAt: offset) { return false }
         }
         return foldingController.textContentManager(
             textContentManager, shouldEnumerate: textElement, options: options)
@@ -61,9 +68,10 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         // 折りたたまれた Front Matter の開きの段落 / テーブルのヘッダー行(文字を隠し、表の高さを予約)は他の仕組みより優先
         if let collapsed = frontMatter?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         if let collapsed = tables?.textParagraph(with: range, in: textContentStorage) { return collapsed }
+        if let collapsed = codeBlocks?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
-        // 展開中のテーブルのブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
-        if tables?.isExempt(paragraph: range) == true { return base }
+        // 展開中のテーブル / コードブロックのブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
+        if tables?.isExempt(paragraph: range) == true || codeBlocks?.isExempt(paragraph: range) == true { return base }
         return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
 }

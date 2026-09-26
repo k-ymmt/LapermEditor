@@ -26,10 +26,13 @@ public struct HighlightPlan: Equatable, Sendable {
     public var frontMatter: FrontMatter?
     /// GFM のテーブル(出現順)。Live Preview が表として描くために使う(Laperm ADR 0019)。
     public var tables: [MarkdownTable]
+    /// コードブロック(出現順)。Live Preview がコードブロックの箱として描くために使う(Laperm ADR 0020)。
+    public var codeBlocks: [MarkdownCodeBlock]
 
     public init(
         spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
-        concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil, tables: [MarkdownTable] = []
+        concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil, tables: [MarkdownTable] = [],
+        codeBlocks: [MarkdownCodeBlock] = []
     ) {
         self.spans = spans
         self.images = images
@@ -37,6 +40,7 @@ public struct HighlightPlan: Equatable, Sendable {
         self.concealableMarkers = concealableMarkers
         self.frontMatter = frontMatter
         self.tables = tables
+        self.codeBlocks = codeBlocks
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -95,9 +99,14 @@ public struct HighlightPlan: Equatable, Sendable {
             if table.isTouched(byEditBefore: preEditRange) { return nil }
             return table.range.location >= NSMaxRange(preEditRange) ? table.shifted(by: delta) : table
         }
+        // コードブロックも同じ規則(Live Preview のコードブロックの箱と共有)
+        let resultCodeBlocks = codeBlocks.compactMap { block -> MarkdownCodeBlock? in
+            if block.isTouched(byEditBefore: preEditRange) { return nil }
+            return block.range.location >= NSMaxRange(preEditRange) ? block.shifted(by: delta) : block
+        }
         return HighlightPlan(
             spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers,
-            frontMatter: resultFrontMatter, tables: resultTables)
+            frontMatter: resultFrontMatter, tables: resultTables, codeBlocks: resultCodeBlocks)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。

@@ -188,6 +188,8 @@ public final class MarkdownTextView: NSTextView {
     private var collectedFrontMatterEntry: FrontMatterTableEntry?
     private let tablePreviewOverlay = TablePreviewOverlayView()
     private var collectedTableEntries: [TablePreviewEntry] = []
+    private let codeBlockPreviewOverlay = CodeBlockPreviewOverlayView()
+    private var collectedCodeBlockEntries: [CodeBlockPreviewEntry] = []
 
     /// テスト用: 直近のビューポートレイアウトで収集したオーバーレイ配置。
     var debugImageEntries: [ImagePreviewOverlayEntry] { collectedImageEntries }
@@ -199,6 +201,10 @@ public final class MarkdownTextView: NSTextView {
     var debugTableEntries: [TablePreviewEntry] { collectedTableEntries }
     /// テスト用: テーブルの折りたたみ状態。
     var tablePreviewController: TablePreviewController { engine.tables }
+    /// テスト用: 直近のビューポートレイアウトで置いたコードブロックの箱(折りたたまれているものだけ)。
+    var debugCodeBlockEntries: [CodeBlockPreviewEntry] { collectedCodeBlockEntries }
+    /// テスト用: コードブロックの折りたたみ状態。
+    var codeBlockPreviewController: CodeBlockPreviewController { engine.codeBlocks }
 
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
@@ -246,6 +252,8 @@ public final class MarkdownTextView: NSTextView {
         addSubview(frontMatterTableView)
         tablePreviewOverlay.autoresizingMask = [.width, .height]
         addSubview(tablePreviewOverlay)
+        codeBlockPreviewOverlay.autoresizingMask = [.width, .height]
+        addSubview(codeBlockPreviewOverlay)
         syncEditorFocus()
     }
 
@@ -291,6 +299,7 @@ public final class MarkdownTextView: NSTextView {
         collectedImageEntries.removeAll(keepingCapacity: true)
         collectedFrontMatterEntry = nil
         collectedTableEntries.removeAll(keepingCapacity: true)
+        collectedCodeBlockEntries.removeAll(keepingCapacity: true)
         engine.viewportLayoutWillBegin()
     }
 
@@ -305,6 +314,7 @@ public final class MarkdownTextView: NSTextView {
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
         if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
+        if let entry = engine.codeBlockPreviewEntry(for: textLayoutFragment) { collectedCodeBlockEntries.append(entry) }
         guard gutterView != nil, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -317,6 +327,7 @@ public final class MarkdownTextView: NSTextView {
         imageOverlay.update(entries: collectedImageEntries)
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
         tablePreviewOverlay.update(entries: collectedTableEntries)
+        codeBlockPreviewOverlay.update(entries: collectedCodeBlockEntries)
     }
 
     /// ガター付きの推奨構成。documentView は MarkdownTextView。
@@ -686,6 +697,9 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, modifiers.isEmpty, expandTable(atPoint: point) {
             return
         }
+        if event.clickCount == 1, modifiers.isEmpty, copyCodeBlock(atPoint: point) || expandCodeBlock(atPoint: point) {
+            return
+        }
         if editingOptions.togglesCheckboxOnClick,
             event.clickCount == 1,
             modifiers.isEmpty,
@@ -712,6 +726,28 @@ public final class MarkdownTextView: NSTextView {
         guard let caret = engine.tableCaretRange(atPoint: point) else { return false }
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
         setSelectedRange(caret)
+        return true
+    }
+
+    /// point(ビュー座標)が Live Preview のコードブロックの箱の上(コピーボタンの上を除く)なら、その点の文字の間に
+    /// キャレットを置いてブロックを展開する(ADR 0020)。展開したら true。
+    @discardableResult
+    func expandCodeBlock(atPoint point: NSPoint) -> Bool {
+        guard let caret = engine.codeBlockCaretRange(atPoint: point) else { return false }
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        setSelectedRange(caret)
+        return true
+    }
+
+    /// point(ビュー座標)が Live Preview のコードブロックのコピーボタンの上なら、本文(フェンスとインデントを除く)を
+    /// ペーストボードへコピーする。コピーしたら true(ブロックは展開しない)。
+    @discardableResult
+    func copyCodeBlock(atPoint point: NSPoint) -> Bool {
+        guard let target = engine.codeBlockCopyTarget(atPoint: point) else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(target.text, forType: .string)
+        engine.noteCodeBlockCopied(at: target.location)
         return true
     }
 

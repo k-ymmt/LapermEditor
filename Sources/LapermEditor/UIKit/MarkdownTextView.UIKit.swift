@@ -22,6 +22,8 @@ public final class MarkdownTextView: UITextView {
     private var collectedFrontMatterEntry: FrontMatterTableEntry?
     private let tablePreviewOverlay = TablePreviewOverlayView()
     private var collectedTableEntries: [TablePreviewEntry] = []
+    private let codeBlockPreviewOverlay = CodeBlockPreviewOverlayView()
+    private var collectedCodeBlockEntries: [CodeBlockPreviewEntry] = []
     private let linkHoverOverlay = LinkHoverOverlayView()
     private var collectedLines: [GutterLine] = []
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
@@ -53,6 +55,10 @@ public final class MarkdownTextView: UITextView {
     var debugTableEntries: [TablePreviewEntry] { collectedTableEntries }
     /// テスト用: テーブルの折りたたみ状態。
     var tablePreviewController: TablePreviewController { engine.tables }
+    /// テスト用: 直近のビューポートレイアウトで置いたコードブロックの箱(折りたたまれているものだけ)。
+    var debugCodeBlockEntries: [CodeBlockPreviewEntry] { collectedCodeBlockEntries }
+    /// テスト用: コードブロックの折りたたみ状態。
+    var codeBlockPreviewController: CodeBlockPreviewController { engine.codeBlocks }
 
     public var theme: MarkdownTheme {
         get { engine.theme }
@@ -276,6 +282,7 @@ public final class MarkdownTextView: UITextView {
         addSubview(imageOverlay)
         addSubview(frontMatterTableView)
         addSubview(tablePreviewOverlay)
+        addSubview(codeBlockPreviewOverlay)
         updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
@@ -634,6 +641,7 @@ public final class MarkdownTextView: UITextView {
         imageOverlay.frame = CGRect(
             x: 0, y: 0, width: bounds.width, height: max(contentSize.height, bounds.height))
         tablePreviewOverlay.frame = imageOverlay.frame
+        codeBlockPreviewOverlay.frame = imageOverlay.frame
         updateLinkHoverOverlay()
         if imageContainerWidth != lastImageContainerWidth {
             lastImageContainerWidth = imageContainerWidth
@@ -700,6 +708,7 @@ public final class MarkdownTextView: UITextView {
         collectedImageEntries.removeAll(keepingCapacity: true)
         collectedFrontMatterEntry = nil
         collectedTableEntries.removeAll(keepingCapacity: true)
+        collectedCodeBlockEntries.removeAll(keepingCapacity: true)
         engine.viewportLayoutWillBegin()
     }
 
@@ -714,6 +723,7 @@ public final class MarkdownTextView: UITextView {
         collectedImageEntries.append(contentsOf: engine.imagePreviewEntries(for: textLayoutFragment))
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
         if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
+        if let entry = engine.codeBlockPreviewEntry(for: textLayoutFragment) { collectedCodeBlockEntries.append(entry) }
         guard showsLineNumbers, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -726,6 +736,7 @@ public final class MarkdownTextView: UITextView {
         imageOverlay.update(entries: collectedImageEntries)
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
         tablePreviewOverlay.update(entries: collectedTableEntries)
+        codeBlockPreviewOverlay.update(entries: collectedCodeBlockEntries)
     }
 
     // MARK: - 座標
@@ -745,6 +756,7 @@ public final class MarkdownTextView: UITextView {
         if modifiers == [.command], openLink(atPoint: point) { return }
         if modifiers.isEmpty, expandFrontMatter(atPoint: point) { return }
         if modifiers.isEmpty, expandTable(atPoint: point) { return }
+        if modifiers.isEmpty, copyCodeBlock(atPoint: point) || expandCodeBlock(atPoint: point) { return }
         if editingOptions.togglesCheckboxOnClick, modifiers.isEmpty {
             _ = toggleCheckbox(atPoint: point)
         }
@@ -762,6 +774,7 @@ public final class MarkdownTextView: UITextView {
         // より先に、タップした Property の行へキャレットを置く
         if engine.frontMatterCaretRange(atPoint: point) != nil { return true }
         if engine.tableCaretRange(atPoint: point) != nil { return true }
+        if engine.codeBlockCopyTarget(atPoint: point) != nil || engine.codeBlockCaretRange(atPoint: point) != nil { return true }
         guard editingOptions.togglesCheckboxOnClick else { return false }
         return EditingAssistant.toggleCheckbox(
             text: text as NSString, at: characterIndex(at: point)) != nil
@@ -803,6 +816,28 @@ public final class MarkdownTextView: UITextView {
         guard let caret = engine.tableCaretRange(atPoint: point) else { return false }
         if !isFirstResponder { becomeFirstResponder() }
         selectedRange = caret
+        return true
+    }
+
+    // MARK: - コードブロック(ADR 0020)
+
+    /// point(ビュー座標)が Live Preview のコードブロックの箱の上(コピーボタンの上を除く)なら、その点の文字の間に
+    /// キャレットを置いてブロックを展開する。展開したら true。箱の上のタッチは `shouldInterceptTap` が受け取る。
+    @discardableResult
+    func expandCodeBlock(atPoint point: CGPoint) -> Bool {
+        guard let caret = engine.codeBlockCaretRange(atPoint: point) else { return false }
+        if !isFirstResponder { becomeFirstResponder() }
+        selectedRange = caret
+        return true
+    }
+
+    /// point(ビュー座標)が Live Preview のコードブロックのコピーボタンの上なら、本文(フェンスとインデントを除く)を
+    /// ペーストボードへコピーする。コピーしたら true(ブロックは展開しない)。
+    @discardableResult
+    func copyCodeBlock(atPoint point: CGPoint) -> Bool {
+        guard let target = engine.codeBlockCopyTarget(atPoint: point) else { return false }
+        UIPasteboard.general.string = target.text
+        engine.noteCodeBlockCopied(at: target.location)
         return true
     }
 

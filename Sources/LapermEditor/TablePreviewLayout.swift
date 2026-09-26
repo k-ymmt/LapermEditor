@@ -201,12 +201,16 @@ struct TablePreviewLayout: Equatable {
 }
 
 /// オーバーレイに渡す表の配置(frame はテキストビュー座標)。両 OS 共通。
-struct TablePreviewEntry: Equatable {
+struct TablePreviewEntry: @MainActor BlockPreviewOverlayEntry {
     /// テーブルのブロックの先頭(ヘッダー行の行頭。文書座標)。オーバーレイがビューを使い回す鍵。
     var location: Int
     var layout: TablePreviewLayout
     var appearance: TablePreviewLayout.Appearance
     var frame: CGRect
+
+    func draw(in context: CGContext, visibleRect: CGRect) {
+        TablePreviewRenderer.draw(layout, appearance: appearance, in: context, visibleRect: visibleRect)
+    }
 }
 
 /// 表の描画。両 OS のオーバーレイが `draw(_:)` から呼ぶ(座標は y 下向き、原点は表の左上)。`visibleRect`(描く必要の

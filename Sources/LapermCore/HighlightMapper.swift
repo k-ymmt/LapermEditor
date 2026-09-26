@@ -16,7 +16,8 @@ enum HighlightMapper {
             images: visitor.imageReferences,
             links: visitor.linkReferences,
             concealableMarkers: visitor.concealableMarkers,
-            tables: visitor.tables
+            tables: visitor.tables,
+            codeBlocks: visitor.codeBlocks
         )
     }
 
@@ -32,6 +33,8 @@ enum HighlightMapper {
         var linkReferences: [LinkReference] = []
         /// テーブルの構造(セルのレンジ)。Live Preview の表が使う。
         var tables: [MarkdownTable] = []
+        /// コードブロックの構造。Live Preview のコードブロックの箱が使う。
+        var codeBlocks: [MarkdownCodeBlock] = []
         /// 走査中のテーブル(セル内のインライン要素の位置補正に使う)。
         private var currentTable: MarkdownTable?
         private var tableDepth = 0
@@ -131,12 +134,40 @@ enum HighlightMapper {
             blockSpans.append(HighlightSpan(range: range, kind: .codeBlock))
             // フェンス行をマーカーに(インデント型コードブロックはフェンスなし)
             let firstLine = clippedLineRange(at: range.location, within: range)
-            if isFenceLine(firstLine) {
+            let lastLine = clippedLineRange(at: max(range.location, NSMaxRange(range) - 1), within: range)
+            if let fence = openingFence(of: firstLine) {
                 markerSpans.append(HighlightSpan(range: firstLine, kind: .syntaxMarker))
-                let lastLine = clippedLineRange(at: max(range.location, NSMaxRange(range) - 1), within: range)
-                if lastLine != firstLine, isFenceLine(lastLine) {
+                let isClosed = lastLine != firstLine && isClosingFence(lastLine, of: fence)
+                if isClosed {
                     markerSpans.append(HighlightSpan(range: lastLine, kind: .syntaxMarker))
                 }
+                // 本文: 開始フェンス行の次の行から、終了フェンス行(閉じていなければブロック末尾)の手前まで
+                var contentRange: NSRange?
+                let contentStart = NSMaxRange(text.lineRange(for: NSRange(location: firstLine.location, length: 0)))
+                let contentEnd = isClosed
+                    ? text.lineRange(for: NSRange(location: lastLine.location, length: 0)).location : NSMaxRange(range)
+                // 閉じているときは終了フェンス行より前に行があるとき、閉じていなければブロックの中に行があるとき
+                if contentStart < contentEnd {
+                    // 最後の行の改行は含めない(閉じていれば終了フェンス行の直前の改行、閉じていなければ文書末)
+                    var lastContentEnd = contentEnd
+                    if isClosed, lastContentEnd > contentStart {
+                        var contentsEnd = 0
+                        text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: lastContentEnd - 1, length: 0))
+                        lastContentEnd = max(contentStart, contentsEnd)
+                    }
+                    contentRange = NSRange(location: contentStart, length: lastContentEnd - contentStart)
+                }
+                codeBlocks.append(MarkdownCodeBlock(
+                    range: range, isFenced: true, isClosed: isClosed, language: fence.language,
+                    contentRange: contentRange, contentIndent: range.location - text.lineRange(for: NSRange(location: range.location, length: 0)).location))
+            } else {
+                // インデント型: 全行が本文。cmark のレンジは最後の行の改行を含むことがあるので、行末まででそろえる
+                var contentsEnd = 0
+                text.getLineStart(nil, end: nil, contentsEnd: &contentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
+                let end = min(NSMaxRange(range), max(range.location, contentsEnd))
+                codeBlocks.append(MarkdownCodeBlock(
+                    range: range, isFenced: false, isClosed: true, language: nil,
+                    contentRange: NSRange(location: range.location, length: end - range.location), contentIndent: 4))
             }
             // コードブロック内部は descend しない(強調等を解釈しない)
         }
@@ -465,10 +496,35 @@ enum HighlightMapper {
             }
         }
 
-        /// フェンス行か: 先頭の空白(CommonMark はフェンスの前に最大 3 個のスペースを許す)を
-        /// 読み飛ばした位置から "```" / "~~~" が始まる。line はコードブロックレンジで
-        /// クリップ済みなので、開始フェンスは range.location(インデント後)から始まる。
-        private func isFenceLine(_ line: NSRange) -> Bool {
+        /// 開始フェンス: フェンスの文字と長さと、info string の最初の語(言語)。
+        struct Fence {
+            var character: unichar
+            var length: Int
+            var language: String?
+        }
+
+        /// 開始フェンス行なら、そのフェンス。先頭の空白(CommonMark はフェンスの前に最大 3 個のスペースを許す)を
+        /// 読み飛ばした位置から "```" / "~~~" が始まる。line はコードブロックレンジでクリップ済みなので、
+        /// 開始フェンスは range.location(インデント後)から始まる。
+        private func openingFence(of line: NSRange) -> Fence? {
+            guard let (i, first, length) = fenceRun(in: line) else { return nil }
+            let rest = text.substring(with: NSRange(location: i + length, length: NSMaxRange(line) - i - length))
+            let language = rest.split(whereSeparator: { $0 == " " || $0 == "\t" }).first.map(String.init)
+            return Fence(character: first, length: length, language: language)
+        }
+
+        /// 終了フェンス行か: 同じ文字が開始フェンス以上の長さで並び、その後ろは空白だけ(CommonMark)。
+        private func isClosingFence(_ line: NSRange, of fence: Fence) -> Bool {
+            guard let (i, character, length) = fenceRun(in: line), character == fence.character, length >= fence.length
+            else { return false }
+            for k in (i + length)..<NSMaxRange(line) where text.character(at: k) != ASCII.space && text.character(at: k) != ASCII.tab {
+                return false
+            }
+            return true
+        }
+
+        /// 行頭(最大 3 個のスペースの後)のフェンス文字の並び: 開始位置、文字、長さ。3 個未満なら nil。
+        private func fenceRun(in line: NSRange) -> (Int, unichar, Int)? {
             var i = line.location
             let end = NSMaxRange(line)
             var leadingSpaces = 0
@@ -476,10 +532,12 @@ enum HighlightMapper {
                 i += 1
                 leadingSpaces += 1
             }
-            guard i + 3 <= end else { return false }
+            guard i + 3 <= end else { return nil }
             let first = text.character(at: i)
-            guard first == ASCII.backtick || first == ASCII.tilde else { return false }
-            return text.character(at: i + 1) == first && text.character(at: i + 2) == first
+            guard first == ASCII.backtick || first == ASCII.tilde else { return nil }
+            var length = 0
+            while i + length < end, text.character(at: i + length) == first { length += 1 }
+            return length >= 3 ? (i, first, length) : nil
         }
 
         /// blockQuote の子孫にある BlockQuote のレンジ(ネストの深さの判定用)。

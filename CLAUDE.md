@@ -53,11 +53,21 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     (the engine returns false during IME marked text, so enumeration / reservation / display paragraph never
     disagree); an edit touching the block marks the model stale (expanded, no table clicks) until the next parse;
     the table layout is cached by (front matter, width, appearance). The text storage is never changed.
+  - Block previews (shared): `BlockPreviewController<Source>` is `FrontMatterController` generalised to N blocks anywhere
+    in the document (the state machine: enabled / focus / selection / width / theme inputs → desired presentation, moved
+    to the presented one only while `canPresent()`; `noteEdit` shifts blocks after an edit and drops a touched one until
+    the next parse; hidden-font display paragraph for the block's first paragraph with `paragraphSpacing` =
+    `Layout.reservedHeight`, the other paragraphs excluded from enumeration; `exemptRanges` for the expanded blocks;
+    pending dirty ranges / redraw). A `BlockPreviewSource` (table / code block) supplies the block (`PreviewableBlock`),
+    a position-independent cache key, the cached model and `makeLayout`. Both text views draw the overlays through one
+    generic `BlockPreviewOverlayView<Entry: BlockPreviewOverlayEntry>` (one non-hit-testing item view per block keyed by
+    its start offset). `TablePreviewController` / `CodeBlockPreviewController` are typealiases with the block-specific
+    `update(plan:storage:text:)` (candidate filter), hit tests and copy text in extensions.
   - Tables (Laperm ADR 0019): `LapermCore/MarkdownTable.swift` (`MarkdownTable` + `MarkdownTableParser`) scans the
     table range that `HighlightMapper.visitTable` already clamps (header line, delimiter line → per-column `Alignment`,
     body rows; cells split on unescaped `|`, trimmed, padded / truncated to the column count like GFM) and
     `HighlightPlan.tables` carries the result (`shifted` moves / drops them like spans). `TablePreviewController`
-    (shared) is `FrontMatterController` generalised to N blocks anywhere in the document: while Live Preview is on,
+    (shared) is the block preview for tables: while Live Preview is on,
     every table that starts at a line start (not in a list item / quote) is collapsed unless the editor is first
     responder and the selection touches it (caret from the header line start to the last row's line end, both
     inclusive; the trailing empty line of a table-ending document counts; a selection ending right before the table
@@ -88,6 +98,33 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     per-table frames so a stale frame of a table scrolled out of the viewport never catches a click;
     `tableCaretRange(atPoint:)` maps a click / tap to the end of the cell (`MarkdownTextView.expandTable(atPoint:)`,
     and `shouldInterceptTap` on iOS).
+  - Code blocks (Laperm ADR 0020): `LapermCore/MarkdownCodeBlock.swift` carries what `HighlightMapper.visitCodeBlock`
+    finds for every fenced / indented code block (`range` = the `.codeBlock` span, `isFenced`, `isClosed` — the closing
+    fence must be the same character, at least as long as the opening one and followed by whitespace only —,
+    `language` = first word of the info string, `contentRange` = the content lines without fences (nil when there is
+    none), `contentIndent` = the opening fence's indent / 4 for indented blocks; `contentLineRanges(in:)` and
+    `displayRange(ofContentLine:in:)` strip that indent, tab = next multiple of 4) as `HighlightPlan.codeBlocks`
+    (`shifted` uses the table rule). `CodeBlockPreviewController` collapses, while Live Preview is on, every **closed**
+    block whose start is preceded only by spaces / tabs on its line (a block in a list item / quote and an unclosed
+    fence stay Source) unless the editor is first responder and the selection touches the block's paragraphs (from the
+    first line's line start — the indentation of an indented block counts — to the content end, trailing empty line of
+    a block-ending document included). Collapsed = the first line's paragraph (the opening fence, or the first code line
+    of an indented block, which starts at its line start even though `range.location` is after the indent) gets the
+    hidden-font display paragraph with `paragraphSpacing` = `CodeBlockPreviewLayout.reservedHeight`, the other paragraphs
+    are excluded, no `CodeBlockFragment` decoration, and `BlockPreviewOverlayView<CodeBlockPreviewEntry>` draws the box:
+    full text-container width like the Source box (`x` = container origin), `codeBlockBackground` fill with the fragment's
+    corner radius, a header strip (`headerHeight` 18pt) with the language label (`syntaxMarker` colour, system font at
+    0.8 × the code size) and the copy button (two rounded squares; a checkmark for `copiedFeedbackDuration` 1.5 s after a
+    copy) right-aligned, then the content lines (`CodeBlockPreviewModel`: language + lines with `displayOffset` /
+    `lineEndOffset` relative to the block start; `copyText` joins them) laid out and hit-tested by one TextKit 1 stack
+    (`CodeBlockPreviewLayout.TextLayout`, code font / colour from the Theme's `codeBlock` style, word wrap, Theme line
+    spacing; `==` is identity because it is rebuilt only for a new model / width / appearance). Expanded = Source look,
+    exempt from line-level concealing. A click / tap (`MarkdownTextView.expandCodeBlock(atPoint:)` after
+    `copyCodeBlock(atPoint:)`, via `MarkdownEditorEngine.codeBlockCaretRange` / `codeBlockCopyTarget`; on iOS
+    `shouldInterceptTap` claims touches over the box and the button) puts the caret at the character nearest the point
+    (`caretOffset(at:)`: header / above → first line start, below → last line end, box + 4pt slack otherwise nil) or
+    copies `copyText` to the pasteboard (`NSPasteboard.general` / `UIPasteboard.general`) without expanding and shows
+    the checkmark (`noteCodeBlockCopied`, redraw only). No syntax highlighting inside the box (deferred).
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
     `MarkdownTextView.headerView` / `headerHeight`) puts a SwiftUI view above the text *inside the scrolled
     content* (Laperm shows the note title there, Obsidian-style). The text view hosts it (`NSHostingView` /

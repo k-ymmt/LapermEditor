@@ -48,6 +48,8 @@ final class MarkdownEditorEngine: NSObject {
     let frontMatter: FrontMatterController
     /// Live Preview でテーブルを格子の表に折りたたむ(ADR 0019)。
     let tables: TablePreviewController
+    /// Live Preview でコードブロックを箱に折りたたむ(ADR 0020)。
+    let codeBlocks: CodeBlockPreviewController
     /// NSTextContentStorage の delegate(折畳の列挙除外とコードブロック段落の表示用スタイル)。
     /// delegate は weak 参照なのでここで保持する。
     private var contentStorageDelegate: EditorContentStorageDelegate?
@@ -72,6 +74,7 @@ final class MarkdownEditorEngine: NSObject {
             imagePreviewController.baseParagraphStyle = newValue.baseParagraphStyle
             frontMatter.themeDidChange(newValue)
             tables.themeDidChange(newValue)
+            codeBlocks.themeDidChange(newValue)
         }
     }
 
@@ -80,14 +83,18 @@ final class MarkdownEditorEngine: NSObject {
         fragmentProvider = BlockFragmentProvider(theme: theme)
         frontMatter = FrontMatterController(theme: theme)
         tables = TablePreviewController(theme: theme)
+        codeBlocks = CodeBlockPreviewController(theme: theme)
         super.init()
         fragmentProvider.collapsedBlockReservation = { [weak self] paragraph in
             guard let self else { return nil }
-            return self.frontMatter.reservedHeight(forParagraph: paragraph) ?? self.tables.reservedHeight(forParagraph: paragraph)
+            return self.frontMatter.reservedHeight(forParagraph: paragraph)
+                ?? self.tables.reservedHeight(forParagraph: paragraph)
+                ?? self.codeBlocks.reservedHeight(forParagraph: paragraph)
         }
         // IME 変換中は表示を切り替えない(段落の作り直しが変換セッションを乱す)。確定後の flush で移す。
         frontMatter.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         tables.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
+        codeBlocks.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
 
         foldingController.onOutlineChanged = { [weak self] in
@@ -131,7 +138,7 @@ final class MarkdownEditorEngine: NSObject {
         // コードブロック先頭 / 末尾段落に上下余白の段落スタイルを付ける(いずれもストレージ無変更)。
         let delegate = EditorContentStorageDelegate(
             foldingController: foldingController, fragmentProvider: fragmentProvider, livePreview: livePreview,
-            frontMatter: frontMatter, tables: tables)
+            frontMatter: frontMatter, tables: tables, codeBlocks: codeBlocks)
         contentStorageDelegate = delegate
         contentStorage.delegate = delegate
         fragmentProvider.fallbackDelegate = layoutManager.delegate
@@ -194,6 +201,7 @@ final class MarkdownEditorEngine: NSObject {
         updateLivePreview()
         updateFrontMatter()
         updateTables()
+        updateCodeBlocks()
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
@@ -217,6 +225,9 @@ final class MarkdownEditorEngine: NSObject {
             refreshTableInputs()
             tables.setEnabled(newValue)
             applyTableChanges()
+            refreshCodeBlockInputs()
+            codeBlocks.setEnabled(newValue)
+            applyCodeBlockChanges()
         }
     }
 
@@ -328,15 +339,20 @@ final class MarkdownEditorEngine: NSObject {
     /// `edited(.editedAttributes)` でも作り直させる(ヘッダー行の隠しと予約高さ、展開中のブロックの Syntax Marker 隠しの
     /// 除外は表示用段落そのものが変わるので、`recordEditAction` の使い回しでは足りない)。
     private func applyTableChanges() {
-        if tables.hasPendingPresentation, host?.editorHasMarkedText == true { scheduleHighlight() }
-        if tables.takeNeedsRedraw() { requestViewportRelayout() }
-        guard tables.hasPendingDirtyRanges else { return }
+        applyBlockPreviewChanges(tables)
+    }
+
+    /// テーブルとコードブロックで共通の、折りたたみの変化の適用。
+    private func applyBlockPreviewChanges<S>(_ controller: BlockPreviewController<S>) {
+        if controller.hasPendingPresentation, host?.editorHasMarkedText == true { scheduleHighlight() }
+        if controller.takeNeedsRedraw() { requestViewportRelayout() }
+        guard controller.hasPendingDirtyRanges else { return }
         if host?.editorHasMarkedText == true {
             scheduleHighlight()
             return
         }
         let length = host?.editorContentStorage?.textStorage?.length ?? 0
-        let dirtyRanges = tables.takePendingDirtyRanges().compactMap { range -> NSRange? in
+        let dirtyRanges = controller.takePendingDirtyRanges().compactMap { range -> NSRange? in
             let clipped = NSIntersectionRange(range, NSRange(location: 0, length: length))
             return clipped.length > 0 ? clipped : nil
         }
@@ -346,11 +362,14 @@ final class MarkdownEditorEngine: NSObject {
 
     /// 直近のビューポートレイアウトで表を置いた矩形(ビュー座標)。ブロックの先頭位置がキー。クリック判定に使う。
     private var tablePreviewFrames: [Int: CGRect] = [:]
+    /// 直近のビューポートレイアウトでコードブロックの箱を置いた矩形(ビュー座標)。ブロックの先頭位置がキー。
+    private var codeBlockPreviewFrames: [Int: CGRect] = [:]
 
-    /// ビューポートレイアウトの開始。前回置いた表の矩形を捨てる(ビューポートの外へ出た表の古い矩形が
+    /// ビューポートレイアウトの開始。前回置いた表 / 箱の矩形を捨てる(ビューポートの外へ出た表の古い矩形が
     /// 本文の上に残らないように)。
     func viewportLayoutWillBegin() {
         tablePreviewFrames.removeAll(keepingCapacity: true)
+        codeBlockPreviewFrames.removeAll(keepingCapacity: true)
     }
 
     /// このフラグメント(1 テキスト段落)が折りたたまれたテーブルのヘッダー行なら、表の配置を返す。
@@ -385,6 +404,95 @@ final class MarkdownEditorEngine: NSObject {
         return nil
     }
 
+    // MARK: - コードブロック(ADR 0020)
+
+    /// パース確定後にコードブロックを最新プラン(とハイライト適用済みのストレージ)へ同期し、折りたたみ / 箱の高さが
+    /// 変われば作り直す。
+    private func updateCodeBlocks() {
+        guard let host, let storage = host.editorContentStorage?.textStorage else { return }
+        refreshCodeBlockInputs()
+        codeBlocks.update(plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString)
+        applyCodeBlockChanges()
+    }
+
+    /// 選択範囲と箱の幅(Source のコードブロックの箱と同じテキストコンテナの全幅)を最新にする。
+    private func refreshCodeBlockInputs() {
+        guard let host else { return }
+        codeBlocks.selectionDidChange(host.editorSelectedRanges)
+        codeBlocks.containerWidthDidChange(frontMatterTableWidth(host))
+    }
+
+    private func applyCodeBlockChanges() {
+        applyBlockPreviewChanges(codeBlocks)
+    }
+
+    /// コピー直後のコードブロック(ボタンがチェックマークになる)。`copiedResetTask` が戻す。
+    private(set) var copiedCodeBlockLocation: Int?
+    private var copiedResetTask: Task<Void, Never>?
+    /// チェックマークを見せる時間。
+    static let copiedFeedbackDuration: Duration = .milliseconds(1500)
+
+    /// このフラグメント(1 テキスト段落)が折りたたまれたコードブロックの先頭の行なら、箱の配置を返す。
+    /// ビューポートレイアウトパスから呼ぶ。箱はテキストコンテナの全幅(コンテナ左端 = ビュー座標の origin.x)。
+    func codeBlockPreviewEntry(for fragment: NSTextLayoutFragment) -> CodeBlockPreviewEntry? {
+        guard !codeBlocks.presented.isEmpty,
+              let host, let contentManager = host.editorLayoutManager?.textContentManager,
+              let elementRange = fragment.textElement?.elementRange else { return nil }
+        let paragraphStart = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
+        guard let item = codeBlocks.presented.first(where: { $0.blockParagraphsRange.location == paragraphStart }) else { return nil }
+        let location = item.block.range.location
+        let origin = host.editorTextContainerOrigin
+        let frame = fragment.layoutFragmentFrame
+        let textLinesBottom = fragment.textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
+        let boxFrame = CGRect(
+            x: origin.x,
+            y: frame.minY + textLinesBottom + origin.y + CodeBlockPreviewLayout.topMargin,
+            width: item.layout.size.width, height: item.layout.size.height)
+        codeBlockPreviewFrames[location] = boxFrame
+        return CodeBlockPreviewEntry(
+            location: location, layout: item.layout, appearance: codeBlocks.appearance, frame: boxFrame,
+            showsCopied: copiedCodeBlockLocation == location)
+    }
+
+    /// point(ビュー座標)が折りたたまれたコードブロックの箱の上(コピーボタンの上を除く)なら、その点の文字の間に
+    /// キャレットを置くレンジを返す(呼び出し側が選択して、ブロックが展開される)。箱の外なら nil。
+    func codeBlockCaretRange(atPoint point: CGPoint) -> NSRange? {
+        for (location, frame) in codeBlockPreviewFrames where frame.insetBy(dx: -2, dy: -2).contains(point) {
+            let local = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+            guard !codeBlocks.isOnCopyButton(inCodeBlockAt: location, point: local),
+                  let caret = codeBlocks.caretLocation(inCodeBlockAt: location, point: local),
+                  caret <= (host?.editorText as NSString?)?.length ?? 0
+            else { continue }
+            return NSRange(location: caret, length: 0)
+        }
+        return nil
+    }
+
+    /// point(ビュー座標)が折りたたまれたコードブロックのコピーボタンの上なら、そのブロックの先頭とコピーする本文
+    /// (フェンスとインデントを除く)。それ以外は nil。
+    func codeBlockCopyTarget(atPoint point: CGPoint) -> (location: Int, text: String)? {
+        for (location, frame) in codeBlockPreviewFrames where frame.contains(point) {
+            let local = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+            guard codeBlocks.isOnCopyButton(inCodeBlockAt: location, point: local),
+                  let text = codeBlocks.copyText(forCodeBlockAt: location) else { continue }
+            return (location, text)
+        }
+        return nil
+    }
+
+    /// コピーボタンが押された: そのブロックのボタンをしばらくチェックマークにする(描き直しだけ。高さは変わらない)。
+    func noteCodeBlockCopied(at location: Int) {
+        copiedResetTask?.cancel()
+        copiedCodeBlockLocation = location
+        requestViewportRelayout()
+        copiedResetTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.copiedFeedbackDuration)
+            guard !Task.isCancelled, let self else { return }
+            self.copiedCodeBlockLocation = nil
+            self.requestViewportRelayout()
+        }
+    }
+
     /// パース確定後に隠すマーカーを最新プランへ同期し、変わった段落を再生成させる。
     private func updateLivePreview() {
         refreshLivePreviewFocus()
@@ -402,6 +510,10 @@ final class MarkdownEditorEngine: NSObject {
         if tables.isEnabled, let host {
             tables.selectionDidChange(host.editorSelectedRanges)
             if !isRegeneratingParagraphs { applyTableChanges() }
+        }
+        if codeBlocks.isEnabled, let host {
+            codeBlocks.selectionDidChange(host.editorSelectedRanges)
+            if !isRegeneratingParagraphs { applyCodeBlockChanges() }
         }
         guard livePreview.isEnabled else { return }
         // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush)に回す。
@@ -432,6 +544,13 @@ final class MarkdownEditorEngine: NSObject {
             if !isRegeneratingParagraphs { applyTableChanges() }
         } else {
             tables.editorFocusDidChange(focused)
+        }
+        if codeBlocks.isEnabled, codeBlocks.isEditorFocused != focused, let host {
+            codeBlocks.selectionDidChange(host.editorSelectedRanges)
+            codeBlocks.editorFocusDidChange(focused)
+            if !isRegeneratingParagraphs { applyCodeBlockChanges() }
+        } else {
+            codeBlocks.editorFocusDidChange(focused)
         }
         guard livePreview.isEditorFocused != focused else { return }
         // 先に選択範囲を最新にしてから切り替える(フォーカスの無い間の選択変更は段落を無効化しないので、
@@ -493,6 +612,7 @@ final class MarkdownEditorEngine: NSObject {
         applyLivePreviewChanges()
         applyFrontMatterChanges()
         applyTableChanges()
+        applyCodeBlockChanges()
     }
 
     private func updateBlockDecorations() {
@@ -753,6 +873,10 @@ final class MarkdownEditorEngine: NSObject {
                 tables.containerWidthDidChange(host.imageContainerWidth)
                 applyTableChanges()
             }
+            if codeBlocks.isEnabled, let host {
+                codeBlocks.containerWidthDidChange(frontMatterTableWidth(host))
+                applyCodeBlockChanges()
+            }
         }
     }
 
@@ -873,6 +997,7 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         livePreview.noteEdit(editedRange: editedRange, changeInLength: delta)
         frontMatter.noteEdit(editedRange: editedRange, changeInLength: delta)
         tables.noteEdit(editedRange: editedRange, changeInLength: delta)
+        codeBlocks.noteEdit(editedRange: editedRange, changeInLength: delta)
         scheduleHighlight()
         host?.editorTextDidChange()
     }
