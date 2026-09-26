@@ -62,6 +62,8 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         if let collapsed = frontMatter?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         if let collapsed = tables?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
+        // 展開中のテーブルのブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
+        if tables?.isExempt(paragraph: range) == true { return base }
         return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
 }

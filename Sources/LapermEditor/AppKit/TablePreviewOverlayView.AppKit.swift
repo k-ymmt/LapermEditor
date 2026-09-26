@@ -46,7 +46,7 @@ final class TablePreviewItemView: NSView {
 
     override func draw(_ dirtyRect: NSRect) {
         guard let entry, let context = NSGraphicsContext.current?.cgContext else { return }
-        TablePreviewRenderer.draw(entry.layout, appearance: entry.appearance, in: context)
+        TablePreviewRenderer.draw(entry.layout, appearance: entry.appearance, in: context, visibleRect: dirtyRect)
     }
 }
 #endif

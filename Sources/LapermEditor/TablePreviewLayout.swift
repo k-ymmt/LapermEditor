@@ -19,14 +19,15 @@ struct TablePreviewLayout: Equatable {
         var textFrame: CGRect
         /// 揃えを段落スタイルに持たせた表示用の文字列
         var text: NSAttributedString
-        /// クリックでキャレットを置く位置(文書座標)
-        var caretLocation: Int
+        /// クリックでキャレットを置く位置(テーブルの先頭からの相対値)
+        var caretOffset: Int
     }
 
     struct Row: Equatable {
         var frame: CGRect
         var cells: [Cell]
-        var lineRange: NSRange
+        /// この行(テーブルの先頭からの相対値)
+        var lineOffsetRange: NSRange
         var isHeader: Bool
     }
 
@@ -108,12 +109,12 @@ struct TablePreviewLayout: Equatable {
                     frame: frame,
                     textFrame: CGRect(x: x + hPad, y: y + vPad, width: max(1, widths[column] - hPad * 2), height: contentHeight),
                     text: texts[rowIndex][column],
-                    caretLocation: column < row.cells.count ? row.cells[column].caretLocation : NSMaxRange(row.lineRange)))
+                    caretOffset: column < row.cells.count ? row.cells[column].caretOffset : NSMaxRange(row.lineOffsetRange)))
                 x += widths[column]
             }
             rows.append(Row(
                 frame: CGRect(x: 0, y: y, width: width, height: rowHeight), cells: cells,
-                lineRange: row.lineRange, isHeader: rowIndex == 0))
+                lineOffsetRange: row.lineOffsetRange, isHeader: rowIndex == 0))
             y += rowHeight
         }
         return TablePreviewLayout(rows: rows, columnWidths: widths, size: CGSize(width: width, height: y))
@@ -141,15 +142,29 @@ struct TablePreviewLayout: Equatable {
         }
         var widths = natural
         guard !flexible.isEmpty else { return widths }
+        // 比例配分が最低幅を割る列は最低幅で固定し、その分を他の列から差し引く(固定すると他の列の取り分が減るので、
+        // 割る列が無くなるまで繰り返す)
+        while true {
+            let flexibleTotal = flexible.reduce(0) { $0 + natural[$1] }
+            let below = flexible.filter { index in
+                remaining * natural[index] / flexibleTotal < min(natural[index], minimumColumnWidth)
+            }
+            if below.isEmpty { break }
+            for index in below {
+                widths[index] = min(natural[index], minimumColumnWidth)
+                remaining -= widths[index]
+                flexible.remove(index)
+            }
+            if flexible.isEmpty { return widths }
+        }
         let flexibleTotal = flexible.reduce(0) { $0 + natural[$1] }
         let sorted = flexible.sorted()
         var assigned: CGFloat = 0
         for index in sorted {
-            let floorWidth = min(natural[index], minimumColumnWidth)
-            widths[index] = max(floorWidth, (remaining * natural[index] / flexibleTotal).rounded(.down))
+            widths[index] = (remaining * natural[index] / flexibleTotal).rounded(.down)
             assigned += widths[index]
         }
-        // 切り捨てで余った端数は最後の伸びる列へ(合計を available に揃える。最低幅で溢れているときは足さない)
+        // 切り捨てで余った端数は最後の伸びる列へ(合計を available に揃える)
         if let last = sorted.last, assigned < remaining {
             widths[last] += remaining - assigned
         }
@@ -194,11 +209,16 @@ struct TablePreviewEntry: Equatable {
     var frame: CGRect
 }
 
-/// 表の描画。両 OS のオーバーレイが `draw(_:)` から呼ぶ(座標は y 下向き、原点は表の左上)。
+/// 表の描画。両 OS のオーバーレイが `draw(_:)` から呼ぶ(座標は y 下向き、原点は表の左上)。`visibleRect`(描く必要の
+/// ある矩形)を渡すと、それに掛からない行の罫線と文字は描かない(数千行の表でも見えている行ぶんの描画で済む)。
 enum TablePreviewRenderer {
-    static func draw(_ layout: TablePreviewLayout, appearance: TablePreviewLayout.Appearance, in context: CGContext) {
+    static func draw(
+        _ layout: TablePreviewLayout, appearance: TablePreviewLayout.Appearance, in context: CGContext,
+        visibleRect: CGRect? = nil
+    ) {
         let bounds = CGRect(origin: .zero, size: layout.size)
         guard bounds.width > 0, bounds.height > 0 else { return }
+        let visible = visibleRect ?? bounds
         context.saveGState()
         let radius = TablePreviewLayout.cornerRadius
         let outline = CGPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), cornerWidth: radius, cornerHeight: radius, transform: nil)
@@ -207,7 +227,7 @@ enum TablePreviewRenderer {
         context.fillPath()
 
         context.setFillColor(appearance.border.cgColor)
-        for (index, row) in layout.rows.enumerated() {
+        for (index, row) in layout.rows.enumerated() where row.frame.intersects(visible) {
             if index < layout.rows.count - 1 {
                 context.fill(CGRect(x: 0, y: row.frame.maxY - 0.5, width: bounds.width, height: 1))
             }
@@ -220,7 +240,7 @@ enum TablePreviewRenderer {
         context.setLineWidth(1)
         context.strokePath()
 
-        for row in layout.rows {
+        for row in layout.rows where row.frame.intersects(visible) {
             for cell in row.cells where cell.text.length > 0 {
                 cell.text.draw(with: cell.textFrame, options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil)
             }

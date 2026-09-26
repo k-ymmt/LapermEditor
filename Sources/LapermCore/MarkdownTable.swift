@@ -66,6 +66,13 @@ public struct MarkdownTable: Hashable, Sendable {
 
     /// テーブルの先頭を 0 にしたもの(内容の比較用: 前の編集で位置だけ動いたテーブルを同じと見なす)。
     public var relativeToStart: MarkdownTable { shifted(by: -range.location) }
+
+    /// 編集(編集前の座標のレンジ)がこのテーブルの構造を変えうるか: テーブルの中はもちろん、先頭への挿入(ヘッダー行が
+    /// 変わる)、内容の末尾への挿入(最後の行が変わる)、直前の改行の削除(前の行と繋がる)も含む。直後の行への挿入は
+    /// 含まない(行が増えるかは次のパースが決める)。`HighlightPlan.shifted` と Live Preview の表が同じ規則を使う。
+    public func isTouched(byEditBefore preEditRange: NSRange) -> Bool {
+        preEditRange.location <= NSMaxRange(range) && NSMaxRange(preEditRange) >= range.location
+    }
 }
 
 /// テーブルの行をセルに分ける(GFM の規則)。swift-markdown の Table ノードは cmark-gfm の位置情報が

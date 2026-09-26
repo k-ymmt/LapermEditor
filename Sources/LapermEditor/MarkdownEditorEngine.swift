@@ -324,8 +324,9 @@ final class MarkdownEditorEngine: NSObject {
         tables.containerWidthDidChange(host.imageContainerWidth)
     }
 
-    /// 溜まった作り直し範囲を要素の再生成とレイアウト無効化に載せる(Front Matter と同じ)。各範囲の先頭の段落
-    /// (ヘッダー行: 表示用段落そのものが変わる)は `edited(.editedAttributes)` でも作り直させる。
+    /// 溜まった作り直し範囲を要素の再生成とレイアウト無効化に載せる(Front Matter と同じ)。範囲の段落は
+    /// `edited(.editedAttributes)` でも作り直させる(ヘッダー行の隠しと予約高さ、展開中のブロックの Syntax Marker 隠しの
+    /// 除外は表示用段落そのものが変わるので、`recordEditAction` の使い回しでは足りない)。
     private func applyTableChanges() {
         if tables.hasPendingPresentation, host?.editorHasMarkedText == true { scheduleHighlight() }
         if tables.takeNeedsRedraw() { requestViewportRelayout() }
@@ -340,7 +341,7 @@ final class MarkdownEditorEngine: NSObject {
             return clipped.length > 0 ? clipped : nil
         }
         regenerateElements(in: dirtyRanges)
-        regenerateParagraphs(in: dirtyRanges.map { NSRange(location: $0.location, length: 1) })
+        regenerateParagraphs(in: dirtyRanges)
     }
 
     /// 直近のビューポートレイアウトで表を置いた矩形(ビュー座標)。ブロックの先頭位置がキー。クリック判定に使う。

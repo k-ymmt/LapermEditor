@@ -84,6 +84,30 @@ private func cellTexts(_ row: MarkdownTable.Row, in text: String) -> [String] {
     #expect(alignments("::") == nil)
 }
 
+@Test func inlinePositionsAfterAnEscapedPipeInTheSameCellAreCorrected() throws {
+    // cmark-gfm はセルの `\|` を 1 文字に縮めてからインラインを解釈するので、同じセルの後続要素が左にずれて報告される
+    let md = "| [a \\| b](u) | c |\n|---|---|\n| x \\| `y` | **z** \\| w |\n| \\| *q* | r |"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let ns = md as NSString
+    func text(_ kind: SyntaxKind) -> [String] { plan.spans.filter { $0.kind == kind }.map { ns.substring(with: $0.range) } }
+    #expect(text(.link) == ["[a \\| b](u)"])
+    #expect(text(.inlineCode) == ["`y`"])
+    #expect(text(.strong) == ["**z**"], "an escape in a later cell does not move earlier cells")
+    #expect(text(.emphasis) == ["*q*"])
+    #expect(plan.concealableMarkers.map { ns.substring(with: $0) } == ["[", "](u)", "`", "`", "**", "**", "*", "*"])
+    #expect(plan.links.first?.range == plan.spans.first { $0.kind == .link }?.range)
+}
+
+@Test func tableInsideAListItemAfterAParagraphStartsAtTheContentNotTheLineStart() throws {
+    let md = "- intro\n  | a |\n  |---|\n  | x |"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let table = try #require(plan.tables.first)
+    #expect(table.range.location == 10, "the clamped range skips the indent like cmark's own ranges do")
+    #expect(plan.spans.first { $0.kind == .table }?.range.location == 10)
+    #expect(cellTexts(table.header, in: md) == ["a"])
+    #expect(cellTexts(table.rows[0], in: md) == ["x"])
+}
+
 @Test func planShiftsTablesAfterAnEditAndDropsTouchedOnes() throws {
     let md = "x\n\n| a |\n|---|\n| 1 |"
     let plan = MarkdownParser().highlightPlan(for: md)
@@ -98,6 +122,15 @@ private func cellTexts(_ row: MarkdownTable.Row, in text: String) -> [String] {
     let edited = plan.shifted(byEditAt: NSRange(location: 10, length: 1), changeInLength: 1)
     #expect(edited.tables.isEmpty)
     // 後ろの編集: 不変
-    let after = plan.shifted(byEditAt: NSRange(location: 20, length: 1), changeInLength: 1)
+    let after = plan.shifted(byEditAt: NSRange(location: 21, length: 1), changeInLength: 1)
     #expect(after.tables == plan.tables)
+    // 境界(Live Preview の表と同じ規則): 先頭への挿入、内容の末尾(20)への挿入、直前の改行(2)の削除は破棄。
+    // 直後の行頭(21)への挿入は保持(行が増えるかは次のパースが決める)
+    #expect(plan.shifted(byEditAt: NSRange(location: 3, length: 1), changeInLength: 1).tables.isEmpty)
+    #expect(plan.shifted(byEditAt: NSRange(location: 20, length: 1), changeInLength: 1).tables.isEmpty)
+    #expect(plan.shifted(byEditAt: NSRange(location: 2, length: 0), changeInLength: -1).tables.isEmpty)
+    #expect(table.isTouched(byEditBefore: NSRange(location: 21, length: 0)) == false)
+    #expect(table.isTouched(byEditBefore: NSRange(location: 20, length: 0)))
+    #expect(table.isTouched(byEditBefore: NSRange(location: 2, length: 1)))
+    #expect(table.isTouched(byEditBefore: NSRange(location: 0, length: 2)) == false)
 }

@@ -25,9 +25,13 @@ private func makeController(_ text: String, width: CGFloat = 400, enabled: Bool 
 @MainActor
 private func update(_ controller: TablePreviewController, with text: String) {
     let plan = MarkdownParser().highlightPlan(for: text)
-    let storage = NSAttributedString(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+    let storage = NSTextStorage(string: text, attributes: [.font: NSFont.systemFont(ofSize: 14)])
+    // コントローラはストレージを弱参照するので、テストでは呼び出しごとに強参照を保つ
+    retainedStorages.append(storage)
     controller.update(plan: plan, storage: storage, text: text as NSString)
 }
+
+@MainActor private var retainedStorages: [NSTextStorage] = []
 
 // MARK: - TablePreviewController
 
@@ -69,10 +73,10 @@ private func update(_ controller: TablePreviewController, with text: String) {
     #expect(controller.collapsedLocations == [0])
     _ = controller.takePendingDirtyRanges()
 
-    // 無効化で全部展開
+    // 無効化で全部展開(折りたたまれていたテーブル 1 と、展開中で Syntax Marker 隠しから除外されていたテーブル 2 を作り直す)
     controller.setEnabled(false)
     #expect(controller.collapsedLocations.isEmpty)
-    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 18)])
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 18), NSRange(location: 25, length: 17)])
 }
 
 @MainActor @Test func tableControllerKeepsTheCaretVisibleOnTheTrailingEmptyLineAfterATable() {
@@ -146,6 +150,9 @@ private func update(_ controller: TablePreviewController, with text: String) {
     #expect(controller.presentedTable(at: 30)?.layout == secondLayout, "the layout is carried over")
     #expect(controller.takePendingDirtyRanges().isEmpty)
     #expect(controller.documentLength == (two as NSString).length + 5)
+    // Codex レビュー(95dc3f3): 使い回したレイアウトのクリック先も一緒に動く("| b |" の b の末尾 28 → 33)
+    let secondHeader = secondLayout.rows[0]
+    #expect(controller.caretLocation(inTableAt: 30, tablePoint: CGPoint(x: secondHeader.cells[0].frame.midX, y: secondHeader.frame.midY)) == 33)
 
     // テーブル 1 の直後の行頭(18)への挿入はテーブルに触れない(行が増えるかは次のパースが決める)
     controller.noteEdit(editedRange: NSRange(location: 18, length: 1), changeInLength: 1)
@@ -172,6 +179,25 @@ private func update(_ controller: TablePreviewController, with text: String) {
     controller.noteEdit(editedRange: NSRange(location: 0, length: 1), changeInLength: 1)
     #expect(controller.tables.isEmpty)
     #expect(controller.collapsedLocations.isEmpty)
+}
+
+@MainActor @Test func tableControllerBuildsCellContentOnlyForTablesItCollapses() throws {
+    // 展開中(キャレットが中)の巨大なテーブルで 1 文字打つたびに全セルを作り直さない
+    let controller = TablePreviewController(theme: .default)
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    controller.selectionDidChange([NSRange(location: 3, length: 0)])  // テーブル 1 の中
+    update(controller, with: two)
+    #expect(controller.collapsedLocations == [25])
+    #expect(!controller.isModelBuilt(forTableAt: 0))
+    #expect(controller.isModelBuilt(forTableAt: 25))
+    // キャレットが出たら作る
+    controller.selectionDidChange([NSRange(location: 20, length: 0)])
+    #expect(controller.collapsedLocations == [0, 25])
+    #expect(controller.isModelBuilt(forTableAt: 0))
+    // 一度作ったセルの内容はテーマの見た目が変わっても使い回す(色が変わるのは次の update で)
+    controller.themeDidChange({ var t = MarkdownTheme.default; t.thematicBreakLineColor = .systemRed; return t }())
+    #expect(controller.collapsedLocations == [0, 25])
 }
 
 @MainActor @Test func tableControllerDefersThePresentationWhileItCannotPresent() {
@@ -220,14 +246,108 @@ private func update(_ controller: TablePreviewController, with text: String) {
     #expect(recoloured.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed)
 }
 
+@MainActor @Test func tableControllerDropsAPresentedTableWhoseStartIsEditedEvenWhileItCannotPresent() {
+    // Codex レビュー(95dc3f3): IME 中(canPresent false)に先頭を含む外部編集が来ると、古い先頭位置のままの表示が
+    // 本当のヘッダー行まで列挙から外し、テーブルが丸ごと消えていた
+    let controller = TablePreviewController(theme: .default)
+    var canPresent = true
+    controller.canPresent = { canPresent }
+    controller.setEnabled(true)
+    controller.containerWidthDidChange(400)
+    update(controller, with: sample)
+    #expect(controller.collapsedLocations == [5])
+    _ = controller.takePendingDirtyRanges()
+    canPresent = false
+    // 先頭 7 文字("# T\n\n| ")を削除: ヘッダー行の先頭を含む編集
+    controller.noteEdit(editedRange: NSRange(location: 0, length: 0), changeInLength: -7)
+    #expect(controller.collapsedLocations.isEmpty)
+    for offset in [0, 8, 18] { #expect(controller.shouldEnumerate(paragraphStartingAt: offset), "\(offset)") }
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 28)])
+    // ヘッダー行の先頭より後ろの編集(セルの中): ヘッダー行の段落は同じ位置なので表示は保ち、範囲だけ追従する
+    update(controller, with: sample)
+    canPresent = true
+    controller.present()
+    _ = controller.takePendingDirtyRanges()
+    canPresent = false
+    controller.noteEdit(editedRange: NSRange(location: 27, length: 3), changeInLength: 2)
+    #expect(controller.collapsedLocations == [5])
+    #expect(controller.shouldEnumerate(paragraphStartingAt: 5))
+    #expect(!controller.shouldEnumerate(paragraphStartingAt: 15))
+    #expect(controller.presented.first?.blockParagraphsRange == NSRange(location: 5, length: 32))
+    #expect(controller.caretLocation(inTableAt: 5, tablePoint: CGPoint(x: 5, y: 5)) == nil, "no clicks until the next parse")
+}
+
+@MainActor @Test func tableControllerExemptsExpandedTablesFromLineLevelConcealing() {
+    // ADR 0019: 展開中のテーブルはブロック全体が Source と同じ見た目(他の行の強調記号も見える)
+    let controller = makeController(two)
+    #expect(controller.exemptRanges.isEmpty)
+    _ = controller.takePendingDirtyRanges()
+    controller.selectionDidChange([NSRange(location: 3, length: 0)])  // テーブル 1 の中
+    #expect(controller.exemptRanges == [NSRange(location: 0, length: 18)])
+    #expect(controller.isExempt(paragraph: NSRange(location: 12, length: 6)))
+    #expect(!controller.isExempt(paragraph: NSRange(location: 31, length: 6)))
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 18)])
+    // 中で 1 文字打つ: ブロックは追従するだけで作り直しは無い
+    controller.noteEdit(editedRange: NSRange(location: 3, length: 1), changeInLength: 1)
+    #expect(controller.exemptRanges == [NSRange(location: 0, length: 19)])
+    update(controller, with: "| xa |\n|---|\n| 1 |\n\ntext\n\n| b |\n|:-:|\n| 2 |")
+    #expect(controller.exemptRanges == [NSRange(location: 0, length: 19)])
+    #expect(controller.takePendingDirtyRanges().isEmpty)
+    // 出たら解除(ブロックを作り直す = 折りたたみの作り直しと同じ範囲)
+    controller.selectionDidChange([NSRange(location: 22, length: 0)])
+    #expect(controller.exemptRanges.isEmpty)
+    #expect(controller.takePendingDirtyRanges() == [NSRange(location: 0, length: 19)])
+    // Source(無効)では除外も無い
+    controller.selectionDidChange([NSRange(location: 3, length: 0)])
+    controller.setEnabled(false)
+    #expect(controller.exemptRanges.isEmpty)
+}
+
+@MainActor @Test func tableControllerRebuildsCellsWhenAReferenceDefinitionOutsideTheTableChanges() throws {
+    // Codex レビュー(95dc3f3): 表の外の参照リンク定義の増減はセルの見た目を変えるが、本文が同じなのでキャッシュが残っていた
+    let withDefinition = "| [l][ref] |\n|---|\n| x |\n\n[ref]: /url"
+    let controller = makeController(withDefinition)
+    let linked = try #require(controller.presentedTable(at: 0)).layout.rows[0].cells[0].text
+    #expect(linked.string == "l")
+    #expect(linked.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == MarkdownTheme.default.renderingColor(for: .link))
+    update(controller, with: "| [l][ref] |\n|---|\n| x |\n\n")
+    let plain = try #require(controller.presentedTable(at: 0)).layout.rows[0].cells[0].text
+    #expect(plain.string == "[l][ref]")
+    #expect(plain.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == MarkdownTheme.default.bodyColor)
+}
+
+@MainActor @Test func tableControllerIgnoresTablesInsideListItemsAfterAParagraph() {
+    // Codex レビュー(95dc3f3): 段落に続くリスト内の表はレンジの補正で行頭から始まって見えていた
+    let controller = makeController("- intro\n  | a |\n  |---|\n  | x |")
+    #expect(controller.tables.isEmpty)
+    #expect(controller.collapsedLocations.isEmpty)
+}
+
 // MARK: - TablePreviewModel
+
+@MainActor @Test func modelMergesOverlappingRemovalsAndKeepsEscapedPipesInLinks() throws {
+    // Codex レビュー(95dc3f3): `\|` を含むセルでは cmark の位置がずれて本文が消え、`\|` を含む閉じ側マーカーと
+    // バックスラッシュの削除が重なると 1 文字余計に消えていた
+    // `[a \\| b](u \\| v)` は GFM ではリンクにならない(空白を含む URL)ので、`<…>` の URL で閉じ側マーカーに `\\|` を含める
+    let (window, textView) = makeFocusedTextView("| [a \\| b](<u \\| v>) | `c \\| d` | [p \\| q](r) |\n|---|---|---|", livePreview: false)
+    defer { withExtendedLifetime(window) {} }
+    let plan = textView.markdownHighlighter.currentPlan
+    let table = try #require(plan.tables.first)
+    let model = try #require(TablePreviewModel.make(
+        table: table, storage: textView.textStorage!, spans: plan.spans, markers: plan.concealableMarkers, theme: .default))
+    #expect(model.header.cells.map(\.text.string) == ["a | b", "c | d", "p | q"], "actual: \(model.header.cells.map(\.text.string))")
+    #expect(model.header.cells[2].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == MarkdownTheme.default.renderingColor(for: .link))
+    #expect(TablePreviewModel.merged([NSRange(location: 5, length: 3), NSRange(location: 6, length: 1), NSRange(location: 8, length: 2), NSRange(location: 0, length: 1)])
+        == [NSRange(location: 0, length: 1), NSRange(location: 5, length: 5)])
+}
 
 @MainActor @Test func modelStripsMarkersAndEscapedPipesAndAppliesTheThemeColours() throws {
     let (window, textView) = makeFocusedTextView("| **a** \\| b | [l](u) |\n|---|---|\n| `c` | ~~d~~ |", livePreview: false)
     defer { withExtendedLifetime(window) {} }
     let plan = textView.markdownHighlighter.currentPlan
     let table = try #require(plan.tables.first)
-    let model = try #require(TablePreviewModel.make(table: table, storage: textView.textStorage!, plan: plan, theme: .default))
+    let model = try #require(TablePreviewModel.make(
+        table: table, storage: textView.textStorage!, spans: plan.spans, markers: plan.concealableMarkers, theme: .default))
     #expect(model.alignments == [.none, .none])
     let header = model.header.cells.map(\.text)
     #expect(header.map(\.string) == ["a | b", "l"])
@@ -239,21 +359,21 @@ private func update(_ controller: TablePreviewController, with text: String) {
     #expect(body.map(\.string) == ["c", "d"])
     #expect(body[0].attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == MarkdownTheme.default.renderingColor(for: .inlineCode))
     #expect(body[1].attribute(.strikethroughStyle, at: 0, effectiveRange: nil) as? Int == NSUnderlineStyle.single.rawValue)
-    #expect(model.header.cells[1].caretLocation == NSMaxRange(table.header.cells[1].range))
-    #expect(model.rows[0].lineRange == table.rows[0].lineRange)
+    #expect(model.header.cells[1].caretOffset == NSMaxRange(table.header.cells[1].range) - table.range.location)
+    #expect(model.rows[0].lineOffsetRange == NSRange(location: table.rows[0].lineRange.location - table.range.location, length: table.rows[0].lineRange.length))
 }
 
 // MARK: - TablePreviewLayout
 
 private func cell(_ string: String, caret: Int = 0) -> TablePreviewModel.Cell {
-    .init(text: NSAttributedString(string: string, attributes: [.font: NSFont.systemFont(ofSize: 14)]), caretLocation: caret)
+    .init(text: NSAttributedString(string: string, attributes: [.font: NSFont.systemFont(ofSize: 14)]), caretOffset: caret)
 }
 
 @MainActor @Test func layoutUsesNaturalWidthsWhenTheyFitAndWrapsWhenTheyDoNot() throws {
     let model = TablePreviewModel(
         alignments: [.none, .center, .right],
-        header: .init(cells: [cell("a"), cell("bb"), cell("ccc")], lineRange: NSRange(location: 0, length: 5)),
-        rows: [.init(cells: [cell("1"), cell(""), cell("3")], lineRange: NSRange(location: 10, length: 5))])
+        header: .init(cells: [cell("a"), cell("bb"), cell("ccc")], lineOffsetRange: NSRange(location: 0, length: 5)),
+        rows: [.init(cells: [cell("1"), cell(""), cell("3")], lineOffsetRange: NSRange(location: 10, length: 5))])
     let appearance = TablePreviewLayout.Appearance(theme: .default)
     let compact = TablePreviewLayout.make(model: model, maxWidth: 400, appearance: appearance)
     #expect(compact.rows.count == 2)
@@ -270,13 +390,13 @@ private func cell(_ string: String, caret: Int = 0) -> TablePreviewModel.Cell {
     let alignments = compact.rows[0].cells.map { ($0.text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)?.alignment }
     #expect(alignments == [.left, .center, .right])
     #expect(compact.rows[1].cells[1].text.length == 0, "an empty cell stays empty")
-    #expect(compact.rows[1].cells[1].caretLocation == 0)
+    #expect(compact.rows[1].cells[1].caretOffset == 0)
 
     // 広いセルは折り返す: 幅は上限どおり、行は 2 行以上の高さ
     let long = TablePreviewModel(
         alignments: [.none, .none],
-        header: .init(cells: [cell("k"), cell("v")], lineRange: NSRange(location: 0, length: 5)),
-        rows: [.init(cells: [cell("short"), cell(String(repeating: "word ", count: 40))], lineRange: NSRange(location: 10, length: 5))])
+        header: .init(cells: [cell("k"), cell("v")], lineOffsetRange: NSRange(location: 0, length: 5)),
+        rows: [.init(cells: [cell("short"), cell(String(repeating: "word ", count: 40))], lineOffsetRange: NSRange(location: 10, length: 5))])
     let wrapped = TablePreviewLayout.make(model: long, maxWidth: 300, appearance: appearance)
     #expect(wrapped.size.width == 300)
     #expect(wrapped.rows[1].frame.height > lineHeight * 2)
@@ -301,19 +421,23 @@ private func cell(_ string: String, caret: Int = 0) -> TablePreviewModel.Cell {
     // 自然な幅が最低幅より狭い列はそれ以上縮まない
     let narrow = TablePreviewLayout.distribute(natural: [20, 500], available: 200)
     #expect(narrow[0] == 20 && narrow[1] == 180)
+    // Codex レビュー(95dc3f3): 比例配分が最低幅を割る列を最低幅に上げたぶんは他の列から差し引く(合計は上限どおり)
+    #expect(TablePreviewLayout.distribute(natural: [151, 1000], available: 300) == [48, 252])
+    #expect(TablePreviewLayout.distribute(natural: [200, 1000], available: 200) == [48, 152])
+    #expect(TablePreviewLayout.distribute(natural: [60, 200, 1000], available: 300) == [60, 48, 192])
 }
 
 @MainActor @Test func layoutHitTestsCellsWithSlackAroundTheEdges() throws {
     let model = TablePreviewModel(
         alignments: [.none, .none],
-        header: .init(cells: [cell("a", caret: 1), cell("b", caret: 2)], lineRange: NSRange(location: 0, length: 5)),
-        rows: [.init(cells: [cell("1", caret: 3), cell("2", caret: 4)], lineRange: NSRange(location: 10, length: 5))])
+        header: .init(cells: [cell("a", caret: 1), cell("b", caret: 2)], lineOffsetRange: NSRange(location: 0, length: 5)),
+        rows: [.init(cells: [cell("1", caret: 3), cell("2", caret: 4)], lineOffsetRange: NSRange(location: 10, length: 5))])
     let layout = TablePreviewLayout.make(model: model, maxWidth: 400, appearance: .init(theme: .default))
     let second = layout.rows[1]
-    #expect(layout.cell(at: CGPoint(x: second.cells[1].frame.midX, y: second.frame.midY))?.caretLocation == 4)
-    #expect(layout.cell(at: CGPoint(x: 1, y: 1))?.caretLocation == 1)
-    #expect(layout.cell(at: CGPoint(x: -2, y: -2))?.caretLocation == 1, "just outside the corner still hits the first cell")
-    #expect(layout.cell(at: CGPoint(x: layout.size.width + 2, y: layout.size.height + 2))?.caretLocation == 4)
+    #expect(layout.cell(at: CGPoint(x: second.cells[1].frame.midX, y: second.frame.midY))?.caretOffset == 4)
+    #expect(layout.cell(at: CGPoint(x: 1, y: 1))?.caretOffset == 1)
+    #expect(layout.cell(at: CGPoint(x: -2, y: -2))?.caretOffset == 1, "just outside the corner still hits the first cell")
+    #expect(layout.cell(at: CGPoint(x: layout.size.width + 2, y: layout.size.height + 2))?.caretOffset == 4)
     #expect(layout.cell(at: CGPoint(x: 5, y: layout.size.height + 20)) == nil)
 }
 
@@ -421,6 +545,36 @@ private func layoutFragments(_ textView: MarkdownTextView) -> [NSTextLayoutFragm
     #expect(controller.collapsedLocations == [5])
     #expect(!enumeratedOffsets(textView).contains(15))
     #expect(textView.string == sample, "テキストは終始そのまま")
+}
+
+@MainActor @Test func textViewShowsEveryMarkerOfAnExpandedTable() throws {
+    // 展開中はブロック全体が Source の見た目: キャレットの無い行の強調記号も隠れない(ADR 0019)
+    let markdown = "| **a** | b |\n|---|---|\n| *1* | 2 |\n\nafter *x*"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    let contentManager = textView.textLayoutManager!.textContentManager!
+    func displayFontSize(atOffset offset: Int) -> CGFloat? {
+        let location = contentManager.location(contentManager.documentRange.location, offsetBy: offset)!
+        var size: CGFloat?
+        contentManager.enumerateTextElements(from: location) { element in
+            guard let paragraph = element as? NSTextParagraph, let start = element.elementRange?.location else { return false }
+            let local = contentManager.offset(from: start, to: location)
+            size = (paragraph.attributedString.attribute(.font, at: local, effectiveRange: nil) as? NSFont)?.pointSize
+            return false
+        }
+        return size
+    }
+    // "| **a** | b |\n"(0-13) "|---|---|\n"(14-23) "| *1* | 2 |\n"(24-35) "\n"(36) "after *x*"(37-45、* は 43)
+    // キャレットが 3 行目(*1*)にある: ヘッダー行の ** も見える(隠す極小フォントではない)、本文の *x* は隠れる
+    textView.setSelectedRange(NSRange(location: 28, length: 0))
+    textView.layoutSubtreeIfNeeded()
+    #expect(textView.tablePreviewController.collapsedLocations.isEmpty)
+    #expect(displayFontSize(atOffset: 2) ?? 0 > 1, "the header row's ** is not hidden while the table is expanded")
+    #expect(displayFontSize(atOffset: 43) == LivePreviewConcealer.hiddenFontSize, "a line outside the table still hides its markers")
+    // 本文へ出ると折りたたまれる; 本文の行にキャレット → その行の * は見える
+    textView.setSelectedRange(NSRange(location: 40, length: 0))
+    #expect(textView.tablePreviewController.collapsedLocations == [0])
+    #expect(displayFontSize(atOffset: 43) ?? 0 > 1)
 }
 
 @MainActor @Test func textViewCollapsesTheTableWhenTheEditorLosesFocusEvenWithTheCaretInside() throws {

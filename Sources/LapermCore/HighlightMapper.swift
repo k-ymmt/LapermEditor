@@ -32,6 +32,8 @@ enum HighlightMapper {
         var linkReferences: [LinkReference] = []
         /// テーブルの構造(セルのレンジ)。Live Preview の表が使う。
         var tables: [MarkdownTable] = []
+        /// 走査中のテーブル(セル内のインライン要素の位置補正に使う)。
+        private var currentTable: MarkdownTable?
         private var tableDepth = 0
         /// リンク・画像の内側を走査中はベア URL 検出を止める(二重検出防止)
         private var inlineLinkDepth = 0
@@ -39,7 +41,39 @@ enum HighlightMapper {
         private func nsRange(of markup: Markup) -> NSRange? {
             guard let sourceRange = markup.range else { return nil }
             // インライン要素だけ遅延継続行の桁補正を受ける(ブロック要素の桁は正しい)
-            return converter.nsRange(of: sourceRange, isInline: markup is InlineMarkup)
+            guard let range = converter.nsRange(of: sourceRange, isInline: markup is InlineMarkup) else { return nil }
+            guard markup is InlineMarkup, let table = currentTable else { return range }
+            return Self.correctingEscapedPipes(range, in: table, text: text)
+        }
+
+        /// cmark-gfm はセルの `\|` を `|` に縮めてからインラインを解釈するので、同じセルの中でその後ろにある
+        /// インライン要素の位置は、前にある `\|` の数だけ左にずれて報告される。原文の座標へ戻す。
+        static func correctingEscapedPipes(_ range: NSRange, in table: MarkdownTable, text: NSString) -> NSRange {
+            let rows = [table.header] + table.rows
+            guard let row = rows.first(where: { NSLocationInRange(range.location, $0.lineRange) || range.location == NSMaxRange($0.lineRange) }),
+                  let cell = row.cells.last(where: { $0.range.location <= range.location }),
+                  cell.range.length > 0
+            else { return range }
+            // 補正が要るセルか(`\|` が無ければそのまま)
+            let cellText = text.substring(with: cell.range)
+            guard cellText.contains("\\|") else { return range }
+            func actual(reported: Int) -> Int {
+                var i = cell.range.location
+                var r = cell.range.location
+                let end = NSMaxRange(cell.range)
+                while r < reported, i < end {
+                    if text.character(at: i) == ASCII.backslash, i + 1 < end, text.character(at: i + 1) == ASCII.pipe {
+                        i += 2
+                    } else {
+                        i += 1
+                    }
+                    r += 1
+                }
+                return i + (reported - r)
+            }
+            let start = actual(reported: range.location)
+            let end = actual(reported: NSMaxRange(range))
+            return NSRange(location: start, length: max(0, end - start))
         }
 
         // MARK: ブロック要素
@@ -134,21 +168,30 @@ enum HighlightMapper {
                    delimiterLine.lineIndex > 1 {
                     let headerLine = text.lineRange(
                         for: NSRange(location: delimiterLine.range.location - 1, length: 0))
-                    range = NSRange(
-                        location: headerLine.location,
-                        length: NSMaxRange(range) - headerLine.location)
-                    headRange = clippedLineRange(at: headerLine.location, within: range)
+                    // ヘッダー行の内容の先頭から(行頭の空白は含めない: リスト項目の中のテーブルが行頭から始まる
+                    // テーブルに見えないように。cmark 自身のレンジも空白を含まない)
+                    var start = headerLine.location
+                    while start < NSMaxRange(headerLine),
+                          text.character(at: start) == ASCII.space || text.character(at: start) == ASCII.tab {
+                        start += 1
+                    }
+                    range = NSRange(location: start, length: NSMaxRange(range) - start)
+                    headRange = clippedLineRange(at: start, within: range)
                 }
                 blockSpans.append(HighlightSpan(range: range, kind: .table))
                 if let headRange, headRange.length > 0 {
                     blockSpans.append(HighlightSpan(range: headRange, kind: .tableHeader))
                 }
                 appendTableMarkers(in: range)
-                if let table = MarkdownTableParser.parse(range: range, in: text) { tables.append(table) }
+                if let table = MarkdownTableParser.parse(range: range, in: text) {
+                    tables.append(table)
+                    currentTable = table
+                }
             }
             tableDepth += 1
             descendInto(table)
             tableDepth -= 1
+            currentTable = nil
         }
 
         /// テーブルレンジ内で最初に現れる区切り行("|---|:--:|" 等)。

@@ -89,10 +89,11 @@ public struct HighlightPlan: Equatable, Sendable {
         // Front Matter は文書先頭に固定なので平行移動できない。ブロック(閉じの `---` の行末を含む)に
         // 触る編集、またはそれより前の編集では破棄する(次のパース結果から再生成される)。
         let resultFrontMatter = frontMatter.flatMap { preEditRange.location > NSMaxRange($0.range) ? $0 : nil }
-        // テーブルはスパンと同じ規約: 編集より前なら不変、後なら平行移動、交差なら破棄(次のパースで再生成)。
+        // テーブル: 構造を変えうる編集(`MarkdownTable.isTouched`: 先頭・内容末尾・直前の改行を含む)なら破棄
+        // (次のパースで再生成)、後ろなら平行移動、前なら不変。Live Preview の表と同じ規則。
         let resultTables = tables.compactMap { table -> MarkdownTable? in
-            guard let range = Self.shift(table.range, preEditRange: preEditRange, delta: delta) else { return nil }
-            return range == table.range ? table : table.shifted(by: delta)
+            if table.isTouched(byEditBefore: preEditRange) { return nil }
+            return table.range.location >= NSMaxRange(preEditRange) ? table.shifted(by: delta) : table
         }
         return HighlightPlan(
             spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers,

@@ -30,21 +30,28 @@ final class TablePreviewController {
         var layout: TablePreviewLayout
     }
 
-    /// モデルのテーブル 1 つ(パース結果 + セルの内容 + レイアウトのキャッシュ)。
+    /// モデルのテーブル 1 つ(パース結果 + セルの内容 + レイアウトのキャッシュ)。セルの内容(`model`)は折りたたむ
+    /// ときに初めて作る: キャレットが中にある(展開中の)巨大なテーブルで、1 文字打つたびに全セルを作り直さない。
     private struct Entry {
         var table: MarkdownTable
         var blockParagraphsRange: NSRange
         var key: ModelKey
-        var model: TablePreviewModel
+        /// テーブルと交差するスパン(Syntax Marker を除く)と隠すマーカー(文書座標)。セルの内容の材料。
+        var spans: [HighlightSpan]
+        var markers: [NSRange]
+        var model: TablePreviewModel?
         var layout: TablePreviewLayout?
         var layoutWidth: CGFloat = 0
         var layoutAppearance: TablePreviewLayout.Appearance?
     }
 
-    /// セルの内容が同じかを、位置に依らず判定する鍵(前の編集で位置だけ動いたテーブルのモデルを使い回す)。
+    /// セルの内容が同じかを、位置に依らず判定する鍵(前の編集で位置だけ動いたテーブルのモデルを使い回す)。テーブルの
+    /// 外の変化でセルの見た目が変わるもの(参照リンクの定義の増減でリンクになる / ならなくなる)はスパンとマーカーで拾う。
     private struct ModelKey: Equatable {
         var text: String
         var relativeTable: MarkdownTable
+        var relativeSpans: [HighlightSpan]
+        var relativeMarkers: [NSRange]
         var themeGeneration: Int
     }
 
@@ -60,6 +67,12 @@ final class TablePreviewController {
     private(set) var appearance: TablePreviewLayout.Appearance
     private var theme: MarkdownTheme
     private var themeGeneration = 0
+    /// 直近の `update` のテキストストレージ(セルの内容を遅延して作るために持つ)。エンジン(テキストビュー)が
+    /// 持ち主なので弱参照。
+    private weak var storage: NSTextStorage?
+    /// 展開中(モデルにあるが折りたたまれていない)のテーブルのブロック。行単位の Syntax Marker 隠しから除外し、
+    /// ブロック全体を Source と同じ見た目にする(ADR 0019: フォーカスの単位はブロック)。編集で追従させる。
+    private(set) var exemptRanges: [NSRange] = []
     /// 今 TextKit の表示を変えてよいか(IME 変換中は false)。既定は常に true。
     var canPresent: () -> Bool = { true }
 
@@ -87,27 +100,90 @@ final class TablePreviewController {
 
     // MARK: - 入力の更新
 
+    /// テスト用: そのテーブルのセルの内容が作られているか。
+    func isModelBuilt(forTableAt location: Int) -> Bool {
+        entries.first { $0.table.range.location == location }?.model != nil
+    }
+
     /// パース確定後の同期。`storage` はハイライト適用済みのテキストストレージ、`text` はその文字列。
-    func update(plan: HighlightPlan, storage: NSAttributedString, text: NSString) {
+    func update(plan: HighlightPlan, storage: NSTextStorage, text: NSString) {
         let old = entries
+        self.storage = storage
         documentLength = text.length
-        entries = plan.tables.compactMap { table -> Entry? in
-            guard table.range.length > 0, NSMaxRange(table.range) <= text.length,
-                  text.lineRange(for: NSRange(location: table.range.location, length: 0)).location == table.range.location
-            else { return nil }
+        let tables = plan.tables.filter { table in
+            table.range.length > 0 && NSMaxRange(table.range) <= text.length
+                && text.lineRange(for: NSRange(location: table.range.location, length: 0)).location == table.range.location
+        }
+        let (spansByTable, markersByTable) = Self.bucket(plan: plan, tables: tables)
+        entries = tables.enumerated().map { index, table -> Entry in
+            let origin = table.range.location
             let key = ModelKey(
-                text: text.substring(with: table.range), relativeTable: table.relativeToStart, themeGeneration: themeGeneration)
-            let block = NSRange(location: table.range.location, length: Self.endIncludingNewline(of: table.range, in: text) - table.range.location)
+                text: text.substring(with: table.range), relativeTable: table.relativeToStart,
+                relativeSpans: spansByTable[index].map { HighlightSpan(range: NSRange(location: $0.range.location - origin, length: $0.range.length), kind: $0.kind) },
+                relativeMarkers: markersByTable[index].map { NSRange(location: $0.location - origin, length: $0.length) },
+                themeGeneration: themeGeneration)
+            let block = NSRange(location: origin, length: Self.endIncludingNewline(of: table.range, in: text) - origin)
             if let previous = old.first(where: { $0.key == key }) {
                 var reused = previous
                 reused.table = table
                 reused.blockParagraphsRange = block
+                reused.spans = spansByTable[index]
+                reused.markers = markersByTable[index]
                 return reused
             }
-            guard let model = TablePreviewModel.make(table: table, storage: storage, plan: plan, theme: theme) else { return nil }
-            return Entry(table: table, blockParagraphsRange: block, key: key, model: model)
+            return Entry(table: table, blockParagraphsRange: block, key: key, spans: spansByTable[index], markers: markersByTable[index], model: nil)
         }
         present()
+        refreshExemptRanges()
+    }
+
+    /// 計画のスパン(Syntax Marker を除く)と隠すマーカーを、交差するテーブルごとに分ける。テーブルは位置順で互いに
+    /// 重ならないので、開始位置の二分探索で 1 回の走査に収める(テーブル数 × スパン数にしない)。
+    private static func bucket(plan: HighlightPlan, tables: [MarkdownTable]) -> ([[HighlightSpan]], [[NSRange]]) {
+        var spans = [[HighlightSpan]](repeating: [], count: tables.count)
+        var markers = [[NSRange]](repeating: [], count: tables.count)
+        guard !tables.isEmpty else { return (spans, markers) }
+        func tableIndex(containing range: NSRange) -> Int? {
+            var low = 0
+            var high = tables.count
+            while low < high {
+                let mid = (low + high) / 2
+                if tables[mid].range.location <= range.location { low = mid + 1 } else { high = mid }
+            }
+            // 開始位置が range.location 以下の最後のテーブルか、range の中で始まる次のテーブル(ブロックスパンなど)
+            for candidate in [low - 1, low] where candidate >= 0 && candidate < tables.count
+                && NSIntersectionRange(tables[candidate].range, range).length > 0 {
+                return candidate
+            }
+            return nil
+        }
+        for span in plan.spans where span.kind != .syntaxMarker {
+            if let index = tableIndex(containing: span.range) { spans[index].append(span) }
+        }
+        for marker in plan.concealableMarkers {
+            if let index = tableIndex(containing: marker) { markers[index].append(marker) }
+        }
+        return (spans, markers)
+    }
+
+    /// 展開中のテーブルのブロックを取り直し、変わった分(展開された / 折りたたまれた / 範囲が変わった)を作り直す
+    /// (表示用段落の Syntax Marker 隠しが変わる)。
+    private func refreshExemptRanges() {
+        // 表示を移せない間(IME 変換中)は除外も動かさない(移せたときに `present` がまとめて取り直す)
+        guard canPresent() else { return }
+        let new: [NSRange] = isEnabled
+            ? entries.filter { entry in !presented.contains { $0.blockParagraphsRange.location == entry.blockParagraphsRange.location } }
+                .map(\.blockParagraphsRange)
+            : []
+        guard new != exemptRanges else { return }
+        for range in exemptRanges where !new.contains(range) { appendDirty(range) }
+        for range in new where !exemptRanges.contains(range) { appendDirty(range) }
+        exemptRanges = new
+    }
+
+    /// `paragraph` が展開中のテーブルのブロックにあるか(行単位の Syntax Marker 隠しから除外する)。
+    func isExempt(paragraph: NSRange) -> Bool {
+        exemptRanges.contains { NSLocationInRange(paragraph.location, $0) }
     }
 
     /// `range` の行末から次の行頭までを含めた終端(改行込み)。文書がそこで終わっていれば `NSMaxRange(range)`。
@@ -132,6 +208,7 @@ final class TablePreviewController {
         guard isEnabled != enabled else { return }
         isEnabled = enabled
         present()
+        refreshExemptRanges()
     }
 
     func containerWidthDidChange(_ width: CGFloat) {
@@ -158,22 +235,34 @@ final class TablePreviewController {
         let preEdit = NSRange(location: editedRange.location, length: max(0, editedRange.length - delta))
         documentLength = max(0, documentLength + delta)
         pendingDirtyRanges = pendingDirtyRanges.map { Self.shiftMerging($0, editedRange: editedRange, preEdit: preEdit, delta: delta) }
-        presented = presented.map { table in
+        exemptRanges = exemptRanges.map { Self.shiftMerging($0, editedRange: editedRange, preEdit: preEdit, delta: delta) }
+        presented = presented.compactMap { table -> PresentedTable? in
             var moved = table
-            // 編集より後ろの表示はそのまま平行移動する。編集と交差する表示は(モデルからは外れるので)次の
-            // `present` で作り直されるまでの間、位置だけ古いままにし、作り直す範囲は編集と合併して追従させる。
-            if table.table.range.location >= NSMaxRange(preEdit) { moved.table = table.table.shifted(by: delta) }
-            moved.blockParagraphsRange = Self.shiftMerging(table.blockParagraphsRange, editedRange: editedRange, preEdit: preEdit, delta: delta)
+            let merged = Self.shiftMerging(table.blockParagraphsRange, editedRange: editedRange, preEdit: preEdit, delta: delta)
+            if table.table.range.location >= NSMaxRange(preEdit) {
+                // 編集より後ろ: そのまま平行移動
+                moved.table = table.table.shifted(by: delta)
+            } else if preEdit.location <= table.table.range.location, NSMaxRange(preEdit) >= table.table.range.location {
+                // 編集がヘッダー行の先頭を含む(先頭の削除・置換): ヘッダー行の段落がどこから始まるか分からなくなるので、
+                // `canPresent` に関わらず表示から外す(古い先頭位置のままだと、本当のヘッダー行まで列挙から外れて
+                // テーブルが丸ごと消える)。旧ブロックは作り直す。
+                appendDirty(merged)
+                return nil
+            }
+            // 編集がヘッダー行の先頭より後ろでブロックに触る: ヘッダー行の段落の先頭は変わらないので位置は保ち、
+            // 作り直す範囲だけ編集と合併して追従させる(モデルからは外れるので次の `present` で解除される)
+            moved.blockParagraphsRange = merged
             return moved
         }
         let before = entries.count
         entries = entries.compactMap { entry in
-            let touches = preEdit.location <= NSMaxRange(entry.table.range) && NSMaxRange(preEdit) >= entry.table.range.location
-            if touches { return nil }
+            if entry.table.isTouched(byEditBefore: preEdit) { return nil }
             guard entry.table.range.location >= NSMaxRange(preEdit) else { return entry }
             var moved = entry
             moved.table = entry.table.shifted(by: delta)
             moved.blockParagraphsRange = NSRange(location: entry.blockParagraphsRange.location + delta, length: entry.blockParagraphsRange.length)
+            moved.spans = entry.spans.map { HighlightSpan(range: NSRange(location: $0.range.location + delta, length: $0.range.length), kind: $0.kind) }
+            moved.markers = entry.markers.map { NSRange(location: $0.location + delta, length: $0.length) }
             return moved
         }
         if entries.count != before { present() }
@@ -213,18 +302,32 @@ final class TablePreviewController {
         var result: [PresentedTable] = []
         for index in entries.indices {
             let entry = entries[index]
-            guard !(isEditorFocused && selectionTouches(entry.table, blockParagraphsRange: entry.blockParagraphsRange)) else { continue }
-            result.append(PresentedTable(table: entry.table, blockParagraphsRange: entry.blockParagraphsRange, layout: cachedLayout(at: index)))
+            guard !(isEditorFocused && selectionTouches(entry.table, blockParagraphsRange: entry.blockParagraphsRange)),
+                  let layout = cachedLayout(at: index) else { continue }
+            result.append(PresentedTable(table: entry.table, blockParagraphsRange: entry.blockParagraphsRange, layout: layout))
         }
         return result
     }
 
-    private func cachedLayout(at index: Int) -> TablePreviewLayout {
+    /// セルの内容(無ければここで作る)とレイアウト(幅・見た目が同じなら使い回す)。ストレージが無い、またはテーブルが
+    /// ストレージの外を指していれば nil(そのテーブルは折りたたまない)。
+    private func cachedLayout(at index: Int) -> TablePreviewLayout? {
         let entry = entries[index]
         if let layout = entry.layout, entry.layoutWidth == containerWidth, entry.layoutAppearance == appearance {
             return layout
         }
-        let layout = TablePreviewLayout.make(model: entry.model, maxWidth: containerWidth, appearance: appearance)
+        let model: TablePreviewModel
+        if let built = entry.model {
+            model = built
+        } else {
+            guard let storage,
+                  let built = TablePreviewModel.make(
+                    table: entry.table, storage: storage, spans: entry.spans, markers: entry.markers, theme: theme)
+            else { return nil }
+            entries[index].model = built
+            model = built
+        }
+        let layout = TablePreviewLayout.make(model: model, maxWidth: containerWidth, appearance: appearance)
         entries[index].layout = layout
         entries[index].layoutWidth = containerWidth
         entries[index].layoutAppearance = appearance
@@ -261,6 +364,7 @@ final class TablePreviewController {
         for (index, previous) in old.enumerated() where !matchedOld.contains(index) {
             appendDirty(previous.blockParagraphsRange)
         }
+        refreshExemptRanges()
         return true
     }
 
@@ -339,6 +443,6 @@ final class TablePreviewController {
         guard let table = presentedTable(at: location),
               entries.contains(where: { $0.table.range.location == location }),
               let cell = table.layout.cell(at: point) else { return nil }
-        return cell.caretLocation
+        return table.table.range.location + cell.caretOffset
     }
 }

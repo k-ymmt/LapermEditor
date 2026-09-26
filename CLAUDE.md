@@ -64,18 +64,30 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     does not). Collapsed = the header paragraph gets the hidden-font display paragraph with `paragraphSpacing` =
     `TablePreviewLayout.reservedHeight` (`BlockFragmentProvider.collapsedBlockReservation` serves Front Matter and
     tables), the delimiter / body paragraphs are excluded from enumeration, and `TablePreviewOverlayView`
-    (AppKit / UIKit, one item view per table keyed by its start offset, non-hit-testing) draws
-    `TablePreviewLayout` (natural column widths, shrunk proportionally above `minimumColumnWidth` and wrapped when the
-    sum exceeds the text width, header row first) with `TablePreviewRenderer`. Cell text is `TablePreviewModel`:
-    the storage's attributed substring (fonts, strikethrough) + Theme colours from the plan's spans (macOS keeps colours
-    in rendering attributes) minus the concealable markers and the `\` of `\|`; models are reused across parses by
-    (text, table relative to its start, theme generation) and layouts by (model, width, appearance). Edits that touch a
-    table (including an insertion at its first character or the deletion of the newline before it, but not an insertion
-    on the line after it) drop it from the model until the next parse (expanded, no clicks); later tables shift.
-    `MarkdownEditorEngine.tablePreviewEntry(for:)` places the grid at the text's left edge (`lineFragmentPadding`)
-    below the hidden header line + `topMargin`; `viewportLayoutWillBegin()` clears the per-table frames so a stale
-    frame of a table scrolled out of the viewport never catches a click; `tableCaretRange(atPoint:)` maps a click / tap
-    to the end of the cell (`MarkdownTextView.expandTable(atPoint:)`, and `shouldInterceptTap` on iOS).
+    (AppKit / UIKit, one item view per table keyed by its start offset, non-hit-testing; the renderer skips rows
+    outside the dirty rect) draws `TablePreviewLayout` (natural column widths; when they do not fit, columns within
+    their fair share keep their width, the rest share the remainder proportionally with `minimumColumnWidth` floors
+    subtracted from the others, and cells wrap; header row first) with `TablePreviewRenderer`. Expanded = the whole
+    block is exempt from the line-level marker concealing (`TablePreviewController.exemptRanges`, checked by
+    `EditorContentStorageDelegate` before the concealer), so an expanded table reads as Source. Cell text is
+    `TablePreviewModel` (positions relative to the table start, so a moved table reuses it): the storage's attributed
+    substring (fonts, strikethrough) + Theme colours from the plan's spans (macOS keeps colours in rendering
+    attributes) minus the concealable markers and the `\` of `\|` (overlapping removals merged first); spans and
+    markers are bucketed per table in one pass (`bucket`) and looked up per cell through `RangeIndex`. Models are
+    built lazily (only for a table about to be collapsed) and reused across parses by (text, table relative to its
+    start, relative spans + markers, theme generation); layouts by (model, width, appearance). Edits that touch a table
+    (`MarkdownTable.isTouched(byEditBefore:)`: inside, an insertion at its first character or at its content end, the
+    deletion of the newline before it, but not an insertion on the line after it; `HighlightPlan.shifted` uses the same
+    rule) drop it from the model until the next parse (expanded, no clicks); later tables shift; a presented table
+    whose header start is edited while `canPresent` is false is dropped from the presentation at once (a stale start
+    would exclude the real header paragraph from enumeration). `HighlightMapper` corrects inline positions inside
+    cells that contain `\|` (cmark-gfm reports them shifted left by one per escape in the same cell) and clamps a
+    table that follows a paragraph to the header line's content start (a table in a list item never starts at a line
+    start, so it stays Source). `MarkdownEditorEngine.tablePreviewEntry(for:)` places the grid at the text's left edge
+    (`lineFragmentPadding`) below the hidden header line + `topMargin`; `viewportLayoutWillBegin()` clears the
+    per-table frames so a stale frame of a table scrolled out of the viewport never catches a click;
+    `tableCaretRange(atPoint:)` maps a click / tap to the end of the cell (`MarkdownTextView.expandTable(atPoint:)`,
+    and `shouldInterceptTap` on iOS).
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
     `MarkdownTextView.headerView` / `headerHeight`) puts a SwiftUI view above the text *inside the scrolled
     content* (Laperm shows the note title there, Obsidian-style). The text view hosts it (`NSHostingView` /
