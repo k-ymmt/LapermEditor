@@ -108,7 +108,7 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect((paragraph.attributedString.attribute(.font, at: 0, effectiveRange: nil) as? NSFont)?.pointSize == LivePreviewConcealer.hiddenFontSize)
     #expect(controller.textParagraph(with: NSRange(location: 23, length: 5), in: contentStorage) == nil)
 
-    // 箱座標 → 文字の間。ブロック 1 の本文 "a" は 4..<5: 左端で 4、右端で 5。帯の上は先頭の行の先頭、下は最後の行の末尾
+    // 箱座標 → 文字の間。ブロック 1 の本文 "a" は 4..<5: 左端で 4、右端で 5。本文より上は先頭の行の先頭、下は最後の行の末尾
     let content = first.layout.contentFrame
     #expect(controller.caretLocation(inCodeBlockAt: 0, point: CGPoint(x: content.minX, y: content.midY)) == 4)
     #expect(controller.caretLocation(inCodeBlockAt: 0, point: CGPoint(x: content.maxX, y: content.midY)) == 5)
@@ -233,7 +233,7 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(fencedModel.lines.map(\.lineEndOffset) == [18, 27])
 }
 
-@MainActor @Test func layoutPutsTheLabelAndButtonInTheHeaderAndWrapsLongLines() throws {
+@MainActor @Test func layoutFloatsTheLabelAndButtonOnTheFirstLineWithEqualPaddingAndWrapsLongLines() throws {
     let appearance = CodeBlockPreviewLayout.Appearance(theme: .default)
     let long = CodeBlockPreviewModel(language: "swift", lines: [
         .init(text: String(repeating: "word ", count: 40), displayOffset: 0, lineEndOffset: 200),
@@ -243,9 +243,31 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(layout.size.width == 300)
     let label = try #require(layout.labelFrame)
     #expect(label.maxX < layout.buttonFrame.minX)
-    #expect(layout.buttonFrame.maxY <= layout.contentFrame.minY)
     #expect(layout.label?.string == "swift")
+    // 上下の余白は同じ(帯のぶん上だけ広がらない)
+    let pad = appearance.verticalPadding
+    #expect(pad >= CodeBlockPreviewLayout.horizontalPadding)
+    #expect(layout.contentFrame.minY == pad)
+    #expect(layout.size.height - layout.contentFrame.maxY == pad, "\(layout.size.height) vs \(layout.contentFrame.maxY)")
+    // 言語名とボタンは本文の最初の行の高さの中央に浮く
     let lineHeight = FrontMatterTableLayout.lineHeight(of: appearance.codeFont)
+    #expect(abs(layout.buttonFrame.midY - (pad + lineHeight / 2)) <= 0.5)
+    #expect(abs(label.midY - (pad + lineHeight / 2)) <= 0.5)
+    // 最初の行の文字はその下に入らず手前で折り返し、2 段目からは全幅を使う
+    let text = layout.text
+    let firstRow = text.layoutManager.lineFragmentUsedRect(forGlyphAt: 0, effectiveRange: nil)
+    #expect(firstRow.minY == 0)
+    #expect(layout.contentFrame.minX + firstRow.maxX <= label.minX - CodeBlockPreviewLayout.labelGap + 0.5, "\(firstRow)")
+    let secondRowGlyph = text.layoutManager.glyphIndex(for: CGPoint(x: 1, y: lineHeight * 1.5), in: text.container)
+    let secondRow = text.layoutManager.lineFragmentRect(forGlyphAt: secondRowGlyph, effectiveRange: nil)
+    #expect(secondRow.minY > 0 && secondRow.width == layout.contentFrame.width, "\(secondRow)")
+    // 短い 1 行のブロックでは本文の右にボタンが並ぶだけで、行は 1 つのまま
+    let short = CodeBlockPreviewModel(language: "swift", lines: [.init(text: "x", displayOffset: 0, lineEndOffset: 1)])
+    let shortLayout = CodeBlockPreviewLayout.make(model: short, maxWidth: 300, appearance: appearance)
+    #expect(shortLayout.contentFrame.height == lineHeight)
+    #expect(shortLayout.size.height == ceil(pad * 2 + lineHeight))
+    // ボタンの脇の空きをクリックすると最初の行の末尾
+    #expect(shortLayout.caretOffset(at: CGPoint(x: shortLayout.buttonFrame.minX - 20, y: pad + lineHeight / 2)) == 1)
     #expect(layout.contentFrame.height > lineHeight * 3, "the long line wraps: \(layout.contentFrame.height)")
     #expect(layout.reservedHeight == layout.size.height)
     // 折り返した 1 行目の 2 段目の左端は 1 行目の途中の文字、2 行目は最後
@@ -261,10 +283,11 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(emojiLayout.caretOffset(at: rightHalf) == 2)
     let leftHalf = CGPoint(x: emojiLayout.contentFrame.minX + emojiRect.minX + 1, y: emojiLayout.contentFrame.minY + emojiRect.midY)
     #expect(emojiLayout.caretOffset(at: leftHalf) == 0)
-    // 言語無し・本文無し: 帯だけの箱
+    // 言語無し・本文無し: ボタンの行だけの箱
     let empty = CodeBlockPreviewLayout.make(model: .init(language: nil, lines: []), maxWidth: 300, appearance: appearance)
     #expect(empty.labelFrame == nil)
-    #expect(empty.size.height == ceil(appearance.verticalPadding * 2 + CodeBlockPreviewLayout.headerHeight))
+    #expect(empty.size.height == ceil(appearance.verticalPadding * 2 + max(lineHeight, CodeBlockPreviewLayout.buttonSize)))
+    #expect(empty.buttonFrame.minY >= appearance.verticalPadding - 0.5)
     #expect(empty.caretOffset(at: CGPoint(x: 10, y: 10)) == 0)
     #expect(empty.caretOffset(at: CGPoint(x: 10, y: 200)) == nil)
     // 幅が無いときは既定の幅

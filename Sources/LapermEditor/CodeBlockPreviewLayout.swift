@@ -40,8 +40,10 @@ struct CodeBlockPreviewModel: Equatable {
 /// Live Preview でコードブロックを描く箱のレイアウト(Laperm ADR 0020)。箱の左上を原点とする座標を持つ。描画は
 /// `CodeBlockPreviewRenderer`、配置はエンジンのビューポートレイアウトパスが行う。
 ///
-/// 箱の幅は本文の幅(Source のコードブロックの箱と同じくテキストコンテナの全幅)。上の帯に言語名とコピーボタンを
-/// 右寄せで置き、その下に本文を Theme のコードのフォントで折り返して描く。本文のレイアウトとヒットテストは同じ
+/// 箱の幅は本文の幅(Source のコードブロックの箱と同じくテキストコンテナの全幅)。本文は Theme のコードのフォントで
+/// 折り返して描き、上下に同じ余白(`Appearance.verticalPadding`)を取る。言語名とコピーボタンは本文の最初の行の高さに
+/// 揃えて右上に浮かせ(専用の帯は作らない: 帯のぶん上だけ余白が大きく見える)、最初の行の文字がその下に入らないよう
+/// テキストコンテナの exclusion path で避ける(最初の行だけ右端が短く折り返す)。本文のレイアウトとヒットテストは同じ
 /// TextKit 1 のスタック(`TextLayout`)で行い、描いた位置とクリックした位置がずれないようにする。
 struct CodeBlockPreviewLayout: Equatable {
     /// 本文のレイアウト(TextKit 1)。レイアウトはモデル・幅・見た目が変わったときだけ作り直すので、同一性で比較する。
@@ -52,7 +54,8 @@ struct CodeBlockPreviewLayout: Equatable {
         /// 各行の、本文の文字列(行を改行で繋いだもの)の中のレンジ。
         let lineRanges: [NSRange]
 
-        init(model: CodeBlockPreviewModel, width: CGFloat, appearance: Appearance) {
+        /// `exclusion` は本文座標(左上原点)で文字を入れない矩形(右上の言語名とコピーボタンの場所)。
+        init(model: CodeBlockPreviewModel, width: CGFloat, appearance: Appearance, exclusion: CGRect? = nil) {
             let joined = NSMutableAttributedString()
             var lineRanges: [NSRange] = []
             let style = NSMutableParagraphStyle()
@@ -73,6 +76,13 @@ struct CodeBlockPreviewLayout: Equatable {
             container = NSTextContainer(size: CGSize(width: max(1, width), height: .greatestFiniteMagnitude))
             container.lineFragmentPadding = 0
             container.widthTracksTextView = false
+            if let exclusion, !exclusion.isEmpty {
+                #if canImport(AppKit)
+                container.exclusionPaths = [NSBezierPath(rect: exclusion)]
+                #else
+                container.exclusionPaths = [UIBezierPath(rect: exclusion)]
+                #endif
+            }
             layoutManager.addTextContainer(container)
             storage.addLayoutManager(layoutManager)
             layoutManager.ensureLayout(for: container)
@@ -93,7 +103,9 @@ struct CodeBlockPreviewLayout: Equatable {
         /// 言語名とコピーボタンの色(Theme の `syntaxMarker`)
         var labelColor: PlatformColor
         var lineSpacing: CGFloat
-        /// 箱の内側の上下の余白(Source のコードブロックの箱と同じ)
+        /// 箱の内側の上下の余白(先頭行の上と末尾行の下に同じだけ)。Theme の `codeBlockVerticalPadding`(Source の箱の
+        /// 上下余白)を下回らず、少なくとも左右の余白と同じ(浮かせた言語名とコピーボタンが最初の行の高さからはみ出す
+        /// ぶんの逃げでもある)。
         var verticalPadding: CGFloat
 
         init(theme: MarkdownTheme) {
@@ -103,7 +115,7 @@ struct CodeBlockPreviewLayout: Equatable {
             labelFont = PlatformFont.systemFont(ofSize: max(9, (codeFont.pointSize * 0.8).rounded()), weight: .medium)
             labelColor = theme.renderingColor(for: .syntaxMarker) ?? .lapermTertiaryLabel
             lineSpacing = theme.lineSpacing
-            verticalPadding = theme.codeBlockVerticalPadding
+            verticalPadding = max(theme.codeBlockVerticalPadding, CodeBlockPreviewLayout.horizontalPadding)
         }
     }
 
@@ -121,9 +133,7 @@ struct CodeBlockPreviewLayout: Equatable {
 
     static let horizontalPadding: CGFloat = 8
     static let cornerRadius: CGFloat = CodeBlockFragment.cornerRadius
-    /// 上の帯(言語名とコピーボタン)の高さ
-    static let headerHeight: CGFloat = 18
-    /// ボタンのヒット領域の一辺
+    /// ボタンのヒット領域の一辺。言語名と一緒に本文の最初の行の高さの中央に置く(本文が無ければこの高さの行を 1 つ取る)。
     static let buttonSize: CGFloat = 18
     /// ボタンのアイコンの一辺
     static let iconSize: CGFloat = 11
@@ -142,10 +152,13 @@ struct CodeBlockPreviewLayout: Equatable {
     static func make(model: CodeBlockPreviewModel, maxWidth: CGFloat, appearance: Appearance) -> CodeBlockPreviewLayout {
         let width = maxWidth.isFinite && maxWidth > 0 ? maxWidth : fallbackWidth
         let contentWidth = max(1, width - horizontalPadding * 2)
-        let text = TextLayout(model: model, width: contentWidth, appearance: appearance)
         let pad = appearance.verticalPadding
+        // 言語名とコピーボタンは本文の最初の行(無ければボタンの高さの行)の高さの中央に置く
+        let lineHeight = FrontMatterTableLayout.lineHeight(of: appearance.codeFont)
+        let headerRowHeight = model.lines.isEmpty ? max(lineHeight, buttonSize) : lineHeight
         let buttonFrame = CGRect(
-            x: width - horizontalPadding - buttonSize, y: pad + (headerHeight - buttonSize) / 2, width: buttonSize, height: buttonSize)
+            x: width - horizontalPadding - buttonSize, y: max(0, pad + (headerRowHeight - buttonSize) / 2),
+            width: buttonSize, height: buttonSize)
         var label: NSAttributedString?
         var labelFrame: CGRect?
         if let language = model.language, !language.isEmpty {
@@ -155,13 +168,17 @@ struct CodeBlockPreviewLayout: Equatable {
             let labelWidth = min(labelSize.width, max(0, buttonFrame.minX - labelGap - horizontalPadding))
             label = attributed
             labelFrame = CGRect(
-                x: buttonFrame.minX - labelGap - labelWidth, y: pad + (headerHeight - labelSize.height) / 2,
+                x: buttonFrame.minX - labelGap - labelWidth, y: pad + (headerRowHeight - labelSize.height) / 2,
                 width: labelWidth, height: labelSize.height)
         }
-        let contentTop = pad + headerHeight + (model.lines.isEmpty ? 0 : 2)
+        // 最初の行の文字は言語名とボタンの下に入れない(本文座標)。高さは最初の行の中に収め、2 行目には掛けない。
+        let headerLeft = max(0, (labelFrame?.minX ?? buttonFrame.minX) - labelGap - horizontalPadding)
+        let exclusion = CGRect(x: headerLeft, y: 0, width: max(0, contentWidth - headerLeft), height: max(1, lineHeight - 1))
+        let text = TextLayout(
+            model: model, width: contentWidth, appearance: appearance, exclusion: model.lines.isEmpty ? nil : exclusion)
         let contentHeight = model.lines.isEmpty ? 0 : text.usedHeight
-        let contentFrame = CGRect(x: horizontalPadding, y: contentTop, width: contentWidth, height: contentHeight)
-        let height = ceil(contentFrame.maxY + pad)
+        let contentFrame = CGRect(x: horizontalPadding, y: pad, width: contentWidth, height: contentHeight)
+        let height = ceil(pad + max(contentHeight, headerRowHeight) + pad)
         return CodeBlockPreviewLayout(
             model: model, text: text, size: CGSize(width: width, height: height), contentFrame: contentFrame,
             labelFrame: labelFrame, label: label, buttonFrame: buttonFrame)
@@ -172,8 +189,9 @@ struct CodeBlockPreviewLayout: Equatable {
         buttonFrame.insetBy(dx: -2, dy: -2).contains(point)
     }
 
-    /// 箱座標の点に対応するキャレット位置(ブロックの先頭からの相対値): 本文の上ならその点に最も近い文字の間、
-    /// 帯の上や本文より上なら最初の行の先頭、本文より下なら最後の行の末尾。箱の外(上下左右 4pt の遊びの外)なら nil。
+    /// 箱座標の点に対応するキャレット位置(ブロックの先頭からの相対値): 本文の上ならその点に最も近い文字の間(言語名や
+    /// ボタンの脇の空きは最初の行の末尾)、本文より上なら最初の行の先頭、本文より下なら最後の行の末尾。箱の外(上下左右
+    /// 4pt の遊びの外)なら nil。
     /// 本文が無ければ 0(ブロックの先頭)。
     func caretOffset(at point: CGPoint) -> Int? {
         guard CGRect(origin: .zero, size: size).insetBy(dx: -4, dy: -4).contains(point) else { return nil }
