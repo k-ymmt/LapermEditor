@@ -110,11 +110,12 @@ private func renderingColor(at offset: Int, in textView: MarkdownTextView) -> NS
 @MainActor @Test func highlightPlanChangeDeliversWikiLinks() {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
-    var plans: [HighlightPlan] = []
-    textView.onHighlightPlanChange = { plans.append($0) }
+    var plans: [(HighlightPlan, String)] = []
+    textView.onHighlightPlanChange = { plans.append(($0, $1)) }
     textView.string = "[[A]] and [[B]]"
     textView.highlightAll()
-    #expect(plans.last?.wikiLinks.map(\.target) == ["A", "B"])
+    #expect(plans.last?.0.wikiLinks.map(\.target) == ["A", "B"])
+    #expect(plans.last?.1 == "[[A]] and [[B]]")
 }
 
 @Test func unresolvedLinkColorFallsBackToTranslucentLinkColor() {

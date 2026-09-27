@@ -16,7 +16,7 @@ public struct MarkdownEditorView {
     private var onOpenLink: ((URL) -> Bool)?
     private var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
     private var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)?
-    private var onHighlightPlanChange: ((HighlightPlan) -> Void)?
+    private var onHighlightPlanChange: ((HighlightPlan, String) -> Void)?
     private var onOutlineChange: (([OutlineItem]) -> Void)?
     private var onFoldingChange: (([Int]) -> Void)?
     private var foldingEnabled = true
@@ -109,8 +109,8 @@ public struct MarkdownEditorView {
         return copy
     }
 
-    /// パースが確定するたびに、確定した計画(リンク・Wiki Link・見出しなど)を受け取る。
-    public func onHighlightPlanChange(_ action: @escaping (HighlightPlan) -> Void) -> MarkdownEditorView {
+    /// パースが確定するたびに、確定した計画(リンク・Wiki Link・見出しなど)と、その計画が指す本文を受け取る。
+    public func onHighlightPlanChange(_ action: @escaping (HighlightPlan, String) -> Void) -> MarkdownEditorView {
         var copy = self
         copy.onHighlightPlanChange = action
         return copy
@@ -237,7 +237,7 @@ public struct MarkdownEditorView {
         textView.onOpenWikiLink = onOpenWikiLink
         textView.wikiLinkResolver = wikiLinkResolver
         textView.onHighlightPlanChange = onHighlightPlanChange.map { callback in
-            { plan in DispatchQueue.main.async { callback(plan) } }
+            { plan, text in DispatchQueue.main.async { callback(plan, text) } }
         }
         // SwiftUI のビュー更新中(makeNSView / updateNSView 内の highlightAll)に同期発火すると
         // 利用側の @State 更新が破棄されるため、次のランループへ遅延して届ける

@@ -190,8 +190,8 @@ public final class MarkdownTextView: UITextView {
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
     public func refreshWikiLinkResolution() { engine.refreshWikiLinkResolution() }
 
-    /// パースが確定するたびに、確定した計画で呼ばれる(Link Index の更新など)。
-    public var onHighlightPlanChange: ((HighlightPlan) -> Void)? {
+    /// パースが確定するたびに、確定した計画とその時点の本文で呼ばれる(Link Index の更新など)。
+    public var onHighlightPlanChange: ((HighlightPlan, String) -> Void)? {
         get { engine.onHighlightPlanChange }
         set { engine.onHighlightPlanChange = newValue }
     }

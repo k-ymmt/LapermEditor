@@ -62,8 +62,8 @@ final class MarkdownEditorEngine: NSObject {
     var onOutlineChange: (([OutlineItem]) -> Void)?
     /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる
     var onFoldingChange: (([Int]) -> Void)?
-    /// パースが確定して属性を適用し直したあとに、確定した計画で呼ばれる(ホストが Link Index などを更新するため)。
-    var onHighlightPlanChange: ((HighlightPlan) -> Void)?
+    /// パースが確定して属性を適用し直したあとに、確定した計画とその時点の本文で呼ばれる(ホストが Link Index などを更新するため)。
+    var onHighlightPlanChange: ((HighlightPlan, String) -> Void)?
 
     /// 折りたたまれている見出しの位置(昇順)
     var foldedHeadingLocations: [Int] { foldingController.foldedHeadingLocations }
@@ -207,7 +207,7 @@ final class MarkdownEditorEngine: NSObject {
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
-        onHighlightPlanChange?(highlighter.currentPlan)
+        if let onHighlightPlanChange, let host { onHighlightPlanChange(highlighter.currentPlan, host.editorText) }
     }
 
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
