@@ -220,19 +220,17 @@ public struct MarkdownEditorView {
     }
     #endif
 
-    /// make / update 共通の反映処理(テストの継ぎ目)
+    /// make / update 共通の反映処理(テストの継ぎ目): ハンドラ → 設定の順。
     @MainActor
     func apply(to textView: MarkdownTextView) {
-        #if os(macOS)
-        textView.inputInterceptor = inputInterceptor
-        textView.insertionPointStyle = insertionPointStyle
-        #else
-        textView.adjustsContentInsetForKeyboard = adjustsContentInsetForKeyboard
-        #endif
-        textView.margins = margins
-        textView.imagePreviewOptions = imagePreviewOptions
-        if let imageLoader { textView.imageLoader = imageLoader }
-        textView.linkOptions = linkOptions
+        applyHandlers(to: textView)
+        applyOptions(to: textView)
+    }
+
+    /// ハンドラ・解決関数・proxy(副作用の無い設定)。同じビューで別の文書に切り替えるときは本文の差し替えより前に付け替える:
+    /// 新しい文書の計画を古い `onHighlightPlanChange` / 古い resolver で処理しない。
+    @MainActor
+    func applyHandlers(to textView: MarkdownTextView) {
         textView.onOpenLink = onOpenLink
         textView.onOpenWikiLink = onOpenWikiLink
         textView.wikiLinkResolver = wikiLinkResolver
@@ -247,10 +245,26 @@ public struct MarkdownEditorView {
         textView.onFoldingChange = onFoldingChange.map { callback in
             { locations in DispatchQueue.main.async { callback(locations) } }
         }
+        proxy?.textView = textView
+    }
+
+    /// 副作用のある設定(画像の読み直し、余白、折りたたみ、Live Preview)。本文の差し替えの後に反映する: 古い文書の画像参照を
+    /// 新しい文書の baseURL / loader で読み始めない。
+    @MainActor
+    func applyOptions(to textView: MarkdownTextView) {
+        #if os(macOS)
+        textView.inputInterceptor = inputInterceptor
+        textView.insertionPointStyle = insertionPointStyle
+        #else
+        textView.adjustsContentInsetForKeyboard = adjustsContentInsetForKeyboard
+        #endif
+        textView.margins = margins
+        textView.imagePreviewOptions = imagePreviewOptions
+        if let imageLoader { textView.imageLoader = imageLoader }
+        textView.linkOptions = linkOptions
         textView.isFoldingEnabled = foldingEnabled
         textView.isLivePreviewEnabled = livePreviewEnabled
         textView.editingOptions = editingOptions
-        proxy?.textView = textView
     }
 }
 
@@ -271,9 +285,8 @@ extension MarkdownEditorView: NSViewRepresentable {
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let textView = scrollView.documentView as! MarkdownTextView
         context.coordinator.text = $text
-        // 本文の差し替え(同じビューで別の文書へ)より前にハンドラと解決関数を付け替える: 新しい文書の計画を古い
-        // `onHighlightPlanChange` / 古い resolver で処理しない。
-        apply(to: textView)
+        // 本文の差し替え(同じビューで別の文書へ)より前にハンドラと解決関数を、後に副作用のある設定を反映する。
+        applyHandlers(to: textView)
         if context.coordinator.needsTextReplacement(with: text, current: textView.string) {
             context.coordinator.isUpdatingFromSwiftUI = true
             textView.string = text
@@ -284,6 +297,7 @@ extension MarkdownEditorView: NSViewRepresentable {
             textView.theme = theme
         }
         textView.showsLineNumbers = showsLineNumbers
+        applyOptions(to: textView)
         applyHeader(to: textView, coordinator: context.coordinator)
     }
 
@@ -367,8 +381,8 @@ extension MarkdownEditorView: UIViewRepresentable {
 
     public func updateUIView(_ textView: MarkdownTextView, context: Context) {
         context.coordinator.text = $text
-        // 本文の差し替えより前にハンドラと解決関数を付け替える(macOS と同じ理由)。
-        apply(to: textView)
+        // 本文の差し替えより前にハンドラと解決関数を、後に副作用のある設定を反映する(macOS と同じ理由)。
+        applyHandlers(to: textView)
         if context.coordinator.needsTextReplacement(with: text, current: textView.text) {
             context.coordinator.isUpdatingFromSwiftUI = true
             textView.text = text
@@ -379,6 +393,7 @@ extension MarkdownEditorView: UIViewRepresentable {
             textView.theme = theme
         }
         textView.showsLineNumbers = showsLineNumbers
+        applyOptions(to: textView)
         applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
         applyHeader(to: textView, coordinator: context.coordinator)
     }

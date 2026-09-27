@@ -750,13 +750,13 @@ enum HighlightMapper {
             return count % 2 == 1
         }
 
-        /// `range` の中の最初の `|`(テーブルのセル内なら `\|` を含む 2 文字)のレンジ。無ければ nil。
+        /// `range` の中の最初の `|` のレンジ。テーブルのセル内では `\|` の 2 文字(セルの外では `\` は target の一部)。無ければ nil。
         private func firstPipe(in range: NSRange) -> NSRange? {
             let end = NSMaxRange(range)
             var i = range.location
             while i < end {
                 if text.character(at: i) == ASCII.pipe {
-                    if i > range.location, text.character(at: i - 1) == ASCII.backslash {
+                    if tableDepth > 0, i > range.location, text.character(at: i - 1) == ASCII.backslash {
                         return NSRange(location: i - 1, length: 2)
                     }
                     return NSRange(location: i, length: 1)

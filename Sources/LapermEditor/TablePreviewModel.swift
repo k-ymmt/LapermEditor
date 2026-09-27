@@ -38,10 +38,12 @@ struct TablePreviewModel: Equatable {
         guard NSMaxRange(table.range) <= storage.length else { return nil }
         // 色を付けるスパンだけ(テーマに色の無い種類と Syntax Marker は除く: パイプ 1 本ごとのマーカーが巨大な表では
         // スパンの大半で、セルの中のマーカーは隠す対象なのでどのみち取り除かれる)。セルごとの検索は区間の索引で。
-        let colouredSpans = spans.filter { $0.kind != .syntaxMarker && theme.renderingColor(for: $0.kind) != nil }
+        let unresolved = Set(unresolvedWikiLinks)
+        let colouredSpans = spans.filter {
+            $0.kind != .syntaxMarker && (theme.renderingColor(for: $0.kind) != nil || ($0.kind == .wikiLink && unresolved.contains($0.range)))
+        }
         let spanIndex = RangeIndex(colouredSpans.map { ($0.range, $0) })
         let markerIndex = RangeIndex(markers.map { ($0, $0) })
-        let unresolved = Set(unresolvedWikiLinks)
         let origin = table.range.location
         func cell(_ cell: MarkdownTable.Cell) -> Cell {
             Cell(

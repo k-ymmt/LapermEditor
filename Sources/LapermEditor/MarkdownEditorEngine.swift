@@ -119,8 +119,10 @@ final class MarkdownEditorEngine: NSObject {
         // 巨大文書で「次の編集までアウトラインが更新されない」問題を防ぐため、
         // 完了通知を受けてここで同じ再同期を行う。
         highlighter.onBackgroundFlushApplied = { [weak self] in
-            self?.resyncAfterHighlight()
-            self?.notifyHighlightPlanChange()
+            guard let self else { return }
+            self.resyncAfterHighlight()
+            self.notifyHighlightPlanChange()
+            if self.pendingWikiLinkRefresh { self.refreshWikiLinkResolution() }
         }
 
         imagePreviewController.onStateChange = { [weak self] in
@@ -224,11 +226,12 @@ final class MarkdownEditorEngine: NSObject {
 
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。折りたたんだ表のセルは
     /// 解決結果を材料に持つので、表も作り直す。
-    /// IME 変換中は属性を触らず(`highlightNow` と同じガード)、変換が終わった後の flush で消化する。
+    /// IME 変換中と、編集がまだパースされていない間(計画のスパンが編集で捨てられていて、レンジを本文に戻すと見出しの
+    /// フォントなどが一時的に消える)は属性を触らず、次の flush(同期 / 背景完了)で消化する。
     func refreshWikiLinkResolution() {
         guard let contentStorage = host?.editorContentStorage,
               let layoutManager = host?.editorLayoutManager else { return }
-        guard host?.editorHasMarkedText != true else {
+        guard host?.editorHasMarkedText != true, !highlighter.hasPendingEdits else {
             pendingWikiLinkRefresh = true
             return
         }
@@ -354,9 +357,10 @@ final class MarkdownEditorEngine: NSObject {
     private func updateTables() {
         guard let host, let storage = host.editorContentStorage?.textStorage else { return }
         refreshTableInputs()
+        let plan = highlighter.currentPlan
         tables.update(
-            plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString,
-            unresolvedWikiLinkRanges: highlighter.unresolvedWikiLinkRanges())
+            plan: plan, storage: storage, text: storage.string as NSString,
+            unresolvedWikiLinkRanges: highlighter.unresolvedWikiLinkRanges(within: plan.tables.map(\.range)))
         applyTableChanges()
     }
 

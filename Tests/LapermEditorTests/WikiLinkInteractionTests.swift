@@ -145,9 +145,9 @@ private func renderingColor(at offset: Int, in textView: MarkdownTextView) -> NS
     existing.insert("Note")
     textView.refreshWikiLinkResolution()
     #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
-    // 確定後の呼び出しで付け直される
+    // 確定後の flush(確定で入った編集のパース)で付け直される
     textView.unmarkText()
-    textView.refreshWikiLinkResolution()
+    textView.engine.highlightNow()
     #expect(renderingColor(at: 3, in: textView) == theme.style(for: .wikiLink)?.foregroundColor)
 }
 #endif
@@ -256,5 +256,88 @@ private func renderingColor(at offset: Int, in textView: MarkdownTextView) -> NS
     #expect(cell.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == theme.effectiveUnresolvedLinkColor)
     let resolved = TablePreviewModel.make(table: table, storage: storage, spans: plan.spans, markers: plan.concealableMarkers, theme: theme)!
     #expect(resolved.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == theme.style(for: .wikiLink)?.foregroundColor)
+}
+#endif
+
+#if os(macOS)
+// MARK: - codex レビュー第 2 ラウンド後
+
+@MainActor @Test func refreshDeferredDuringIMEIsAppliedAfterABackgroundParse() async {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "[[Note]]\n\nother"
+    textView.highlightAll()
+    let theme = textView.theme
+    textView.markdownHighlighter.backgroundParseThreshold = .zero  // 以後の flush は背景経路
+    textView.setSelectedRange(NSRange(location: 10, length: 0))
+    textView.setMarkedText("か", selectedRange: NSRange(location: 0, length: 1), replacementRange: NSRange(location: 10, length: 0))
+    existing.insert("Note")
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
+    textView.unmarkText()
+    textView.engine.highlightNow()  // → .deferredToBackground
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor, "still pending while the background parse runs")
+    await textView.markdownHighlighter.activeBackgroundParse?.value
+    #expect(renderingColor(at: 3, in: textView) == theme.style(for: .wikiLink)?.foregroundColor, "the deferred refresh is drained after the background parse")
+}
+
+@MainActor @Test func refreshWaitsForPendingEditsSoHeadingFontsSurvive() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "# [[A]] title"
+    textView.highlightAll()
+    let theme = textView.theme
+    let headingFont = theme.style(for: .heading(level: 1))?.font
+    // "title" を編集: 見出しスパンは捨てられ、次の flush までパース待ち
+    textView.setSelectedRange(NSRange(location: 13, length: 0))
+    textView.insertText("Z", replacementRange: NSRange(location: 13, length: 0))
+    existing.insert("A")
+    textView.refreshWikiLinkResolution()
+    let storage = textView.textStorage!
+    #expect(storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont == headingFont, "the wiki link keeps the heading font while the parse is pending")
+    textView.engine.highlightNow()
+    #expect(storage.attribute(.font, at: 4, effectiveRange: nil) as? NSFont == headingFont)
+    #expect(renderingColor(at: 4, in: textView) == theme.style(for: .wikiLink)?.foregroundColor, "the deferred refresh is applied by the flush")
+}
+
+@MainActor @Test func tableResolutionOnlyAsksForLinksInsideTables() {
+    var asked: [String] = []
+    let highlighter = Highlighter(theme: .default)
+    highlighter.wikiLinkResolver = { asked.append($0.target); return .unresolved }
+    let (contentStorage, layoutManager) = makeStack("[[Outside]]\n\n| h |\n|---|\n| [[Inside]] |\n\n[[After]]")
+    highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager)
+    asked = []
+    #expect(highlighter.unresolvedWikiLinkRanges(within: []).isEmpty)
+    #expect(asked.isEmpty, "no tables: the resolver is not called")
+    let ranges = highlighter.unresolvedWikiLinkRanges(within: highlighter.currentPlan.tables.map(\.range))
+    #expect(asked == ["Inside"])
+    #expect(ranges.count == 1)
+}
+
+@MainActor
+private func makeStack(_ text: String) -> (NSTextContentStorage, NSTextLayoutManager) {
+    let contentStorage = NSTextContentStorage()
+    let layoutManager = NSTextLayoutManager()
+    contentStorage.addTextLayoutManager(layoutManager)
+    layoutManager.textContainer = NSTextContainer(size: CGSize(width: 400, height: 0))
+    contentStorage.textStorage?.replaceCharacters(in: NSRange(location: 0, length: 0), with: text)
+    return (contentStorage, layoutManager)
+}
+
+@MainActor @Test func collapsedTableCellColorsUnresolvedLinksEvenWithoutAWikiLinkColor() {
+    var theme = MarkdownTheme.default
+    theme.styles[.wikiLink] = MarkdownTheme.Style(font: theme.bodyFont)
+    theme.styles[.link] = nil
+    theme.unresolvedLinkColor = .systemRed
+    let md = "| h |\n|---|\n| [[Missing]] |\n"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let model = TablePreviewModel.make(
+        table: plan.tables[0], storage: NSAttributedString(string: md), spans: plan.spans, markers: plan.concealableMarkers,
+        unresolvedWikiLinks: plan.wikiLinks.map(\.range), theme: theme)!
+    #expect(model.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed)
 }
 #endif

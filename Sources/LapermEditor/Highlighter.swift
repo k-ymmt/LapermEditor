@@ -455,11 +455,22 @@ public final class Highlighter {
         return result
     }
 
-    /// 今の計画の Wiki Link のうち Unresolved と解決されるレンジ(折りたたんだ表のセルの色に使う)。解決関数が無ければ空。
-    public func unresolvedWikiLinkRanges() -> [NSRange] {
-        guard let wikiLinkResolver else { return [] }
-        return currentPlan.wikiLinks.filter { wikiLinkResolver($0) == .unresolved }.map(\.range)
+    /// 今の計画の Wiki Link のうち `ranges`(位置順で互いに重ならない: テーブル)に含まれ、Unresolved と解決されるレンジ
+    /// (折りたたんだ表のセルの色に使う)。テーブルが無ければ解決関数を呼ばない。
+    public func unresolvedWikiLinkRanges(within ranges: [NSRange]) -> [NSRange] {
+        guard let wikiLinkResolver, !ranges.isEmpty else { return [] }
+        var result: [NSRange] = []
+        var index = 0
+        for reference in currentPlan.wikiLinks.sorted(by: { $0.range.location < $1.range.location }) {
+            while index < ranges.count, NSMaxRange(ranges[index]) <= reference.range.location { index += 1 }
+            guard index < ranges.count, ranges[index].location < NSMaxRange(reference.range) else { continue }
+            if wikiLinkResolver(reference) == .unresolved { result.append(reference.range) }
+        }
+        return result
     }
+
+    /// 編集がまだパース・適用されていない(次の flush を待っている)。
+    public var hasPendingEdits: Bool { !pendingEditedRanges.isEmpty }
 
     /// レンジを文書長にクリップする。パース結果と storage の不整合が起きた場合の防波堤。
     private func clip(_ range: NSRange, to documentLength: Int) -> NSRange {

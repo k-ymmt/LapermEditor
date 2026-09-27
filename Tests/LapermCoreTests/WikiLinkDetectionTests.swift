@@ -199,3 +199,16 @@ private func markers(in markdown: String) -> [String] {
     let outside = wikiLinks(in: "[[Note\\|Alias]]")
     #expect(outside[0].target == "Note\\")
 }
+
+@Test func escapedPipeOutsideATableStaysInTheTarget() {
+    let result = wikiLinks(in: "[[Note\\|]]")
+    #expect(result.count == 1)
+    #expect(result[0].target == "Note\\")
+    #expect(result[0].alias == nil)
+    #expect(markers(in: "[[Note\\|]]") == ["[[", "|", "]]"])
+    // セル内では `\|` が区切り
+    let md = "| h |\n|---|\n| [[Note\\|]] |\n"
+    let cell = wikiLinks(in: md)
+    #expect(cell[0].target == "Note")
+    #expect(markers(in: md).contains("\\|"))
+}
