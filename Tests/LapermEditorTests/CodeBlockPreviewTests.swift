@@ -250,7 +250,7 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(layout.contentFrame.minY == pad)
     #expect(layout.size.height - layout.contentFrame.maxY == pad, "\(layout.size.height) vs \(layout.contentFrame.maxY)")
     // 言語名とボタンは本文の最初の行の高さの中央に浮く
-    let lineHeight = FrontMatterTableLayout.lineHeight(of: appearance.codeFont)
+    let lineHeight = CodeBlockPreviewLayout.TextLayout.lineHeight(for: appearance)
     #expect(abs(layout.buttonFrame.midY - (pad + lineHeight / 2)) <= 0.5)
     #expect(abs(label.midY - (pad + lineHeight / 2)) <= 0.5)
     // 最初の行の文字はその下に入らず手前で折り返し、2 段目からは全幅を使う
@@ -292,6 +292,79 @@ private func update(_ controller: CodeBlockPreviewController, with text: String)
     #expect(empty.caretOffset(at: CGPoint(x: 10, y: 200)) == nil)
     // 幅が無いときは既定の幅
     #expect(CodeBlockPreviewLayout.make(model: long, maxWidth: 0, appearance: appearance).size.width == CodeBlockPreviewLayout.fallbackWidth)
+}
+
+/// レビューで再現した境界条件(LapermEditor 6763787 の codex レビュー): ラベルが 1 行目の幅を使い切って本文が除外領域の
+/// 下へ押し出されても本文は箱に収まり、除外の高さは実際の行高から決めて 2 行目に掛からず、小さいフォントでも文字が
+/// コピーボタンのヒット領域に入らず、コントロールは常に箱の中にある。
+@MainActor @Test func layoutKeepsTheTextInsideTheBoxAndOffTheControlsAtAwkwardWidthsAndFonts() throws {
+    let appearance = CodeBlockPreviewLayout.Appearance(theme: .default)
+    let pad = appearance.verticalPadding
+
+    // 幅 100pt、長い言語名: 1 行目はラベルの手前に 1 文字も置けず除外領域の下から始まる。箱はその下端まで伸び、
+    // 最後の行のクリックは最後の行の文字に対応する
+    let narrow = CodeBlockPreviewModel(language: "javascript", lines: [
+        .init(text: "hello", displayOffset: 0, lineEndOffset: 5), .init(text: "world", displayOffset: 6, lineEndOffset: 11),
+    ])
+    let narrowLayout = CodeBlockPreviewLayout.make(model: narrow, maxWidth: 100, appearance: appearance)
+    let used = narrowLayout.text.layoutManager.usedRect(for: narrowLayout.text.container)
+    #expect(used.minY > 0, "the first row moved below the label: \(used)")
+    #expect(narrowLayout.contentFrame.maxY >= pad + used.maxY, "\(narrowLayout.contentFrame) vs \(used)")
+    #expect(narrowLayout.size.height == ceil(narrowLayout.contentFrame.maxY + pad))
+    let lastRow = narrowLayout.text.layoutManager.lineFragmentUsedRect(
+        forGlyphAt: narrowLayout.text.storage.length - 1, effectiveRange: nil)
+    let onLastRow = CGPoint(x: narrowLayout.contentFrame.minX + 1, y: narrowLayout.contentFrame.minY + lastRow.midY)
+    #expect(narrowLayout.caretOffset(at: onLastRow) == 6, "the click lands on the last row, not past it")
+    #expect(narrowLayout.labelFrame!.maxX <= narrowLayout.buttonFrame.minX)
+    #expect(narrowLayout.labelFrame!.minX >= CodeBlockPreviewLayout.horizontalPadding)
+
+    // 実際の行高が推定より低いフォント: 除外は 2 行目に掛からない(2 段目は全幅)
+    let long = CodeBlockPreviewModel(language: "swift", lines: [
+        .init(text: String(repeating: "word ", count: 60), displayOffset: 0, lineEndOffset: 300),
+    ])
+    for font in [PlatformFont(name: "Monaco", size: 9), PlatformFont(name: "Arial", size: 16)].compactMap({ $0 }) {
+        var custom = appearance
+        custom.codeFont = font
+        custom.labelFont = CodeBlockPreviewLayout.Appearance.labelFont(forCodeFont: font)
+        let layout = CodeBlockPreviewLayout.make(model: long, maxWidth: 300, appearance: custom)
+        let text = layout.text
+        let firstRow = text.layoutManager.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil)
+        let secondGlyph = text.layoutManager.glyphIndex(for: CGPoint(x: 1, y: firstRow.maxY + 1), in: text.container)
+        let secondRow = text.layoutManager.lineFragmentRect(forGlyphAt: secondGlyph, effectiveRange: nil)
+        #expect(secondRow.minY >= firstRow.maxY - 0.01)
+        #expect(secondRow.width == layout.contentFrame.width, "\(font.fontName): \(firstRow) \(secondRow)")
+        #expect(firstRow.width < layout.contentFrame.width)
+    }
+
+    // 極小のコードフォント: 除外はコントロールの実寸まで広がり、どの文字の中央もコピーボタンのヒット領域に入らない。
+    // ボタンとラベル(の見える部分)は箱の中
+    for size in [CGFloat(6), 0.5] {
+        var tiny = appearance
+        tiny.codeFont = PlatformFont.monospacedSystemFont(ofSize: size, weight: .regular)
+        tiny.labelFont = CodeBlockPreviewLayout.Appearance.labelFont(forCodeFont: tiny.codeFont)
+        let model = CodeBlockPreviewModel(language: "swift", lines: [
+            .init(text: String(repeating: "abcdefghij", count: 10), displayOffset: 0, lineEndOffset: 100),
+            .init(text: "x", displayOffset: 101, lineEndOffset: 102),
+        ])
+        let layout = CodeBlockPreviewLayout.make(model: model, maxWidth: 120, appearance: tiny)
+        let text = layout.text
+        let bounds = CGRect(origin: .zero, size: layout.size)
+        for glyph in 0..<text.layoutManager.numberOfGlyphs {
+            let rect = text.layoutManager.boundingRect(forGlyphRange: NSRange(location: glyph, length: 1), in: text.container)
+            let center = CGPoint(x: layout.contentFrame.minX + rect.midX, y: layout.contentFrame.minY + rect.midY)
+            #expect(!layout.isOnCopyButton(center), "size \(size), glyph \(glyph) at \(center) is under the copy button")
+            #expect(bounds.contains(center))
+        }
+        let icon = CGRect(
+            x: layout.buttonFrame.midX - CodeBlockPreviewLayout.iconSize / 2, y: layout.buttonFrame.midY - CodeBlockPreviewLayout.iconSize / 2,
+            width: CodeBlockPreviewLayout.iconSize, height: CodeBlockPreviewLayout.iconSize)
+        #expect(bounds.contains(icon), "size \(size): icon \(icon) in \(bounds)")
+        #expect(bounds.contains(layout.labelFrame!), "size \(size): label \(layout.labelFrame!) in \(bounds)")
+        #expect(layout.isOnCopyButton(CGPoint(x: layout.buttonFrame.midX, y: layout.buttonFrame.midY)))
+        // 下の余白: 本文かコントロールの低い方の下に pad(行より高いコントロールのぶんだけ箱が伸びる)
+        let bottom = layout.size.height - max(layout.contentFrame.maxY, icon.maxY)
+        #expect(bottom >= pad && bottom <= pad + 1, "size \(size): \(bottom)")
+    }
 }
 
 // MARK: - MarkdownTextView(AppKit)
