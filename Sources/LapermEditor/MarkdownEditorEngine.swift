@@ -62,8 +62,11 @@ final class MarkdownEditorEngine: NSObject {
     var onOutlineChange: (([OutlineItem]) -> Void)?
     /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる
     var onFoldingChange: (([Int]) -> Void)?
-    /// パースが確定して属性を適用し直したあとに、確定した計画とその時点の本文で呼ばれる(ホストが Link Index などを更新するため)。
+    /// パースの結果を実際に採用したときに、その計画とその時点の本文で呼ばれる(ホストが Link Index などを更新するため)。
+    /// テーマ変更や保留の無い flush では呼ばれない。
     var onHighlightPlanChange: ((HighlightPlan, String) -> Void)?
+    /// IME 変換中に来た Wiki Link の色の付け直し要求。変換が終わって次の flush が走ったときに消化する。
+    private var pendingWikiLinkRefresh = false
 
     /// 折りたたまれている見出しの位置(昇順)
     var foldedHeadingLocations: [Int] { foldingController.foldedHeadingLocations }
@@ -117,6 +120,7 @@ final class MarkdownEditorEngine: NSObject {
         // 完了通知を受けてここで同じ再同期を行う。
         highlighter.onBackgroundFlushApplied = { [weak self] in
             self?.resyncAfterHighlight()
+            self?.notifyHighlightPlanChange()
         }
 
         imagePreviewController.onStateChange = { [weak self] in
@@ -158,6 +162,7 @@ final class MarkdownEditorEngine: NSObject {
         // ここで再同期すると折りたたみが全部消え、画像のロード状態も捨てられるので、完了通知まで待つ。
         guard highlighter.rehighlightAll(contentStorage: contentStorage, layoutManager: layoutManager) != .deferredToBackground else { return }
         resyncAfterHighlight()
+        notifyHighlightPlanChange()
     }
 
     /// テーマ変更を反映する。再パースせず、現在の計画に新しい属性を適用し直す。
@@ -188,6 +193,9 @@ final class MarkdownEditorEngine: NSObject {
         // で、パース完了時の onBackgroundFlushApplied で改めて同期される。二重の作業を省く。
         guard outcome != .deferredToBackground else { return }
         resyncAfterHighlight()
+        if outcome == .applied { notifyHighlightPlanChange() }
+        // 変換中に見送った色の付け直しがあれば、ここ(確定・取消の後の flush)で消化する。
+        if pendingWikiLinkRefresh { refreshWikiLinkResolution() }
     }
 
     func scheduleHighlight() {
@@ -207,14 +215,26 @@ final class MarkdownEditorEngine: NSObject {
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
-        if let onHighlightPlanChange, let host { onHighlightPlanChange(highlighter.currentPlan, host.editorText) }
     }
 
-    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
+    private func notifyHighlightPlanChange() {
+        guard let onHighlightPlanChange, let host else { return }
+        onHighlightPlanChange(highlighter.currentPlan, host.editorText)
+    }
+
+    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。折りたたんだ表のセルは
+    /// 解決結果を材料に持つので、表も作り直す。
+    /// IME 変換中は属性を触らず(`highlightNow` と同じガード)、変換が終わった後の flush で消化する。
     func refreshWikiLinkResolution() {
         guard let contentStorage = host?.editorContentStorage,
               let layoutManager = host?.editorLayoutManager else { return }
+        guard host?.editorHasMarkedText != true else {
+            pendingWikiLinkRefresh = true
+            return
+        }
+        pendingWikiLinkRefresh = false
         highlighter.reapplyWikiLinkResolution(contentStorage: contentStorage, layoutManager: layoutManager)
+        updateTables()
     }
 
     // MARK: - Live Preview
@@ -334,7 +354,9 @@ final class MarkdownEditorEngine: NSObject {
     private func updateTables() {
         guard let host, let storage = host.editorContentStorage?.textStorage else { return }
         refreshTableInputs()
-        tables.update(plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString)
+        tables.update(
+            plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString,
+            unresolvedWikiLinkRanges: highlighter.unresolvedWikiLinkRanges())
         applyTableChanges()
     }
 
@@ -957,6 +979,16 @@ final class MarkdownEditorEngine: NSObject {
     func interactiveLinkRange(atPoint point: CGPoint, characterIndex: Int) -> NSRange? {
         if let wiki = wikiLinkReference(atPoint: point, characterIndex: characterIndex) { return wiki.range }
         return linkReference(atPoint: point, characterIndex: characterIndex)?.range
+    }
+
+    /// `range` のリンクの下線の色: Wiki Link なら解決結果に従った実効色(Unresolved は Unresolved の色)、それ以外はリンク色。
+    func hoverUnderlineColor(for range: NSRange) -> PlatformColor {
+        let theme = highlighter.theme
+        if let wiki = highlighter.currentPlan.wikiLinks.first(where: { $0.range == range }) {
+            if highlighter.wikiLinkResolver?(wiki) == .unresolved { return theme.effectiveUnresolvedLinkColor }
+            return theme.style(for: .wikiLink)?.foregroundColor ?? theme.style(for: .link)?.foregroundColor ?? .lapermLink
+        }
+        return theme.style(for: .link)?.foregroundColor ?? .lapermLink
     }
 
     private func pointIsOn(range: NSRange, point: CGPoint) -> Bool {

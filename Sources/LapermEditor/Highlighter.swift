@@ -74,17 +74,32 @@ public final class Highlighter {
     }
 
     /// 解決結果だけが変わったとき(Note の増減)に、Wiki Link の色を今の計画のまま付け直す。再パースはしない。
-    /// Wiki Link に重なるスパン(`[[` `]]` の Syntax Marker)も計画の順で付け直し、マーカーの色を保つ。
+    /// Wiki Link のレンジを本文の色に戻してから、そのレンジと交差するスパンを **レンジに切り詰めて** 計画の順で重ね直す
+    /// (`[[` `]]` の Syntax Marker の色を保ち、Wiki Link の外の兄弟スパン(隣の Markdown Link、見出しの `#`)には触らない)。
+    /// スパンとレンジの照合は位置順の二分探索(Wiki Link 1 万個 × スパン数の総当たりにしない)。
     public func reapplyWikiLinkResolution(
         contentStorage: NSTextContentStorage,
         layoutManager: NSTextLayoutManager
     ) {
-        let wikiRanges = currentPlan.wikiLinks.map(\.range)
+        let wikiRanges = HighlightDiff.mergeRanges(currentPlan.wikiLinks.map(\.range))
         guard !wikiRanges.isEmpty else { return }
-        let spans = currentPlan.spans.filter { span in
-            wikiRanges.contains { NSIntersectionRange($0, span.range).length > 0 }
+        var clipped: [HighlightSpan] = []
+        for span in currentPlan.spans {
+            // span.location を超える終端を持つ最初の Wiki レンジから、span の終端より前に始まるものまで
+            var low = 0
+            var high = wikiRanges.count
+            while low < high {
+                let mid = (low + high) / 2
+                if NSMaxRange(wikiRanges[mid]) <= span.range.location { low = mid + 1 } else { high = mid }
+            }
+            var index = low
+            while index < wikiRanges.count, wikiRanges[index].location < NSMaxRange(span.range) {
+                let overlap = NSIntersectionRange(wikiRanges[index], span.range)
+                if overlap.length > 0 { clipped.append(HighlightSpan(range: overlap, kind: span.kind)) }
+                index += 1
+            }
         }
-        apply(spans: spans, resetting: [], plan: currentPlan, contentStorage: contentStorage, layoutManager: layoutManager)
+        apply(spans: clipped, resetting: wikiRanges, plan: currentPlan, contentStorage: contentStorage, layoutManager: layoutManager)
     }
 
     private func storageAttributes(for kind: SyntaxKind) -> [NSAttributedString.Key: Any] {
@@ -416,14 +431,34 @@ public final class Highlighter {
     }
 
     /// `spans` の `.wikiLink` のうち Unresolved と解決されたものの色属性(レンジをキーに)。解決関数が無ければ空。
+    /// 解決関数は適用するスパンに当たる参照にだけ問う(差分適用で全文の参照を解決し直さない)。
     private func wikiLinkColorAttributes(for spans: [HighlightSpan], in plan: HighlightPlan) -> [NSRange: [NSAttributedString.Key: Any]] {
-        guard let wikiLinkResolver, spans.contains(where: { $0.kind == .wikiLink }) else { return [:] }
+        guard let wikiLinkResolver else { return [:] }
+        let applied = spans.filter { $0.kind == .wikiLink }.map(\.range)
+        guard !applied.isEmpty else { return [:] }
         var result: [NSRange: [NSAttributedString.Key: Any]] = [:]
         let unresolvedAttributes = theme.unresolvedWikiLinkRenderingAttributes()
-        for reference in plan.wikiLinks where wikiLinkResolver(reference) == .unresolved {
-            result[reference.range] = unresolvedAttributes
+        // 付け直しではスパンが Wiki Link のレンジに切り詰められているので、参照のレンジに含まれるスパンを対象にする
+        let sortedApplied = applied.sorted { $0.location < $1.location }
+        var cursor = 0
+        for reference in plan.wikiLinks.sorted(by: { $0.range.location < $1.range.location }) {
+            while cursor < sortedApplied.count, NSMaxRange(sortedApplied[cursor]) <= reference.range.location { cursor += 1 }
+            var index = cursor
+            var matched: [NSRange] = []
+            while index < sortedApplied.count, sortedApplied[index].location < NSMaxRange(reference.range) {
+                if NSIntersectionRange(sortedApplied[index], reference.range).length > 0 { matched.append(sortedApplied[index]) }
+                index += 1
+            }
+            guard !matched.isEmpty, wikiLinkResolver(reference) == .unresolved else { continue }
+            for range in matched { result[range] = unresolvedAttributes }
         }
         return result
+    }
+
+    /// 今の計画の Wiki Link のうち Unresolved と解決されるレンジ(折りたたんだ表のセルの色に使う)。解決関数が無ければ空。
+    public func unresolvedWikiLinkRanges() -> [NSRange] {
+        guard let wikiLinkResolver else { return [] }
+        return currentPlan.wikiLinks.filter { wikiLinkResolver($0) == .unresolved }.map(\.range)
     }
 
     /// レンジを文書長にクリップする。パース結果と storage の不整合が起きた場合の防波堤。

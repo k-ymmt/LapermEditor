@@ -128,3 +128,133 @@ private func renderingColor(at offset: Int, in textView: MarkdownTextView) -> NS
     #expect(custom.unresolvedWikiLinkRenderingAttributes()[.foregroundColor] as? NSColor == .systemRed)
 }
 #endif
+
+#if os(macOS)
+@MainActor @Test func refreshWikiLinkResolutionWaitsWhileIMEIsComposing() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "[[Note]] "
+    textView.highlightAll()
+    let theme = textView.theme
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
+    // 変換中(marked text)は色を触らない
+    textView.setSelectedRange(NSRange(location: 9, length: 0))
+    textView.setMarkedText("か", selectedRange: NSRange(location: 0, length: 1), replacementRange: NSRange(location: 9, length: 0))
+    existing.insert("Note")
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
+    // 確定後の呼び出しで付け直される
+    textView.unmarkText()
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 3, in: textView) == theme.style(for: .wikiLink)?.foregroundColor)
+}
+#endif
+
+#if os(macOS)
+// MARK: - codex レビュー後
+
+@MainActor @Test func refreshKeepsSiblingSpansAndMarkersUntouched() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "# [[Note]] and [site](https://example.org)\n> [[Note]] quoted"
+    textView.highlightAll()
+    let theme = textView.theme
+    let linkColor = theme.style(for: .link)?.foregroundColor
+    let markerColor = theme.style(for: .syntaxMarker)?.foregroundColor
+    #expect(renderingColor(at: 4, in: textView) == theme.effectiveUnresolvedLinkColor)
+    #expect(renderingColor(at: 16, in: textView) == linkColor)  // "site"
+    #expect(renderingColor(at: 0, in: textView) == markerColor)  // "#"
+    existing.insert("Note")
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 4, in: textView) == theme.style(for: .wikiLink)?.foregroundColor)
+    #expect(renderingColor(at: 16, in: textView) == linkColor, "the sibling Markdown Link keeps its colour")
+    #expect(renderingColor(at: 0, in: textView) == markerColor, "the heading marker keeps its colour")
+    #expect(renderingColor(at: 2, in: textView) == markerColor, "[[ keeps the marker colour")
+    let quoteStart = ("# [[Note]] and [site](https://example.org)\n" as NSString).length
+    #expect(renderingColor(at: quoteStart + 4, in: textView) == theme.style(for: .wikiLink)?.foregroundColor)
+    #expect(renderingColor(at: quoteStart + 11, in: textView) == theme.style(for: .blockquote)?.foregroundColor, "quoted text after the link keeps the blockquote colour")
+}
+
+@MainActor @Test func themeWithoutWikiLinkStyleFallsBackToLinkAndRecoversFromUnresolved() {
+    var theme = MarkdownTheme.default
+    theme.styles[.wikiLink] = nil
+    let textView = MarkdownTextView(theme: theme)
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "[[Note]]"
+    textView.highlightAll()
+    #expect(theme.style(for: .wikiLink)?.foregroundColor == theme.style(for: .link)?.foregroundColor)
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
+    existing.insert("Note")
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 3, in: textView) == theme.style(for: .link)?.foregroundColor)
+}
+
+@MainActor @Test func refreshDeferredDuringIMEIsAppliedAfterComposition() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var existing: Set<String> = []
+    textView.wikiLinkResolver = { existing.contains($0.target) ? .resolved : .unresolved }
+    textView.string = "[[Note]]\n\nother"
+    textView.highlightAll()
+    let theme = textView.theme
+    textView.setSelectedRange(NSRange(location: 10, length: 0))
+    textView.setMarkedText("か", selectedRange: NSRange(location: 0, length: 1), replacementRange: NSRange(location: 10, length: 0))
+    existing.insert("Note")
+    textView.refreshWikiLinkResolution()
+    #expect(renderingColor(at: 3, in: textView) == theme.effectiveUnresolvedLinkColor)
+    // 確定(unmarkText → scheduleHighlight → highlightNow)で、明示的に refresh を呼び直さなくても付け直される
+    textView.unmarkText()
+    textView.engine.highlightNow()
+    #expect(renderingColor(at: 3, in: textView) == theme.style(for: .wikiLink)?.foregroundColor)
+}
+
+@MainActor @Test func highlightPlanChangeIsNotSentForThemeChanges() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var count = 0
+    textView.onHighlightPlanChange = { _, _ in count += 1 }
+    textView.string = "[[A]]"
+    textView.highlightAll()
+    #expect(count == 1)
+    var theme = textView.theme
+    theme.lineSpacing = 3
+    textView.theme = theme
+    #expect(count == 1, "a theme change reuses the plan and must not notify")
+}
+
+@MainActor @Test func hoverUnderlineUsesTheResolvedWikiLinkColor() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.wikiLinkResolver = { $0.target == "Missing" ? .unresolved : .resolved }
+    textView.string = "[[Missing]] [[Present]] [site](https://example.org)"
+    textView.highlightAll()
+    let theme = textView.theme
+    textView.refreshLinkHover(atPoint: midpoint(of: NSRange(location: 2, length: 7), in: textView), commandHeld: true)
+    #expect(textView.debugLinkHoverColor == theme.effectiveUnresolvedLinkColor)
+    textView.refreshLinkHover(atPoint: midpoint(of: NSRange(location: 14, length: 7), in: textView), commandHeld: true)
+    #expect(textView.debugLinkHoverColor == theme.style(for: .wikiLink)?.foregroundColor)
+    textView.refreshLinkHover(atPoint: midpoint(of: NSRange(location: 25, length: 4), in: textView), commandHeld: true)
+    #expect(textView.debugLinkHoverColor == theme.style(for: .link)?.foregroundColor)
+}
+
+@MainActor @Test func collapsedTableCellShowsTheUnresolvedColor() {
+    let md = "| h |\n|---|\n| [[Missing]] |\n"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let table = plan.tables[0]
+    let theme = MarkdownTheme.default
+    let storage = NSMutableAttributedString(string: md)
+    let unresolved = plan.wikiLinks.map(\.range)
+    let model = TablePreviewModel.make(table: table, storage: storage, spans: plan.spans, markers: plan.concealableMarkers, unresolvedWikiLinks: unresolved, theme: theme)!
+    let cell = model.rows[0].cells[0].text
+    #expect(cell.string == "Missing")
+    #expect(cell.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == theme.effectiveUnresolvedLinkColor)
+    let resolved = TablePreviewModel.make(table: table, storage: storage, spans: plan.spans, markers: plan.concealableMarkers, theme: theme)!
+    #expect(resolved.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == theme.style(for: .wikiLink)?.foregroundColor)
+}
+#endif

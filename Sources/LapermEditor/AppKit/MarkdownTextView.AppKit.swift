@@ -198,6 +198,8 @@ public final class MarkdownTextView: NSTextView {
 
     /// テスト用: ホバー下線オーバーレイに設定されている矩形群。空ならオーバーレイ非表示相当。
     var debugLinkHoverUnderlineRects: [NSRect] { linkHoverOverlay.underlineRects }
+    /// テスト用: ホバー下線の色。
+    var debugLinkHoverColor: NSColor { linkHoverOverlay.color }
 
     private let insertionPointOverlay = InsertionPointOverlayView()
     private let linkHoverOverlay = LinkHoverOverlayView()
@@ -480,7 +482,7 @@ public final class MarkdownTextView: NSTextView {
             addSubview(linkHoverOverlay)
         }
         linkHoverOverlay.frame = bounds
-        linkHoverOverlay.color = theme.style(for: .link)?.foregroundColor ?? .linkColor
+        linkHoverOverlay.color = engine.hoverUnderlineColor(for: range)
         linkHoverOverlay.underlineRects = rects
     }
 

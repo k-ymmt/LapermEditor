@@ -29,7 +29,10 @@ public struct WikiLinkReference: Hashable, Sendable {
 
     /// `[[` と `]]` の間の文字列を分解する。`[`、`]`、改行を含むもの、`|` の左が空(`[[|x]]`)、
     /// 全体が空、ブロック参照(`#^id`)は Wiki Link として扱わず nil。
-    static func parse(inner: String, range: NSRange) -> WikiLinkReference? {
+    /// `unescapesPipes` はテーブルのセルの中(GFM はセル内の `|` を `\|` と書く)で、意味の上では `\|` を `|` として扱う。
+    /// レンジは原文のまま。
+    static func parse(inner rawInner: String, range: NSRange, unescapesPipes: Bool = false) -> WikiLinkReference? {
+        let inner = unescapesPipes ? rawInner.replacingOccurrences(of: "\\|", with: "|") : rawInner
         guard !inner.contains("["), !inner.contains("]"), !inner.contains("\n"), !inner.contains("\r") else { return nil }
         var alias: String?
         var head = Substring(inner)

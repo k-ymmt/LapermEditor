@@ -22,6 +22,8 @@ struct TablePreviewSource: BlockPreviewSource {
         var relativeTable: MarkdownTable
         var relativeSpans: [HighlightSpan]
         var relativeMarkers: [NSRange]
+        /// Unresolved と解決された Wiki Link(テーブル相対)。解決結果が変わればモデルを作り直す。
+        var relativeUnresolved: [NSRange]
         var themeGeneration: Int
     }
 
@@ -30,6 +32,8 @@ struct TablePreviewSource: BlockPreviewSource {
     /// テーブルと交差するスパン(Syntax Marker を除く)と隠すマーカー(文書座標)。セルの内容の材料。
     var spans: [HighlightSpan]
     var markers: [NSRange]
+    /// Unresolved な Wiki Link のレンジ(文書座標、テーブルと交差するもの)
+    var unresolvedWikiLinks: [NSRange] = []
     var model: TablePreviewModel?
 
     var isModelBuilt: Bool { model != nil }
@@ -39,6 +43,7 @@ struct TablePreviewSource: BlockPreviewSource {
         moved.block = block.shifted(by: delta)
         moved.spans = spans.map { HighlightSpan(range: NSRange(location: $0.range.location + delta, length: $0.range.length), kind: $0.kind) }
         moved.markers = markers.map { NSRange(location: $0.location + delta, length: $0.length) }
+        moved.unresolvedWikiLinks = unresolvedWikiLinks.map { NSRange(location: $0.location + delta, length: $0.length) }
         return moved
     }
 
@@ -51,7 +56,7 @@ struct TablePreviewSource: BlockPreviewSource {
         width: CGFloat, appearance: TablePreviewLayout.Appearance, storage: NSTextStorage, theme: MarkdownTheme
     ) -> TablePreviewLayout? {
         if model == nil {
-            model = TablePreviewModel.make(table: block, storage: storage, spans: spans, markers: markers, theme: theme)
+            model = TablePreviewModel.make(table: block, storage: storage, spans: spans, markers: markers, unresolvedWikiLinks: unresolvedWikiLinks, theme: theme)
         }
         guard let model else { return nil }
         return TablePreviewLayout.make(model: model, maxWidth: width, appearance: appearance)
@@ -73,7 +78,7 @@ extension BlockPreviewController where Source == TablePreviewSource {
     func isModelBuilt(forTableAt location: Int) -> Bool { isModelBuilt(forBlockAt: location) }
 
     /// パース確定後の同期。`storage` はハイライト適用済みのテキストストレージ、`text` はその文字列。
-    func update(plan: HighlightPlan, storage: NSTextStorage, text: NSString) {
+    func update(plan: HighlightPlan, storage: NSTextStorage, text: NSString, unresolvedWikiLinkRanges: [NSRange] = []) {
         let tables = plan.tables.filter { table in
             table.range.length > 0 && NSMaxRange(table.range) <= text.length
                 && text.lineRange(for: NSRange(location: table.range.location, length: 0)).location == table.range.location
@@ -81,12 +86,15 @@ extension BlockPreviewController where Source == TablePreviewSource {
         let (spansByTable, markersByTable) = Self.bucket(plan: plan, tables: tables)
         let sources = tables.enumerated().map { index, table -> TablePreviewSource in
             let origin = table.range.location
+            let unresolved = unresolvedWikiLinkRanges.filter { NSIntersectionRange($0, table.range).length > 0 }
             let key = TablePreviewSource.Key(
                 text: text.substring(with: table.range), relativeTable: table.relativeToStart,
                 relativeSpans: spansByTable[index].map { HighlightSpan(range: NSRange(location: $0.range.location - origin, length: $0.range.length), kind: $0.kind) },
                 relativeMarkers: markersByTable[index].map { NSRange(location: $0.location - origin, length: $0.length) },
+                relativeUnresolved: unresolved.map { NSRange(location: $0.location - origin, length: $0.length) },
                 themeGeneration: themeGeneration)
-            return TablePreviewSource(block: table, key: key, spans: spansByTable[index], markers: markersByTable[index], model: nil)
+            return TablePreviewSource(
+                block: table, key: key, spans: spansByTable[index], markers: markersByTable[index], unresolvedWikiLinks: unresolved, model: nil)
         }
         update(sources: sources, storage: storage, text: text)
     }

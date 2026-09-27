@@ -44,7 +44,7 @@ public enum HighlightDiff {
     }
 
     /// ソートし、隣接・重複レンジをマージする。
-    static func mergeRanges(_ ranges: [NSRange]) -> [NSRange] {
+    public static func mergeRanges(_ ranges: [NSRange]) -> [NSRange] {
         let sorted = ranges.sorted { $0.location < $1.location }
         var merged: [NSRange] = []
         for range in sorted {

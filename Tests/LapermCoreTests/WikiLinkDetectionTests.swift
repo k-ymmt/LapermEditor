@@ -86,7 +86,8 @@ private func markers(in markdown: String) -> [String] {
     let result = wikiLinks(in: "[[Note|]]")
     #expect(result.count == 1)
     #expect(result[0].alias == nil)
-    #expect(markers(in: "[[Note|]]") == ["[[", "]]"])
+    // 区切りの `|` だけ隠して `Note` を見せる
+    #expect(markers(in: "[[Note|]]") == ["[[", "|", "]]"])
 }
 
 @Test func detectsSeveralWikiLinksInOneLine() {
@@ -175,4 +176,26 @@ private func markers(in markdown: String) -> [String] {
     let close = EditingAssistant.insertion(text: "[[Note]]", selection: NSRange(location: 6, length: 0), typing: "]")
     #expect(close?.replacementString == "")
     #expect(close?.selectedRange == NSRange(location: 7, length: 0))
+}
+
+// MARK: - codex レビュー後(エスケープ、テーブルの `\|`)
+
+@Test func escapedOpeningBracketIsLiteral() {
+    #expect(wikiLinks(in: "\\[[Note]]").isEmpty)
+    #expect(wikiLinks(in: "\\\\[[Note]]").map(\.target) == ["Note"])  // `\\` はバックスラッシュのエスケープ
+    #expect(wikiLinks(in: "a \\[[x]] and [[y]]").map(\.target) == ["y"])
+}
+
+@Test func aliasInsideATableCellUsesTheEscapedPipe() {
+    let md = "| h |\n|---|\n| [[Note\\|Alias]] |\n"
+    let result = wikiLinks(in: md)
+    #expect(result.count == 1)
+    #expect(result[0].target == "Note")
+    #expect(result[0].alias == "Alias")
+    #expect((md as NSString).substring(with: result[0].range) == "[[Note\\|Alias]]")
+    let hidden = markers(in: md).filter { $0.contains("Note") || $0 == "[[" || $0 == "]]" }
+    #expect(hidden.contains("Note\\|"))
+    // セルの外では `\|` は普通の文字(Alias は `Alias`、target は `Note\`)
+    let outside = wikiLinks(in: "[[Note\\|Alias]]")
+    #expect(outside[0].target == "Note\\")
 }

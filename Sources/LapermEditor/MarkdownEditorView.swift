@@ -271,6 +271,9 @@ extension MarkdownEditorView: NSViewRepresentable {
     public func updateNSView(_ scrollView: NSScrollView, context: Context) {
         let textView = scrollView.documentView as! MarkdownTextView
         context.coordinator.text = $text
+        // 本文の差し替え(同じビューで別の文書へ)より前にハンドラと解決関数を付け替える: 新しい文書の計画を古い
+        // `onHighlightPlanChange` / 古い resolver で処理しない。
+        apply(to: textView)
         if context.coordinator.needsTextReplacement(with: text, current: textView.string) {
             context.coordinator.isUpdatingFromSwiftUI = true
             textView.string = text
@@ -281,7 +284,6 @@ extension MarkdownEditorView: NSViewRepresentable {
             textView.theme = theme
         }
         textView.showsLineNumbers = showsLineNumbers
-        apply(to: textView)
         applyHeader(to: textView, coordinator: context.coordinator)
     }
 
@@ -365,6 +367,8 @@ extension MarkdownEditorView: UIViewRepresentable {
 
     public func updateUIView(_ textView: MarkdownTextView, context: Context) {
         context.coordinator.text = $text
+        // 本文の差し替えより前にハンドラと解決関数を付け替える(macOS と同じ理由)。
+        apply(to: textView)
         if context.coordinator.needsTextReplacement(with: text, current: textView.text) {
             context.coordinator.isUpdatingFromSwiftUI = true
             textView.text = text
@@ -375,7 +379,6 @@ extension MarkdownEditorView: UIViewRepresentable {
             textView.theme = theme
         }
         textView.showsLineNumbers = showsLineNumbers
-        apply(to: textView)
         applyKeyboardAccessory(to: textView, coordinator: context.coordinator)
         applyHeader(to: textView, coordinator: context.coordinator)
     }

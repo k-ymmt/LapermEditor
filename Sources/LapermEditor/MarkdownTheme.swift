@@ -82,8 +82,11 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         self.lineSpacing = max(0, lineSpacing)
     }
 
+    /// `kind` のスタイル。`.wikiLink` を持たない(古い)テーマでは `.link` のスタイルに落とす: Wiki Link と Markdown Link は
+    /// 利用者にとって同じ「Note へ飛ぶもの」で、色が付かない / Unresolved の色が残るのを避ける。
     public func style(for kind: SyntaxKind) -> Style? {
-        styles[kind]
+        if kind == .wikiLink { return styles[.wikiLink] ?? styles[.link] }
+        return styles[kind]
     }
 
     public static let `default`: MarkdownTheme = {

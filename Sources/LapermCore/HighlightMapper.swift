@@ -692,7 +692,9 @@ enum HighlightMapper {
             var consumed: [NSRange] = []
             var i = range.location
             while i + 3 < end {
-                guard text.character(at: i) == ASCII.leftBracket, text.character(at: i + 1) == ASCII.leftBracket else {
+                guard text.character(at: i) == ASCII.leftBracket, text.character(at: i + 1) == ASCII.leftBracket,
+                      !isEscaped(at: i)
+                else {
                     i += 1
                     continue
                 }
@@ -715,13 +717,18 @@ enum HighlightMapper {
                 let linkRange = NSRange(location: i, length: closing + 2 - i)
                 let inner = text.substring(with: NSRange(location: i + 2, length: closing - i - 2))
                 let isEmbed = i > 0 && text.character(at: i - 1) == ASCII.exclamation
-                if !isEmbed, let reference = WikiLinkReference.parse(inner: inner, range: linkRange) {
+                // テーブルのセルの中では `\|` が `|`(GFM)。意味は復元し、レンジは原文のまま。
+                if !isEmbed, let reference = WikiLinkReference.parse(inner: inner, range: linkRange, unescapesPipes: tableDepth > 0) {
                     inlineSpans.append(HighlightSpan(range: linkRange, kind: .wikiLink))
                     appendConcealableMarker(NSRange(location: i, length: 2))
-                    if reference.alias != nil, let pipe = inner.utf16.firstIndex(of: 0x7C) {
-                        // `[[Note|Alias]]` は `Note|` も隠して Alias だけを見せる
-                        let pipeOffset = inner.utf16.distance(from: inner.utf16.startIndex, to: pipe)
-                        appendConcealableMarker(NSRange(location: i + 2, length: pipeOffset + 1))
+                    if let pipe = firstPipe(in: NSRange(location: i + 2, length: closing - i - 2)) {
+                        if reference.alias != nil {
+                            // `[[Note|Alias]]` は `Note|`(セル内では `Note\|`)も隠して Alias だけを見せる
+                            appendConcealableMarker(NSRange(location: i + 2, length: NSMaxRange(pipe) - i - 2))
+                        } else {
+                            // `[[Note|]]` は区切りだけ隠して `Note` を見せる
+                            appendConcealableMarker(pipe)
+                        }
                     }
                     appendConcealableMarker(NSRange(location: closing, length: 2))
                     wikiLinkReferences.append(reference)
@@ -730,6 +737,33 @@ enum HighlightMapper {
                 i = closing + 2
             }
             return consumed
+        }
+
+        /// `[[` の直前のバックスラッシュが奇数個なら CommonMark のエスケープ(`\[[Note]]` はリテラル)。
+        private func isEscaped(at location: Int) -> Bool {
+            var count = 0
+            var i = location
+            while i > 0, text.character(at: i - 1) == ASCII.backslash {
+                count += 1
+                i -= 1
+            }
+            return count % 2 == 1
+        }
+
+        /// `range` の中の最初の `|`(テーブルのセル内なら `\|` を含む 2 文字)のレンジ。無ければ nil。
+        private func firstPipe(in range: NSRange) -> NSRange? {
+            let end = NSMaxRange(range)
+            var i = range.location
+            while i < end {
+                if text.character(at: i) == ASCII.pipe {
+                    if i > range.location, text.character(at: i - 1) == ASCII.backslash {
+                        return NSRange(location: i - 1, length: 2)
+                    }
+                    return NSRange(location: i, length: 1)
+                }
+                i += 1
+            }
+            return nil
         }
 
         private mutating func appendBareURLs(in range: NSRange) {

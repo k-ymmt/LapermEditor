@@ -994,7 +994,7 @@ public final class MarkdownTextView: UITextView {
         }
         // 可視領域にピン留めし、矩形はそのローカル座標に直す
         linkHoverOverlay.frame = bounds
-        linkHoverOverlay.color = theme.style(for: .link)?.foregroundColor ?? .link
+        linkHoverOverlay.color = engine.hoverUnderlineColor(for: range)
         linkHoverOverlay.underlineRects = rects.map { $0.offsetBy(dx: -bounds.minX, dy: -bounds.minY) }
     }
 
