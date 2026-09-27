@@ -536,25 +536,47 @@ final class MarkdownEditorEngine: NSObject {
         applyLivePreviewChanges()
     }
 
+    /// マウスのボタンが押されている間(macOS の `mouseDown` の追跡ループ)。この間は選択やフォーカスの変化で段落を
+    /// 作り直さない: クリックで Syntax Marker が現れてレイアウトがずれると、押した点と離した点が別の文字に写像されて
+    /// 意図しない範囲選択になる(見出しの行末より右をクリックすると行末までが選択される)。離したときに
+    /// `mouseTrackingDidEnd()` でまとめて反映する。
+    var isMouseTracking = false {
+        didSet {
+            if oldValue, !isMouseTracking { mouseTrackingDidEnd() }
+        }
+    }
+
+    /// 追跡中に保留した再生成を反映する。
+    private func mouseTrackingDidEnd() {
+        guard !isRegeneratingParagraphs else { return }
+        if frontMatter.isEnabled { applyFrontMatterChanges() }
+        if tables.isEnabled { applyTableChanges() }
+        if codeBlocks.isEnabled { applyCodeBlockChanges() }
+        if livePreview.isEnabled { applyLivePreviewChanges() }
+    }
+
+    /// 再生成を今行ってよいか(再生成の最中でもマウスの追跡中でもない)。
+    private var canRegenerateNow: Bool { !isRegeneratingParagraphs && !isMouseTracking }
+
     /// 選択範囲の変化(キャレット移動)。フォーカスのある段落が変わったら、その段落を再生成させる。
     /// ビューの選択変更フックから呼ぶ。
     func selectionDidChangeForLivePreview() {
         if frontMatter.isEnabled, let host {
             frontMatter.selectionDidChange(host.editorSelectedRanges)
-            if !isRegeneratingParagraphs { applyFrontMatterChanges() }
+            if canRegenerateNow { applyFrontMatterChanges() }
         }
         if tables.isEnabled, let host {
             tables.selectionDidChange(host.editorSelectedRanges)
-            if !isRegeneratingParagraphs { applyTableChanges() }
+            if canRegenerateNow { applyTableChanges() }
         }
         if codeBlocks.isEnabled, let host {
             codeBlocks.selectionDidChange(host.editorSelectedRanges)
-            if !isRegeneratingParagraphs { applyCodeBlockChanges() }
+            if canRegenerateNow { applyCodeBlockChanges() }
         }
         guard livePreview.isEnabled else { return }
-        // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush)に回す。
+        // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush、追跡の終わり)に回す。
         refreshLivePreviewFocus()
-        guard !isRegeneratingParagraphs else { return }
+        guard canRegenerateNow else { return }
         applyLivePreviewChanges()
     }
 
@@ -570,21 +592,21 @@ final class MarkdownEditorEngine: NSObject {
         if frontMatter.isEnabled, frontMatter.isEditorFocused != focused, let host {
             frontMatter.selectionDidChange(host.editorSelectedRanges)
             frontMatter.editorFocusDidChange(focused)
-            if !isRegeneratingParagraphs { applyFrontMatterChanges() }
+            if canRegenerateNow { applyFrontMatterChanges() }
         } else {
             frontMatter.editorFocusDidChange(focused)
         }
         if tables.isEnabled, tables.isEditorFocused != focused, let host {
             tables.selectionDidChange(host.editorSelectedRanges)
             tables.editorFocusDidChange(focused)
-            if !isRegeneratingParagraphs { applyTableChanges() }
+            if canRegenerateNow { applyTableChanges() }
         } else {
             tables.editorFocusDidChange(focused)
         }
         if codeBlocks.isEnabled, codeBlocks.isEditorFocused != focused, let host {
             codeBlocks.selectionDidChange(host.editorSelectedRanges)
             codeBlocks.editorFocusDidChange(focused)
-            if !isRegeneratingParagraphs { applyCodeBlockChanges() }
+            if canRegenerateNow { applyCodeBlockChanges() }
         } else {
             codeBlocks.editorFocusDidChange(focused)
         }
@@ -593,7 +615,7 @@ final class MarkdownEditorEngine: NSObject {
         // 戻るときはそのときの段落、失うときは今見えている段落が無効化される)。
         if livePreview.isEnabled { refreshLivePreviewFocus() }
         livePreview.editorFocusDidChange(focused)
-        guard livePreview.isEnabled, !isRegeneratingParagraphs else { return }
+        guard livePreview.isEnabled, canRegenerateNow else { return }
         applyLivePreviewChanges()
     }
 

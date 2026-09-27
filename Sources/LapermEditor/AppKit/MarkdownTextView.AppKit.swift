@@ -728,6 +728,11 @@ public final class MarkdownTextView: NSTextView {
             toggleCheckbox(atPoint: point) {
             return
         }
+        // NSTextView はボタンを離すまで追跡し、離した点で選択を決め直す。その間に Live Preview がキャレットの行の
+        // Syntax Marker を見せてレイアウトがずれると、同じ点が別の文字に写像されて範囲選択になる(見出しの行末より
+        // 右をクリック → 行末までが選択される)。追跡が終わるまで段落の再生成を保留する。
+        engine.isMouseTracking = true
+        defer { engine.isMouseTracking = false }
         super.mouseDown(with: event)
     }
 

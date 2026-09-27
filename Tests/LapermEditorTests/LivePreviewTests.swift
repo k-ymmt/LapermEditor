@@ -576,3 +576,31 @@ private final class RegenerationRefocuser {
     #expect(!textView.isLivePreviewEnabled)
 }
 #endif
+
+/// クリックの追跡中(mouseDown からボタンを離すまで)は Syntax Marker を見せる再生成を保留し、離したときに反映する。
+/// 見せた瞬間にレイアウトがずれると、NSTextView が離した点で選択を決め直すときに別の文字に写像され、見出しの行末より右を
+/// クリックしただけで行末までが選択されていた(Laperm `testLongTitleWrapsAboveTheEditor`)。
+@MainActor @Test func paragraphRegenerationWaitsUntilTheMouseIsReleased() {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    textView.isLivePreviewEnabled = true
+    textView.string = "# Long title\nbody"
+    textView.highlightAll()
+    let layoutManager = textView.textLayoutManager!
+    // 閲覧表示(フォーカス無し): `# ` は幅 0
+    textView.engine.editorFocusDidChange(false)
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1)
+
+    // クリック: 追跡中に first responder になりキャレットが行末に置かれても、`# ` はまだ隠れたまま
+    textView.engine.isMouseTracking = true
+    textView.engine.editorFocusDidChange(true)
+    textView.setSelectedRange(NSRange(location: 12, length: 0))
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width < 0.1, "no relayout while the button is down")
+
+    // 離すと、キャレットの行の `# ` が見える
+    textView.engine.isMouseTracking = false
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5, "the pending regeneration is applied on release")
+}
