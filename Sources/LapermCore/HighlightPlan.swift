@@ -18,6 +18,8 @@ public struct HighlightPlan: Equatable, Sendable {
     public var images: [ImageReference]
     /// リンクの出現一覧(クリック処理用)
     public var links: [LinkReference]
+    /// Wiki Link の出現一覧(解決・クリック処理用)。`spans` の `.wikiLink` と 1 対 1。
+    public var wikiLinks: [WikiLinkReference]
     /// Live Preview がフォーカスの無い行で隠す Syntax Marker のレンジ(`spans` の `.syntaxMarker` の
     /// 部分集合: 見出しの `#`、強調・打ち消し線・インラインコードの記号、リンク・画像の括弧、引用の `>`)。
     /// コードフェンス・チェックボックス・テーブルの記号は含まない(Source と同じ表示のまま)。
@@ -31,12 +33,14 @@ public struct HighlightPlan: Equatable, Sendable {
 
     public init(
         spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
+        wikiLinks: [WikiLinkReference] = [],
         concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil, tables: [MarkdownTable] = [],
         codeBlocks: [MarkdownCodeBlock] = []
     ) {
         self.spans = spans
         self.images = images
         self.links = links
+        self.wikiLinks = wikiLinks
         self.concealableMarkers = concealableMarkers
         self.frontMatter = frontMatter
         self.tables = tables
@@ -84,6 +88,15 @@ public struct HighlightPlan: Equatable, Sendable {
             moved.range = range
             resultLinks.append(moved)
         }
+        var resultWikiLinks: [WikiLinkReference] = []
+        resultWikiLinks.reserveCapacity(wikiLinks.count)
+        for link in wikiLinks {
+            guard let range = Self.shift(link.range, preEditRange: preEditRange, delta: delta)
+            else { continue }
+            var moved = link
+            moved.range = range
+            resultWikiLinks.append(moved)
+        }
         var resultMarkers: [NSRange] = []
         resultMarkers.reserveCapacity(concealableMarkers.count)
         for marker in concealableMarkers {
@@ -105,7 +118,8 @@ public struct HighlightPlan: Equatable, Sendable {
             return block.range.location >= NSMaxRange(preEditRange) ? block.shifted(by: delta) : block
         }
         return HighlightPlan(
-            spans: resultSpans, images: resultImages, links: resultLinks, concealableMarkers: resultMarkers,
+            spans: resultSpans, images: resultImages, links: resultLinks, wikiLinks: resultWikiLinks,
+            concealableMarkers: resultMarkers,
             frontMatter: resultFrontMatter, tables: resultTables, codeBlocks: resultCodeBlocks)
     }
 

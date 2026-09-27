@@ -14,6 +14,9 @@ public struct MarkdownEditorView {
     private var imageLoader: (any ImageLoader)?
     private var linkOptions = LinkOptions()
     private var onOpenLink: ((URL) -> Bool)?
+    private var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
+    private var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)?
+    private var onHighlightPlanChange: ((HighlightPlan) -> Void)?
     private var onOutlineChange: (([OutlineItem]) -> Void)?
     private var onFoldingChange: (([Int]) -> Void)?
     private var foldingEnabled = true
@@ -88,6 +91,28 @@ public struct MarkdownEditorView {
     public func onOpenLink(_ handler: @escaping (URL) -> Bool) -> MarkdownEditorView {
         var copy = self
         copy.onOpenLink = handler
+        return copy
+    }
+
+    /// Wiki Link(`[[Note]]`)を開く操作のフック。エディタは解決先を知らないので記法の内容を渡す。true を返すと開いた扱い。
+    public func onOpenWikiLink(_ handler: @escaping (WikiLinkReference) -> Bool) -> MarkdownEditorView {
+        var copy = self
+        copy.onOpenWikiLink = handler
+        return copy
+    }
+
+    /// Wiki Link の解決関数。`.unresolved` を返した Wiki Link は Theme の Unresolved の色で描かれる。
+    /// 解決結果だけが変わったら `MarkdownEditorProxy.refreshWikiLinkResolution()` を呼ぶ。
+    public func wikiLinkResolver(_ resolver: @escaping (WikiLinkReference) -> WikiLinkResolution) -> MarkdownEditorView {
+        var copy = self
+        copy.wikiLinkResolver = resolver
+        return copy
+    }
+
+    /// パースが確定するたびに、確定した計画(リンク・Wiki Link・見出しなど)を受け取る。
+    public func onHighlightPlanChange(_ action: @escaping (HighlightPlan) -> Void) -> MarkdownEditorView {
+        var copy = self
+        copy.onHighlightPlanChange = action
         return copy
     }
 
@@ -209,6 +234,11 @@ public struct MarkdownEditorView {
         if let imageLoader { textView.imageLoader = imageLoader }
         textView.linkOptions = linkOptions
         textView.onOpenLink = onOpenLink
+        textView.onOpenWikiLink = onOpenWikiLink
+        textView.wikiLinkResolver = wikiLinkResolver
+        textView.onHighlightPlanChange = onHighlightPlanChange.map { callback in
+            { plan in DispatchQueue.main.async { callback(plan) } }
+        }
         // SwiftUI のビュー更新中(makeNSView / updateNSView 内の highlightAll)に同期発火すると
         // 利用側の @State 更新が破棄されるため、次のランループへ遅延して届ける
         textView.onOutlineChange = onOutlineChange.map { callback in

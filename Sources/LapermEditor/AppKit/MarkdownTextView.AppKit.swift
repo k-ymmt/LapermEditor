@@ -86,6 +86,26 @@ public final class MarkdownTextView: NSTextView {
     /// (NSWorkspace.shared.open)を行わない。
     public var onOpenLink: ((URL) -> Bool)?
 
+    /// Wiki Link(`[[Note]]`)を Cmd+クリックしたときのフック。エディタは解決先を知らないので、URL ではなく
+    /// 記法の内容(タイトル / パス、見出し、Alias)を渡す。無ければ何もしない(デフォルト動作は無い)。
+    public var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
+
+    /// Wiki Link の解決関数(ホストが差し込む)。`.unresolved` の Wiki Link は Theme の Unresolved の色で描く。
+    /// 解決結果だけが変わったら `refreshWikiLinkResolution()` を呼ぶこと。
+    public var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)? {
+        get { engine.highlighter.wikiLinkResolver }
+        set { engine.highlighter.wikiLinkResolver = newValue }
+    }
+
+    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
+    public func refreshWikiLinkResolution() { engine.refreshWikiLinkResolution() }
+
+    /// パースが確定するたびに、確定した計画で呼ばれる(Link Index の更新など)。
+    public var onHighlightPlanChange: ((HighlightPlan) -> Void)? {
+        get { engine.onHighlightPlanChange }
+        set { engine.onHighlightPlanChange = newValue }
+    }
+
     /// キー入力のインターセプタ(weak 保持)。Vim モード等のモーダル編集の実装点。
     /// IME 変換中(marked text)は変換セッションを優先し、呼ばれない。
     public weak var inputInterceptor: (any TextInputInterceptor)?
@@ -422,7 +442,7 @@ public final class MarkdownTextView: NSTextView {
     func refreshLinkHover(atPoint point: NSPoint, commandHeld: Bool) {
         var newRange: NSRange?
         if commandHeld, linkOptions.opensOnCommandClick, visibleRect.contains(point) {
-            newRange = linkReference(atScreenPoint: point)?.range
+            newRange = engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndexForInsertion(at: point))
         }
         guard newRange != hoveredLinkRange else { return }
         hoveredLinkRange = newRange
@@ -768,6 +788,9 @@ public final class MarkdownTextView: NSTextView {
     /// mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
     func openLink(atPoint point: NSPoint) -> Bool {
         guard linkOptions.opensOnCommandClick else { return false }
+        if let wiki = engine.wikiLinkReference(atPoint: point, characterIndex: characterIndexForInsertion(at: point)) {
+            return onOpenWikiLink?(wiki) == true
+        }
         guard let reference = linkReference(atScreenPoint: point),
             let url = LinkURLResolver.resolve(
                 destination: reference.destination, baseURL: linkOptions.baseURL)

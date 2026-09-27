@@ -38,6 +38,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
     /// 段落スタイル(paragraphSpacingBefore / paragraphSpacing)で確保するため、
     /// 文書の先頭段落から始まるコードブロックには上の余白が付かない(TextKit の仕様)。
     public var codeBlockVerticalPadding: CGFloat
+    /// Unresolved な Wiki Link の文字色。nil ならリンク色を薄くした色に落とす(Theme JSON に項目が無い既存テーマとの互換)。
+    public var unresolvedLinkColor: PlatformColor?
     /// 引用の本文を行頭から下げる幅(pt)。縦バーはこの余白の中に描かれ、バーと文字の間が空く。
     /// 表示用の段落スタイル(headIndent / firstLineHeadIndent)で確保するので、textStorage には残らない。
     /// 負値は 0 に丸める(段落の余白とバーの位置が同じ値を見るように、代入時にも丸める)。
@@ -61,7 +63,8 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         codeBlockVerticalPadding: CGFloat = 4,
         blockquoteIndent: CGFloat = 16,
         lineSpacing: CGFloat = 0,
-        frontMatterBackgroundColor: PlatformColor? = nil
+        frontMatterBackgroundColor: PlatformColor? = nil,
+        unresolvedLinkColor: PlatformColor? = nil
     ) {
         self.bodyFont = bodyFont
         self.bodyColor = bodyColor
@@ -74,6 +77,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         // 指定が無ければコードブロックの背景に落とす(Theme JSON に項目が無い既存テーマとの互換)。
         self.frontMatterBackgroundColor = frontMatterBackgroundColor ?? codeBlockBackgroundColor
         self.codeBlockVerticalPadding = codeBlockVerticalPadding
+        self.unresolvedLinkColor = unresolvedLinkColor
         self.blockquoteIndent = max(0, blockquoteIndent)
         self.lineSpacing = max(0, lineSpacing)
     }
@@ -101,6 +105,7 @@ public struct MarkdownTheme: Equatable, @unchecked Sendable {
         styles[.blockquote] = Style(foregroundColor: .lapermSecondaryLabel)
         styles[.listMarker] = Style(foregroundColor: .systemOrange)
         styles[.link] = Style(foregroundColor: .lapermLink)
+        styles[.wikiLink] = Style(foregroundColor: .lapermLink)
         styles[.image] = Style(foregroundColor: .lapermLink)
         styles[.thematicBreak] = Style(foregroundColor: .lapermTertiaryLabel)
         styles[.strikethrough] = Style(foregroundColor: .lapermSecondaryLabel, strikethrough: true)
@@ -157,6 +162,19 @@ extension MarkdownTheme {
 
     func renderingColor(for kind: SyntaxKind) -> PlatformColor? {
         style(for: kind)?.foregroundColor
+    }
+
+    /// Unresolved な Wiki Link に実際に使う色: 指定があればそれ、無ければ Wiki Link(無ければリンク)の色を半分の
+    /// 不透明度にしたもの(それも無ければ本文色を薄く)。
+    var effectiveUnresolvedLinkColor: PlatformColor {
+        if let unresolvedLinkColor { return unresolvedLinkColor }
+        let base = renderingColor(for: .wikiLink) ?? renderingColor(for: .link) ?? bodyColor
+        return base.withAlphaComponent(0.5)
+    }
+
+    /// Unresolved な Wiki Link に適用するレンダリング属性(色)。`.wikiLink` の色の代わりに使う。
+    func unresolvedWikiLinkRenderingAttributes() -> [NSAttributedString.Key: Any] {
+        [.foregroundColor: effectiveUnresolvedLinkColor]
     }
 
     /// kind に適用するレンダリング属性(色)。renderingAttributes へ適用する。

@@ -15,6 +15,7 @@ enum HighlightMapper {
             spans: visitor.blockSpans + visitor.inlineSpans + visitor.markerSpans,
             images: visitor.imageReferences,
             links: visitor.linkReferences,
+            wikiLinks: visitor.wikiLinkReferences,
             concealableMarkers: visitor.concealableMarkers,
             tables: visitor.tables,
             codeBlocks: visitor.codeBlocks
@@ -31,6 +32,7 @@ enum HighlightMapper {
         var concealableMarkers: [NSRange] = []
         var imageReferences: [ImageReference] = []
         var linkReferences: [LinkReference] = []
+        var wikiLinkReferences: [WikiLinkReference] = []
         /// テーブルの構造(セルのレンジ)。Live Preview の表が使う。
         var tables: [MarkdownTable] = []
         /// コードブロックの構造。Live Preview のコードブロックの箱が使う。
@@ -666,7 +668,68 @@ enum HighlightMapper {
         mutating func visitText(_ node: Markdown.Text) {
             guard inlineLinkDepth == 0, let range = nsRange(of: node), range.length > 0
             else { return }
-            appendBareURLs(in: range)
+            // Wiki Link を先に拾い、裸の URL はその隙間だけを走査する(`[[https://…]]` を二重に拾わない)
+            var cursor = range.location
+            for wikiRange in appendWikiLinks(in: range) {
+                if wikiRange.location > cursor {
+                    appendBareURLs(in: NSRange(location: cursor, length: wikiRange.location - cursor))
+                }
+                cursor = NSMaxRange(wikiRange)
+            }
+            if cursor < NSMaxRange(range) {
+                appendBareURLs(in: NSRange(location: cursor, length: NSMaxRange(range) - cursor))
+            }
+        }
+
+        // MARK: Wiki Link 検出
+
+        /// CommonMark は `[[Note]]` に意味を与えず(対応する `[Note]:` 定義が無ければ)Text ノードのまま届くので、
+        /// ここで自前検出する。`[[` から最初の `]]` までで、中に `[` `]` 改行を含まないもの。直前が `!` の埋め込み
+        /// (`![[…]]`)とブロック参照(`[[Note#^id]]`)は今回は扱わず、Source と同じ見た目のまま(Laperm ADR 0021)。
+        /// 見つけた Wiki Link のレンジを出現順に返す(埋め込みなど拾わなかったものも隙間の走査から外すために返す)。
+        private mutating func appendWikiLinks(in range: NSRange) -> [NSRange] {
+            let end = NSMaxRange(range)
+            var consumed: [NSRange] = []
+            var i = range.location
+            while i + 3 < end {
+                guard text.character(at: i) == ASCII.leftBracket, text.character(at: i + 1) == ASCII.leftBracket else {
+                    i += 1
+                    continue
+                }
+                // 閉じの `]]` を探す(中に `[` `]` 改行があれば不成立)
+                var j = i + 2
+                var closing: Int?
+                while j + 1 < end {
+                    let c = text.character(at: j)
+                    if c == ASCII.leftBracket || c == ASCII.newline || c == ASCII.carriageReturn { break }
+                    if c == ASCII.rightBracket {
+                        if text.character(at: j + 1) == ASCII.rightBracket { closing = j }
+                        break
+                    }
+                    j += 1
+                }
+                guard let closing else {
+                    i += 1
+                    continue
+                }
+                let linkRange = NSRange(location: i, length: closing + 2 - i)
+                let inner = text.substring(with: NSRange(location: i + 2, length: closing - i - 2))
+                let isEmbed = i > 0 && text.character(at: i - 1) == ASCII.exclamation
+                if !isEmbed, let reference = WikiLinkReference.parse(inner: inner, range: linkRange) {
+                    inlineSpans.append(HighlightSpan(range: linkRange, kind: .wikiLink))
+                    appendConcealableMarker(NSRange(location: i, length: 2))
+                    if reference.alias != nil, let pipe = inner.utf16.firstIndex(of: 0x7C) {
+                        // `[[Note|Alias]]` は `Note|` も隠して Alias だけを見せる
+                        let pipeOffset = inner.utf16.distance(from: inner.utf16.startIndex, to: pipe)
+                        appendConcealableMarker(NSRange(location: i + 2, length: pipeOffset + 1))
+                    }
+                    appendConcealableMarker(NSRange(location: closing, length: 2))
+                    wikiLinkReferences.append(reference)
+                }
+                consumed.append(linkRange)
+                i = closing + 2
+            }
+            return consumed
         }
 
         private mutating func appendBareURLs(in range: NSRange) {

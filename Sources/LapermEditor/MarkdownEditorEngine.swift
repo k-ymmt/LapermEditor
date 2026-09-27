@@ -62,6 +62,8 @@ final class MarkdownEditorEngine: NSObject {
     var onOutlineChange: (([OutlineItem]) -> Void)?
     /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる
     var onFoldingChange: (([Int]) -> Void)?
+    /// パースが確定して属性を適用し直したあとに、確定した計画で呼ばれる(ホストが Link Index などを更新するため)。
+    var onHighlightPlanChange: ((HighlightPlan) -> Void)?
 
     /// 折りたたまれている見出しの位置(昇順)
     var foldedHeadingLocations: [Int] { foldingController.foldedHeadingLocations }
@@ -205,6 +207,14 @@ final class MarkdownEditorEngine: NSObject {
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
+        onHighlightPlanChange?(highlighter.currentPlan)
+    }
+
+    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
+    func refreshWikiLinkResolution() {
+        guard let contentStorage = host?.editorContentStorage,
+              let layoutManager = host?.editorLayoutManager else { return }
+        highlighter.reapplyWikiLinkResolution(contentStorage: contentStorage, layoutManager: layoutManager)
     }
 
     // MARK: - Live Preview
@@ -928,6 +938,31 @@ final class MarkdownEditorEngine: NSObject {
     /// offset を含むリンク参照(パース確定済みの currentPlan から検索)
     func linkReference(at offset: Int) -> LinkReference? {
         highlighter.currentPlan.links.first { NSLocationInRange(offset, $0.range) }
+    }
+
+    /// offset を含む Wiki Link 参照(パース確定済みの currentPlan から検索)
+    func wikiLinkReference(at offset: Int) -> WikiLinkReference? {
+        highlighter.currentPlan.wikiLinks.first { NSLocationInRange(offset, $0.range) }
+    }
+
+    /// point(ビュー座標)にオンスクリーンで実際に重なっている Wiki Link 参照を返す(`linkReference(atPoint:)` と同じ判定)。
+    func wikiLinkReference(atPoint point: CGPoint, characterIndex: Int) -> WikiLinkReference? {
+        guard let reference = wikiLinkReference(at: characterIndex),
+              pointIsOn(range: reference.range, point: point)
+        else { return nil }
+        return reference
+    }
+
+    /// point に重なっている、開ける対象(Markdown Link か Wiki Link)のレンジ。Cmd+ホバーの下線に使う。
+    func interactiveLinkRange(atPoint point: CGPoint, characterIndex: Int) -> NSRange? {
+        if let wiki = wikiLinkReference(atPoint: point, characterIndex: characterIndex) { return wiki.range }
+        return linkReference(atPoint: point, characterIndex: characterIndex)?.range
+    }
+
+    private func pointIsOn(range: NSRange, point: CGPoint) -> Bool {
+        guard let rects = segmentFrames(for: range) else { return false }
+        let tolerance: CGFloat = -2
+        return rects.contains { $0.insetBy(dx: tolerance, dy: tolerance).contains(point) }
     }
 
     /// range(NSRange)をビュー座標の矩形群に変換する。折返しがあれば行ごとに 1 矩形。

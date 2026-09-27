@@ -176,6 +176,26 @@ public final class MarkdownTextView: UITextView {
     /// (UIApplication.shared.open)を行わない。
     public var onOpenLink: ((URL) -> Bool)?
 
+    /// Wiki Link(`[[Note]]`)を開く操作(Cmd+タップ、長押しメニュー)のフック。エディタは解決先を知らないので、
+    /// URL ではなく記法の内容(タイトル / パス、見出し、Alias)を渡す。無ければ何もしない(デフォルト動作は無い)。
+    public var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
+
+    /// Wiki Link の解決関数(ホストが差し込む)。`.unresolved` の Wiki Link は Theme の Unresolved の色で描く。
+    /// 解決結果だけが変わったら `refreshWikiLinkResolution()` を呼ぶこと。
+    public var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)? {
+        get { engine.highlighter.wikiLinkResolver }
+        set { engine.highlighter.wikiLinkResolver = newValue }
+    }
+
+    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
+    public func refreshWikiLinkResolution() { engine.refreshWikiLinkResolution() }
+
+    /// パースが確定するたびに、確定した計画で呼ばれる(Link Index の更新など)。
+    public var onHighlightPlanChange: ((HighlightPlan) -> Void)? {
+        get { engine.onHighlightPlanChange }
+        set { engine.onHighlightPlanChange = newValue }
+    }
+
     /// 画像プレビューの設定。baseURL / allowsRemoteImages の変更は全ロードをやり直す。
     public var imagePreviewOptions: ImagePreviewOptions {
         get { engine.imagePreviewOptions }
@@ -767,7 +787,8 @@ public final class MarkdownTextView: UITextView {
     func shouldInterceptTap(atPoint point: CGPoint, modifiers: UIKeyModifierFlags) -> Bool {
         let actual = modifiers.intersection([.shift, .control, .alternate, .command])
         if actual == [.command] {
-            return linkOptions.opensOnCommandClick && linkReference(atScreenPoint: point) != nil
+            return linkOptions.opensOnCommandClick
+                && engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndex(at: point)) != nil
         }
         guard actual.isEmpty else { return false }
         // Live Preview の Front Matter の表: 標準のタップ(展開後のレイアウトで最寄りの文字にキャレットを置く)
@@ -846,15 +867,21 @@ public final class MarkdownTextView: UITextView {
     /// point(ビュー座標)のリンクを開く。開いたら true。
     /// ジェスチャから分離してあるのはテストで座標を直接渡せるようにするため。
     func openLink(atPoint point: CGPoint) -> Bool {
-        guard linkOptions.opensOnCommandClick,
-              let reference = linkReference(atScreenPoint: point) else { return false }
+        guard linkOptions.opensOnCommandClick else { return false }
+        if let wiki = engine.wikiLinkReference(atPoint: point, characterIndex: characterIndex(at: point)) {
+            return onOpenWikiLink?(wiki) == true
+        }
+        guard let reference = linkReference(atScreenPoint: point) else { return false }
         return open(reference)
     }
 
-    /// offset(UTF-16)を含むリンクを開く。開いたら true。編集メニューから使う。
+    /// offset(UTF-16)を含むリンク(Markdown Link か Wiki Link)を開く。開いたら true。編集メニューから使う。
     func openLink(at offset: Int) -> Bool {
-        guard linkOptions.opensOnCommandClick,
-              let reference = engine.linkReference(at: offset) else { return false }
+        guard linkOptions.opensOnCommandClick else { return false }
+        if let wiki = engine.wikiLinkReference(at: offset) {
+            return onOpenWikiLink?(wiki) == true
+        }
+        guard let reference = engine.linkReference(at: offset) else { return false }
         return open(reference)
     }
 
@@ -881,7 +908,7 @@ public final class MarkdownTextView: UITextView {
     /// UITextViewDelegate の同メソッドからこの関数を呼ぶこと(delegate は横取りしない)。
     public func editMenu(forTextIn range: NSRange, suggestedActions: [UIMenuElement]) -> UIMenu {
         guard linkOptions.opensOnCommandClick,
-              engine.linkReference(at: range.location) != nil
+              engine.linkReference(at: range.location) != nil || engine.wikiLinkReference(at: range.location) != nil
         else { return UIMenu(children: suggestedActions) }
         let offset = range.location
         let action = UIAction(
@@ -939,7 +966,7 @@ public final class MarkdownTextView: UITextView {
     func refreshLinkHover(atPoint point: CGPoint, commandHeld: Bool) {
         var newRange: NSRange?
         if commandHeld, linkOptions.opensOnCommandClick, bounds.contains(point) {
-            newRange = linkReference(atScreenPoint: point)?.range
+            newRange = engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndex(at: point))
         }
         guard newRange != hoveredLinkRange else { return }
         hoveredLinkRange = newRange

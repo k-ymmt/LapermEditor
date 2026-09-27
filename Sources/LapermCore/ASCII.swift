@@ -7,6 +7,7 @@ enum ASCII {
     static let newline: unichar = 0x0A
     static let carriageReturn: unichar = 0x0D
     static let space: unichar = 0x20
+    static let exclamation: unichar = 0x21
     static let hash: unichar = 0x23
     static let leftParen: unichar = 0x28
     static let rightParen: unichar = 0x29

@@ -23,6 +23,9 @@ public final class MarkdownEditorProxy {
     public func toggleFold(at headingLocation: Int) { textView?.toggleFold(at: headingLocation) }
     public func unfoldAll() { textView?.unfoldAll() }
 
+    /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
+    public func refreshWikiLinkResolution() { textView?.refreshWikiLinkResolution() }
+
     /// 選択範囲(なければカーソル位置の単語)のボールド / イタリックを切り替える。適用できたら true。
     @discardableResult
     public func toggleEmphasis(_ style: EmphasisStyle) -> Bool {

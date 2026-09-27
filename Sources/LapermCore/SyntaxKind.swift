@@ -8,6 +8,8 @@ public enum SyntaxKind: Hashable, Sendable {
     case blockquote
     case listMarker
     case link
+    /// Wiki Link(`[[Note]]`)。解決済みか Unresolved かはホストの解決関数が決め、色はそれに従う。
+    case wikiLink
     case image
     case thematicBreak
     case strikethrough

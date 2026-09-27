@@ -18,6 +18,10 @@ public final class Highlighter {
     }
     public private(set) var currentPlan = HighlightPlan()
 
+    /// Wiki Link の解決関数(ホストが差し込む)。`.unresolved` を返した Wiki Link は Theme の Unresolved の色で描く。
+    /// nil または `.unknown` なら通常の `.wikiLink` の色。属性適用のたびに同期的に(メインアクタで)呼ばれる。
+    public var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)?
+
     /// 直近のパース所要時間がこれを超えていたら、次回の flush はバックグラウンド経路を使う。
     /// spec: 「パースが 16ms を超える巨大文書ではパースをバックグラウンドキューで行う」
     public var backgroundParseThreshold: Duration = .milliseconds(16)
@@ -69,6 +73,20 @@ public final class Highlighter {
         self.theme = theme
     }
 
+    /// 解決結果だけが変わったとき(Note の増減)に、Wiki Link の色を今の計画のまま付け直す。再パースはしない。
+    /// Wiki Link に重なるスパン(`[[` `]]` の Syntax Marker)も計画の順で付け直し、マーカーの色を保つ。
+    public func reapplyWikiLinkResolution(
+        contentStorage: NSTextContentStorage,
+        layoutManager: NSTextLayoutManager
+    ) {
+        let wikiRanges = currentPlan.wikiLinks.map(\.range)
+        guard !wikiRanges.isEmpty else { return }
+        let spans = currentPlan.spans.filter { span in
+            wikiRanges.contains { NSIntersectionRange($0, span.range).length > 0 }
+        }
+        apply(spans: spans, resetting: [], plan: currentPlan, contentStorage: contentStorage, layoutManager: layoutManager)
+    }
+
     private func storageAttributes(for kind: SyntaxKind) -> [NSAttributedString.Key: Any] {
         if let cached = storageAttributeCache[kind] { return cached }
         let attributes = theme.storageAttributes(for: kind)
@@ -103,7 +121,7 @@ public final class Highlighter {
         let fullRange = NSRange(location: 0, length: storage.length)
         if storage.length > backgroundParseLengthThreshold {
             // 先にプレーンテキスト(本文属性)を見せる。以後の flush もバックグラウンド経路に乗せる。
-            apply(spans: [], resetting: [fullRange], contentStorage: contentStorage, layoutManager: layoutManager)
+            apply(spans: [], resetting: [fullRange], plan: HighlightPlan(), contentStorage: contentStorage, layoutManager: layoutManager)
             currentPlan = HighlightPlan()
             pendingEditedRanges = [fullRange]
             lastParseDuration = max(lastParseDuration, backgroundParseThreshold + .milliseconds(1))
@@ -117,6 +135,7 @@ public final class Highlighter {
         apply(
             spans: plan.spans,
             resetting: [fullRange],
+            plan: plan,
             contentStorage: contentStorage,
             layoutManager: layoutManager
         )
@@ -136,6 +155,7 @@ public final class Highlighter {
         apply(
             spans: currentPlan.spans,
             resetting: [fullRange],
+            plan: currentPlan,
             contentStorage: contentStorage,
             layoutManager: layoutManager
         )
@@ -225,6 +245,7 @@ public final class Highlighter {
         apply(
             spans: changes.spansToApply,
             resetting: changes.invalidatedRanges,
+            plan: newPlan,
             contentStorage: contentStorage,
             layoutManager: layoutManager
         )
@@ -306,11 +327,18 @@ public final class Highlighter {
     private func apply(
         spans: [HighlightSpan],
         resetting invalidated: [NSRange],
+        plan: HighlightPlan,
         contentStorage: NSTextContentStorage,
         layoutManager: NSTextLayoutManager
     ) {
         guard let storage = contentStorage.textStorage else { return }
         let documentLength = storage.length
+        // Wiki Link の色は解決結果で決まる: スパンのレンジから参照を引き、解決関数に問う(スパンと参照は 1 対 1)。
+        let wikiLinkColors = wikiLinkColorAttributes(for: spans, in: plan)
+        func colorAttributes(for span: HighlightSpan) -> [NSAttributedString.Key: Any] {
+            if span.kind == .wikiLink, let unresolved = wikiLinkColors[span.range] { return unresolved }
+            return renderingAttributes(for: span.kind)
+        }
 
         // 1) textStorage 側属性(フォント・打ち消し線)— 編集トランザクション内で適用。
         //    属性編集は .editedAttributes しか発火しないため didProcessEditing の
@@ -358,7 +386,7 @@ public final class Highlighter {
                 //    属性のみの編集なので .editedAttributes しか発火せず、再入しない。
                 //    トランザクションを 1 つにまとめるのは processEditing → レイアウト無効化を
                 //    フラッシュごとに 2 回走らせないため。
-                let colors = renderingAttributes(for: span.kind)
+                let colors = colorAttributes(for: span)
                 if !colors.isEmpty {
                     storage.addAttributes(colors, range: clipped)
                 }
@@ -375,7 +403,7 @@ public final class Highlighter {
             layoutManager.setRenderingAttributes(bodyColorAttributes, for: textRange)
         }
         for span in spans {
-            let attributes = renderingAttributes(for: span.kind)
+            let attributes = colorAttributes(for: span)
             guard !attributes.isEmpty else { continue }
             let clipped = clip(span.range, to: documentLength)
             guard clipped.length > 0,
@@ -385,6 +413,17 @@ public final class Highlighter {
             }
         }
         #endif
+    }
+
+    /// `spans` の `.wikiLink` のうち Unresolved と解決されたものの色属性(レンジをキーに)。解決関数が無ければ空。
+    private func wikiLinkColorAttributes(for spans: [HighlightSpan], in plan: HighlightPlan) -> [NSRange: [NSAttributedString.Key: Any]] {
+        guard let wikiLinkResolver, spans.contains(where: { $0.kind == .wikiLink }) else { return [:] }
+        var result: [NSRange: [NSAttributedString.Key: Any]] = [:]
+        let unresolvedAttributes = theme.unresolvedWikiLinkRenderingAttributes()
+        for reference in plan.wikiLinks where wikiLinkResolver(reference) == .unresolved {
+            result[reference.range] = unresolvedAttributes
+        }
+        return result
     }
 
     /// レンジを文書長にクリップする。パース結果と storage の不整合が起きた場合の防波堤。
