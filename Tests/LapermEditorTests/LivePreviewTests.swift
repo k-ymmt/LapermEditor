@@ -575,7 +575,6 @@ private final class RegenerationRefocuser {
     MarkdownEditorView(text: binding).apply(to: textView)
     #expect(!textView.isLivePreviewEnabled)
 }
-#endif
 
 /// クリックの追跡中(mouseDown からボタンを離すまで)は Syntax Marker を見せる再生成を保留し、離したときに反映する。
 /// 見せた瞬間にレイアウトがずれると、NSTextView が離した点で選択を決め直すときに別の文字に写像され、見出しの行末より右を
@@ -604,3 +603,4 @@ private final class RegenerationRefocuser {
     layoutManager.ensureLayout(for: layoutManager.documentRange)
     #expect(segmentFrame(of: NSRange(location: 0, length: 2), in: layoutManager).width > 5, "the pending regeneration is applied on release")
 }
+#endif
