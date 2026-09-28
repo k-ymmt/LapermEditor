@@ -88,4 +88,70 @@ private func isWhite(_ c: (r: UInt8, g: UInt8, b: UInt8)?) -> Bool {
     #expect(isWhite(color(in: image, at: CGPoint(x: right - 20, y: box.minY - 2))))
     #expect(isWhite(color(in: image, at: CGPoint(x: right - 20, y: box.maxY + 2))))
 }
+
+/// 閉じていないフェンス(Laperm issue #4): "```" の後で改行したキャレット行(文書末の追加行)も箱の中。
+/// iOS でも追加行の背景が renderingSurfaceBounds で切られず、キャレット矩形が箱の中に収まる。
+@MainActor @Test func unclosedFenceCaretLineIsPaintedOnIOS() throws {
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = .white
+    theme.bodyColor = .black
+    theme.codeBlockBackgroundColor = .red
+    let textView = MarkdownTextView()
+    textView.frame = CGRect(x: 0, y: 0, width: 400, height: 240)
+    textView.showsLineNumbers = false
+    textView.theme = theme
+    textView.text = "```\n"
+    textView.highlightAll()
+    textView.layoutIfNeeded()
+    let layoutManager = try #require(textView.textLayoutManager)
+    layoutManager.ensureLayout(for: layoutManager.documentRange)
+    layoutManager.textViewportLayoutController.layoutViewport()
+    var fragments: [CodeBlockFragment] = []
+    layoutManager.enumerateTextLayoutFragments(from: layoutManager.documentRange.location, options: []) {
+        if let f = $0 as? CodeBlockFragment { fragments.append(f) }
+        return true
+    }
+    let only = try #require(fragments.first)
+    #expect(fragments.count == 1)
+    #expect(only.includesTrailingExtraLine && only.roundsBottom)
+    let extra = try #require(only.trailingExtraLineFragment)
+    let origin = CGPoint(x: textView.textContainerInset.left, y: textView.textContainerInset.top)
+    let frame = only.layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+    let left = origin.x
+    let right = origin.x + textView.textContainer.size.width
+    let image = renderedPixels(of: textView)
+    // キャレット行の高さで左端・中央・右端が塗られている
+    let caretLineY = frame.minY + extra.typographicBounds.midY
+    for x in [left + 1, (left + right) / 2, right - 1] {
+        #expect(isRed(color(in: image, at: CGPoint(x: x, y: caretLineY))), "x=\(x)")
+    }
+    // 箱の下(予約した下余白の下)は塗られていない
+    #expect(isWhite(color(in: image, at: CGPoint(x: (left + right) / 2, y: frame.maxY + 3))))
+    // 実際のキャレット矩形(文書末)は箱の中
+    let caret = textView.caretRect(for: textView.endOfDocument)
+    #expect(caret.minY >= frame.minY - 0.5 && caret.maxY <= frame.maxY + 0.5, "caret \(caret) in \(frame)")
+    // 追加行に入力すると(再パース前でも)新しい段落が箱の中に入る
+    func codeBlockFragments() -> [CodeBlockFragment] {
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        var found: [CodeBlockFragment] = []
+        layoutManager.enumerateTextLayoutFragments(from: layoutManager.documentRange.location, options: []) {
+            if let f = $0 as? CodeBlockFragment { found.append(f) }
+            return true
+        }
+        return found
+    }
+    textView.selectedRange = NSRange(location: 4, length: 0)
+    textView.insertText("a\n")
+    #expect(codeBlockFragments().count == 2)
+    // 再パースで追加行の扱いと末尾の角丸が新しい末尾段落へ移る(UITextView は変わらない段落のフラグメントを
+    // 使い回すので、装飾レンジの変化による無効化が要る)
+    textView.engine.highlightNow()
+    let after = codeBlockFragments()
+    let described = after.map { "extra=\($0.includesTrailingExtraLine) bottom=\($0.roundsBottom) range=\($0.rangeInElement)" }
+    #expect(after.map(\.includesTrailingExtraLine) == [false, true], "\(described)")
+    #expect(after.map(\.roundsBottom) == [false, true], "\(described)")
+    let caretAfter = textView.caretRect(for: textView.endOfDocument)
+    let lastFrame = try #require(after.last).layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+    #expect(caretAfter.minY >= lastFrame.minY - 0.5 && caretAfter.maxY <= lastFrame.maxY + 0.5, "caret \(caretAfter) in \(lastFrame)")
+}
 #endif

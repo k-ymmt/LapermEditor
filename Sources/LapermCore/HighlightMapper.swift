@@ -151,11 +151,13 @@ enum HighlightMapper {
                 // レンジに従う。
                 range = NSRange(location: range.location, length: text.length - range.location)
             }
+            let runsToDocumentEnd = range != reportedRange
             blockSpans.append(HighlightSpan(range: range, kind: .codeBlock))
-            // 最後の行の行末(cmark はインデント型で最後の行の改行までを報告する)
+            // 最後の行の行末(cmark はインデント型で最後の行の改行までを報告する)。文書末まで続くブロックは文書末そのもの
+            // (末尾の改行も中: `isTouched` が文書末への入力をブロックの編集として扱えるように)
             var lastContentsEnd = 0
             text.getLineStart(nil, end: nil, contentsEnd: &lastContentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
-            let contentEndOfBlock = min(NSMaxRange(range), max(range.location, lastContentsEnd))
+            let contentEndOfBlock = runsToDocumentEnd ? NSMaxRange(range) : min(NSMaxRange(range), max(range.location, lastContentsEnd))
             let blockRange = NSRange(location: range.location, length: contentEndOfBlock - range.location)
             if let fence {
                 // フェンス行をマーカーに

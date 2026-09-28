@@ -18,7 +18,10 @@ struct Decoration: Hashable {
     var range: NSRange
     var kind: BlockDecoration
     /// 文書末まで続く装飾(閉じていないコードフェンス、CommonMark)。レンジは計画を作った時点の文書末で終わるが、
-    /// その後ろに入力された文字も、改行で終わる文書の最後の空行(TextKit 2 の追加行)もブロックの中として扱う。
+    /// その後ろに入力された文字(再パースまでの間の、複数行の貼り付けや連続した Return も)も、改行で終わる文書の
+    /// 最後の空行(TextKit 2 の追加行)もブロックの中として扱う。レンジ自体は伸ばさない: 再パースで新しい計画の
+    /// レンジ(新しい文書末まで)と食い違うことで、前の末尾段落のフラグメント(TextKit 2 は変わらない段落の
+    /// フラグメントを使い回す)が無効化されて、末尾の角丸と余白が新しい末尾段落へ移る。
     var isOpenEnded = false
 
     init(range: NSRange, kind: BlockDecoration, isOpenEnded: Bool = false) {
@@ -27,10 +30,14 @@ struct Decoration: Hashable {
         self.isOpenEnded = isOpenEnded
     }
 
-    /// 段落の検索に使うレンジ。文書末まで続く装飾は、レンジの終端(= 計画時の文書末)から始まる段落
-    /// (末尾の改行の後に入力された行)も含めるよう 1 文字ぶん長く見る。
-    var lookupRange: NSRange {
-        isOpenEnded ? NSRange(location: range.location, length: range.length + 1) : range
+    /// 段落の検索に使う終端。文書末まで続く装飾は、レンジの終端(= 計画時の文書末)より後ろの段落も全て含める。
+    var lookupEnd: Int { isOpenEnded ? Int.max : NSMaxRange(range) }
+
+    /// この装飾が段落に掛かるか。段落の先頭がレンジの中、またはレンジと交差する(装飾レンジはインデント後から始まる
+    /// ことがある)。文書末まで続く装飾は、開始位置以降の段落全て。
+    func covers(paragraph: NSRange) -> Bool {
+        if isOpenEnded, paragraph.location >= range.location { return true }
+        return NSLocationInRange(paragraph.location, range) || NSIntersectionRange(paragraph, range).length > 0
     }
 }
 
@@ -64,7 +71,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         prefixMaxEnd.removeAll(keepingCapacity: true)
         var maxEnd = Int.min
         for decoration in sortedDecorations {
-            maxEnd = max(maxEnd, NSMaxRange(decoration.lookupRange))
+            maxEnd = max(maxEnd, decoration.lookupEnd)
             prefixMaxEnd.append(maxEnd)
         }
     }
@@ -209,10 +216,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             if sortedDecorations[mid].range.location >= limit { high = mid } else { low = mid + 1 }
         }
         guard start < low else { return nil }
-        return sortedDecorations[start..<low].first {
-            NSLocationInRange(paragraph.location, $0.lookupRange)
-                || NSIntersectionRange(paragraph, $0.lookupRange).length > 0
-        }
+        return sortedDecorations[start..<low].first { $0.covers(paragraph: paragraph) }
     }
 
     /// コードブロック内での段落の位置(先頭段落か / 末尾段落か)。

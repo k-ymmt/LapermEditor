@@ -786,7 +786,42 @@ private func isClose(_ color: NSColor, to expected: NSColor, tolerance: CGFloat 
     #expect(paragraphStyle(of: only)?.paragraphSpacingBefore == padding)
     // キャレット行の途中の点が塗られている
     let caretLineMidY = only.layoutFragmentFrame.minY + extra.typographicBounds.midY
-    #expect(only.backgroundRect.offsetBy(dx: 0, dy: only.layoutFragmentFrame.minY).contains(CGPoint(x: 10, y: caretLineMidY)))
+    let background = only.backgroundRect.offsetBy(dx: 0, dy: only.layoutFragmentFrame.minY)
+    #expect(background.contains(CGPoint(x: 10, y: caretLineMidY)))
+    // 実際のキャレット(文書末の挿入点)の矩形も箱の中(レイアウトの座標で比較)
+    textView.setSelectedRange(NSRange(location: 4, length: 0))
+    let layoutManager = textView.textLayoutManager!
+    var caret = CGRect.null
+    layoutManager.enumerateTextSegments(
+        in: NSTextRange(location: layoutManager.documentRange.endLocation), type: .standard, options: [.rangeNotRequired]
+    ) { _, frame, _, _ in
+        caret = frame
+        return false
+    }
+    #expect(!caret.isNull)
+    #expect(caret.minY >= background.minY - 0.5 && caret.maxY <= background.maxY + 0.5, "caret \(caret) in \(background)")
+}
+
+@MainActor @Test func pastingSeveralLinesOnTheCaretLineOfAnUnclosedFenceKeepsThemAllInTheBox() {
+    // 複数行の貼り付け / 連続した Return: 再パース前でも新しい段落は全て箱の中で、末尾は最後の段落だけ
+    let textView = makeCodeBlockTextView("```\n")
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 4, length: 0), with: "\n\n")
+    let provider = textView.engine.fragmentProvider
+    // 装飾のレンジは計画時のまま(伸ばさない)だが、開始位置以降の段落は全て覆う
+    let stale = provider.decoration(forParagraph: NSRange(location: 5, length: 1))
+    #expect(stale?.range == NSRange(location: 0, length: 4) && stale?.isOpenEnded == true)
+    #expect(codeBlockFragments(in: textView).count == 3)
+    // 再パースで装飾レンジが新しい文書末まで変わり、前の末尾段落のフラグメントも作り直される
+    textView.highlightNow()
+    let fragments = codeBlockFragments(in: textView)
+    #expect(fragments.count == 3)
+    #expect(fragments.map(\.roundsBottom) == [false, false, true])
+    #expect(fragments.map(\.includesTrailingExtraLine) == [false, false, true])
+    // ブロックの中の削除は(他のブロックと同じく)装飾を落とし、再パースで作り直す
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 5, length: 1), with: "")
+    textView.highlightNow()
+    #expect(codeBlockFragments(in: textView).count == 2)
+    #expect(codeBlockFragments(in: textView).map(\.roundsBottom) == [false, true])
 }
 
 @MainActor @Test func unclosedFenceDecoratesBlankLinesBeforeTheDocumentEnd() {
@@ -823,7 +858,7 @@ private func isClose(_ color: NSColor, to expected: NSColor, tolerance: CGFloat 
     #expect(provider.decoration(forParagraph: NSRange(location: 4, length: 1))?.isOpenEnded == true)
     let fragments = codeBlockFragments(in: textView)
     #expect(fragments.count == 2)
-    // パース後も同じ(閉じていないので "a" の行が末尾、追加行は無い)
+    // パース後: 閉じていないので "a" の行が末尾、追加行は無い。末尾の角丸はその段落だけ
     textView.highlightNow()
     let after = codeBlockFragments(in: textView)
     #expect(after.count == 2)
