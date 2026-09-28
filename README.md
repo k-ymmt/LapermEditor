@@ -20,7 +20,7 @@ A TextKit 2–based Markdown editor library for macOS and iOS, written in Swift 
 ## Requirements
 
 - Swift 6.4 toolchain / Xcode 27
-- macOS 27+ or iOS 27+
+- macOS 26+ or iOS 27+
 
 ## Installation
 

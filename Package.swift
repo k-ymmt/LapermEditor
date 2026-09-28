@@ -5,7 +5,7 @@ let package = Package(
     name: "LapermEditor",
     defaultLocalization: "en",
     platforms: [
-        .macOS(.v27),
+        .macOS(.v26),
         .iOS(.v27),
     ],
     products: [
