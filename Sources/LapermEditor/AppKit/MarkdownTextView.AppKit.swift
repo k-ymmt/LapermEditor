@@ -189,6 +189,21 @@ public final class MarkdownTextView: NSTextView {
         scrollRangeToVisible(NSRange(location: headingLocation, length: 0))
     }
 
+    /// 任意の範囲(UTF-16)を選択して見えるところまでスクロールする(Search の Match を開くときに使う)。
+    /// 範囲は本文の長さに丸める。折畳中のセクションや Live Preview の箱に入るなら展開する(選択の変更で自動展開される)。
+    public func select(_ range: NSRange) {
+        let clamped = Self.clamp(range, toLength: (string as NSString).length)
+        engine.unfoldAll(intersecting: clamped)
+        setSelectedRange(clamped)
+        scrollRangeToVisible(clamped)
+    }
+
+    static func clamp(_ range: NSRange, toLength length: Int) -> NSRange {
+        let location = max(0, min(range.location, length))
+        let end = max(location, min(NSMaxRange(range), length))
+        return NSRange(location: location, length: end - location)
+    }
+
     private var barInsertionPointColor: NSColor?
     private var hoveredLinkRange: NSRange?
     private var linkTrackingArea: NSTrackingArea?

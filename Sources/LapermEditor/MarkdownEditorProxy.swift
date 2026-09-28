@@ -23,6 +23,9 @@ public final class MarkdownEditorProxy {
     public func toggleFold(at headingLocation: Int) { textView?.toggleFold(at: headingLocation) }
     public func unfoldAll() { textView?.unfoldAll() }
 
+    /// 任意の範囲(UTF-16)を選択して見えるところまでスクロールする。折畳中なら展開する。ビュー未接続なら何もしない。
+    public func select(_ range: NSRange) { textView?.select(range) }
+
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
     public func refreshWikiLinkResolution() { textView?.refreshWikiLinkResolution() }
 
