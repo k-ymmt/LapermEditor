@@ -17,6 +17,21 @@ enum BlockDecoration: Equatable {
 struct Decoration: Hashable {
     var range: NSRange
     var kind: BlockDecoration
+    /// 文書末まで続く装飾(閉じていないコードフェンス、CommonMark)。レンジは計画を作った時点の文書末で終わるが、
+    /// その後ろに入力された文字も、改行で終わる文書の最後の空行(TextKit 2 の追加行)もブロックの中として扱う。
+    var isOpenEnded = false
+
+    init(range: NSRange, kind: BlockDecoration, isOpenEnded: Bool = false) {
+        self.range = range
+        self.kind = kind
+        self.isOpenEnded = isOpenEnded
+    }
+
+    /// 段落の検索に使うレンジ。文書末まで続く装飾は、レンジの終端(= 計画時の文書末)から始まる段落
+    /// (末尾の改行の後に入力された行)も含めるよう 1 文字ぶん長く見る。
+    var lookupRange: NSRange {
+        isOpenEnded ? NSRange(location: range.location, length: range.length + 1) : range
+    }
 }
 
 /// HighlightPlan のブロック情報に基づき、装飾付き NSTextLayoutFragment を供給する。
@@ -49,7 +64,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         prefixMaxEnd.removeAll(keepingCapacity: true)
         var maxEnd = Int.min
         for decoration in sortedDecorations {
-            maxEnd = max(maxEnd, NSMaxRange(decoration.range))
+            maxEnd = max(maxEnd, NSMaxRange(decoration.lookupRange))
             prefixMaxEnd.append(maxEnd)
         }
     }
@@ -91,9 +106,12 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         contentManager: NSTextContentManager,
         layoutManager: NSTextLayoutManager
     ) {
+        // 閉じていないフェンス(文書直下)は文書末まで続く: スパンと同じ位置から始まる MarkdownCodeBlock で見分ける
+        let openEndedStarts = Set(plan.codeBlocks.lazy.filter { $0.isFenced && !$0.isClosed && !$0.isNested }.map(\.range.location))
         let new = plan.spans.compactMap { span -> Decoration? in
             switch span.kind {
-            case .codeBlock: Decoration(range: span.range, kind: .codeBlock)
+            case .codeBlock:
+                Decoration(range: span.range, kind: .codeBlock, isOpenEnded: openEndedStarts.contains(span.range.location))
             case .blockquote: Decoration(range: span.range, kind: .blockquote)
             case .thematicBreak: Decoration(range: span.range, kind: .thematicBreak)
             case .table: Decoration(range: span.range, kind: .table)
@@ -148,6 +166,13 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         return style.paragraphSpacing
     }
 
+    /// `range` の最後の文字が改行か(改行で終わる文書の最後の段落: この後ろに TextKit 2 の追加行が付く)。
+    private static func endsWithLineBreak(_ range: NSRange, in text: NSString) -> Bool {
+        guard range.length > 0, NSMaxRange(range) <= text.length else { return false }
+        // LF / CR / NEL / LINE SEPARATOR / PARAGRAPH SEPARATOR(NSString の行末と同じ)
+        return [0x000A, 0x000D, 0x0085, 0x2028, 0x2029].contains(text.character(at: NSMaxRange(range) - 1))
+    }
+
     /// 段落(textElement)の文書内レンジ。
     private func paragraphRange(
         of textElement: NSTextElement, in contentManager: NSTextContentManager
@@ -185,26 +210,30 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         }
         guard start < low else { return nil }
         return sortedDecorations[start..<low].first {
-            NSLocationInRange(paragraph.location, $0.range)
-                || NSIntersectionRange(paragraph, $0.range).length > 0
+            NSLocationInRange(paragraph.location, $0.lookupRange)
+                || NSIntersectionRange(paragraph, $0.lookupRange).length > 0
         }
     }
 
     /// コードブロック内での段落の位置(先頭段落か / 末尾段落か)。
     /// コードブロックでない段落は nil。装飾レンジはインデント後から始まり、
     /// 末尾の改行を含まないことがあるので、段落が装飾の始点 / 終点を含むかで判定する。
+    /// 文書末まで続く装飾(閉じていないフェンス)の末尾段落は文書の最後の段落(`documentLength` に届く段落)。
+    /// その段落が改行で終わるときは、その後ろの追加行(次に入力する行のキャレット位置)もブロックの中
+    /// (`includesTrailingExtraLine`)。
     struct CodeBlockEdges: Equatable {
         var isFirst: Bool
         var isLast: Bool
+        var includesTrailingExtraLine = false
     }
 
-    func codeBlockEdges(forParagraph paragraph: NSRange) -> CodeBlockEdges? {
-        guard let decoration = decoration(forParagraph: paragraph),
-              decoration.kind == .codeBlock || decoration.kind == .frontMatter
-        else { return nil }
+    static func edges(of paragraph: NSRange, in decoration: Decoration, documentLength: Int) -> CodeBlockEdges {
+        let isLast = decoration.isOpenEnded
+            ? NSMaxRange(paragraph) >= documentLength : NSMaxRange(paragraph) >= NSMaxRange(decoration.range)
         return CodeBlockEdges(
             isFirst: paragraph.location <= decoration.range.location,
-            isLast: NSMaxRange(paragraph) >= NSMaxRange(decoration.range))
+            isLast: isLast,
+            includesTrailingExtraLine: decoration.isOpenEnded && isLast)
     }
 
     /// 段落の本文を行頭から下げる幅(表示用の段落スタイルの headIndent)。引用の段落は
@@ -229,14 +258,18 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         let apply: (NSMutableParagraphStyle) -> Void
         switch decoration.kind {
         case .codeBlock, .frontMatter:
-            let edges = CodeBlockEdges(
-                isFirst: range.location <= decoration.range.location,
-                isLast: NSMaxRange(range) >= NSMaxRange(decoration.range))
-            guard edges.isFirst || edges.isLast else { return nil }
+            let edges = Self.edges(of: range, in: decoration, documentLength: storage.length)
+            // 末尾段落の下余白は paragraphSpacing で確保する。ただし改行で終わる文書の最後の段落で、その後ろの
+            // 追加行(キャレット行)までブロックに入るときは、余白が本文と追加行の間に入ってしまうので付けず、
+            // 追加行の下の予約(`CodeBlockFragment.reservedBottomHeight`)で確保する。
+            let followedByExtraLine = edges.includesTrailingExtraLine
+                && Self.endsWithLineBreak(range, in: storage.string as NSString)
+            let spacingAfter = edges.isLast && !followedByExtraLine
+            guard edges.isFirst || spacingAfter else { return nil }
             let padding = theme.codeBlockVerticalPadding
             apply = { style in
                 if edges.isFirst { style.paragraphSpacingBefore = padding }
-                if edges.isLast { style.paragraphSpacing = padding }
+                if spacingAfter { style.paragraphSpacing = padding }
             }
         case .blockquote:
             let indent = paragraphIndent(forParagraph: range)
@@ -289,13 +322,18 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                 ? theme.frontMatterBackgroundColor : theme.codeBlockBackgroundColor
             fragment.lineSpacing = theme.lineSpacing
             fragment.isBlockStart = isBlockStart
-            let edges = codeBlockEdges(forParagraph: paragraph)
-            fragment.roundsTop = edges?.isFirst ?? false
-            fragment.roundsBottom = edges?.isLast ?? false
+            let documentLength = contentManager.offset(
+                from: contentManager.documentRange.location, to: contentManager.documentRange.endLocation)
+            let edges = Self.edges(of: paragraph, in: decoration, documentLength: documentLength)
+            fragment.roundsTop = edges.isFirst
+            fragment.roundsBottom = edges.isLast
+            // 閉じていないフェンスの末尾段落: 改行の後の追加行(キャレット行)もブロックの中に入れて塗る
+            fragment.includesTrailingExtraLine = edges.includesTrailingExtraLine
             // 末尾段落の下余白は paragraphSpacing で確保するが、文書末尾では
             // layoutFragmentFrame に算入されない(基底クラスのコメント参照)ので予約で補う。
+            // 追加行までブロックに入るときは paragraphSpacing を付けていないので、予約が余白そのもの。
             fragment.reservedBottomHeight = reservation
-                ?? (edges?.isLast == true ? theme.codeBlockVerticalPadding : nil)
+                ?? (edges.isLast ? theme.codeBlockVerticalPadding : nil)
             return fragment
         case .blockquote:
             let fragment = BlockquoteFragment(textElement: textElement, range: textElement.elementRange)

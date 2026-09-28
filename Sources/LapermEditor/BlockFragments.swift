@@ -26,6 +26,11 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// 先頭段落だけ行間を装飾の外に出す(途中の段落で下げると隣の段落の装飾との間に隙間が開く)。
     var isBlockStart = false
 
+    /// 文書末尾の追加行(改行で終わる文書の最後の空行 = 次に入力する行のキャレット位置)もブロックの中として
+    /// 装飾するか。閉じていないコードフェンスは文書末まで続く(CommonMark)ので、その末尾段落で true になる
+    /// (`BlockFragmentProvider`)。通常は false で、追加行はブロックの外(装飾はその手前で止める)。
+    var includesTrailingExtraLine = false
+
     /// ブロック装飾を上端から何 pt 下げて描き始めるか。ブロック先頭段落で、先頭行の上に入った
     /// 行間ぶんだけ(最大でも `lineSpacing`)下げて、行間を装飾の外に出す。文書の最初の行には
     /// 行間が付かないので 0 になる。paragraphSpacingBefore(コードブロックの上余白)は含めない。
@@ -39,7 +44,7 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// 文書末尾の追加行(改行で終わる文書の最後の空行)があるときはその手前で止めるが、追加行の
     /// 上にも行間が入っている(minY = 末尾行下端 + paragraphSpacing + 行間)ので、その行間は除く。
     var decorationBottom: CGFloat {
-        guard let extra = trailingExtraLineFragment else { return layoutFragmentFrame.height }
+        guard let extra = trailingExtraLineFragment, !includesTrailingExtraLine else { return layoutFragmentFrame.height }
         return max(textLinesBottom, extra.typographicBounds.minY - lineSpacing)
     }
 
@@ -62,9 +67,10 @@ class ReservingTextLayoutFragment: NSTextLayoutFragment {
     /// サブクラスが予約を見送りたい状況(既に高さが確保されている等)で false を返す。
     var reservationApplies: Bool { true }
 
-    /// テキスト行群(文書末尾の追加行を除く)の下端(フラグメント原点からの相対値)。
+    /// テキスト行群(文書末尾の追加行を除く。ただし追加行がブロックの中なら含める)の下端
+    /// (フラグメント原点からの相対値)。
     var textLinesBottom: CGFloat {
-        let extra = trailingExtraLineFragment
+        let extra = includesTrailingExtraLine ? nil : trailingExtraLineFragment
         return textLineFragments.reduce(0) { $1 === extra ? $0 : max($0, $1.typographicBounds.maxY) }
     }
 
@@ -121,7 +127,9 @@ final class CodeBlockFragment: ReservingTextLayoutFragment {
 
     /// 追加行があるときは末尾段落の paragraphSpacing が追加行の手前に既に算入されている
     /// (文書末尾で落ちるのは改行なしで終わる場合だけ)ので、予約で二重に足さない。
-    override var reservationApplies: Bool { trailingExtraLineFragment == nil }
+    /// 追加行までブロックの中なら paragraphSpacing は付いておらず(`BlockFragmentProvider.textParagraph`)、
+    /// 追加行の下に予約で余白を作る。
+    override var reservationApplies: Bool { trailingExtraLineFragment == nil || includesTrailingExtraLine }
 
     /// 描画面を背景矩形まで広げる。UITextView はフラグメントごとの描画面をこの境界で
     /// クリップするため、これを広げないと文字の周囲しか塗れない。

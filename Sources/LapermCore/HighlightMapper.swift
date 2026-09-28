@@ -132,25 +132,34 @@ enum HighlightMapper {
         }
 
         mutating func visitCodeBlock(_ codeBlock: CodeBlock) {
-            guard let range = nsRange(of: codeBlock), range.length > 0 else { return }
-            blockSpans.append(HighlightSpan(range: range, kind: .codeBlock))
+            guard let reportedRange = nsRange(of: codeBlock), reportedRange.length > 0 else { return }
+            var range = reportedRange
             let lineStart = text.lineRange(for: NSRange(location: range.location, length: 0)).location
             let isNested = !(codeBlock.parent is Document)
-            // 最後の行の行末(cmark はインデント型で最後の行の改行までを報告する)
-            var lastContentsEnd = 0
-            text.getLineStart(nil, end: nil, contentsEnd: &lastContentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
-            let contentEndOfBlock = min(NSMaxRange(range), max(range.location, lastContentsEnd))
-            let blockRange = NSRange(location: range.location, length: contentEndOfBlock - range.location)
             // 文書直下では、インデント型かフェンス付きかをブロックの先頭の前のインデントで決める(4 桁以上ならインデント型:
             // 先頭行が "```" で始まっていてもリテラルのコード。フェンスは最大 3 個の空白しか許されない)。リスト項目や
             // 引用の中では先頭の前にマーカーがあって桁数では決められないので、先頭行の形で決める(従来どおり)。
             let firstLine = clippedLineRange(at: range.location, within: range)
             let lastLine = clippedLineRange(at: max(range.location, NSMaxRange(range) - 1), within: range)
             let indentColumns = MarkdownCodeBlock.indentColumns(from: lineStart, to: range.location, in: text)
-            if isNested || indentColumns < 4, let fence = openingFence(of: firstLine) {
+            let fence = isNested || indentColumns < 4 ? openingFence(of: firstLine) : nil
+            let isClosed = fence.map { lastLine != firstLine && isClosingFence(lastLine, of: $0) } ?? true
+            if fence != nil, !isClosed, !isNested {
+                // 閉じていないフェンスは文書末まで続く(CommonMark)。cmark が報告するレンジは末尾の空行を含まない
+                // (開始フェンスの直後で改行しただけならフェンス行だけ)ので、文書末まで延ばす: 空行もブロックの中で、
+                // Source / Live Preview の背景はそこにも付く。リスト項目や引用の中では容器の終わりまでで、cmark の
+                // レンジに従う。
+                range = NSRange(location: range.location, length: text.length - range.location)
+            }
+            blockSpans.append(HighlightSpan(range: range, kind: .codeBlock))
+            // 最後の行の行末(cmark はインデント型で最後の行の改行までを報告する)
+            var lastContentsEnd = 0
+            text.getLineStart(nil, end: nil, contentsEnd: &lastContentsEnd, for: NSRange(location: NSMaxRange(range) - 1, length: 0))
+            let contentEndOfBlock = min(NSMaxRange(range), max(range.location, lastContentsEnd))
+            let blockRange = NSRange(location: range.location, length: contentEndOfBlock - range.location)
+            if let fence {
                 // フェンス行をマーカーに
                 markerSpans.append(HighlightSpan(range: firstLine, kind: .syntaxMarker))
-                let isClosed = lastLine != firstLine && isClosingFence(lastLine, of: fence)
                 if isClosed {
                     markerSpans.append(HighlightSpan(range: lastLine, kind: .syntaxMarker))
                 }

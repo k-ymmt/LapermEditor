@@ -764,3 +764,93 @@ private func isClose(_ color: NSColor, to expected: NSColor, tolerance: CGFloat 
     #expect(!isRed(x: Int(rect.midX), y: 2))
 }
 #endif
+
+// MARK: - 閉じていないコードフェンス(Laperm issue #4)
+
+#if os(macOS)
+@MainActor @Test func unclosedFenceDecoratesTheCaretLineAfterTheFence() throws {
+    // "```" の直後で改行: 文書は "```\n" の 1 段落 + 追加行(キャレット行)。追加行まで箱の中。
+    let textView = makeCodeBlockTextView("```\n")
+    let padding = textView.theme.codeBlockVerticalPadding
+    let fragments = codeBlockFragments(in: textView)
+    let only = try #require(fragments.first)
+    #expect(fragments.count == 1)
+    #expect(only.roundsTop && only.roundsBottom)
+    #expect(only.includesTrailingExtraLine)
+    let extra = try #require(only.trailingExtraLineFragment)
+    // 背景は追加行の下端 + 下余白まで。余白は本文と追加行の間ではなく追加行の下(paragraphSpacing 無し、予約で確保)
+    #expect(only.reservedBottomHeight == padding)
+    #expect(only.decorationBottom == only.layoutFragmentFrame.height)
+    #expect(only.backgroundRect.maxY >= extra.typographicBounds.maxY + padding - 0.5)
+    #expect(paragraphStyle(of: only)?.paragraphSpacing == 0)
+    #expect(paragraphStyle(of: only)?.paragraphSpacingBefore == padding)
+    // キャレット行の途中の点が塗られている
+    let caretLineMidY = only.layoutFragmentFrame.minY + extra.typographicBounds.midY
+    #expect(only.backgroundRect.offsetBy(dx: 0, dy: only.layoutFragmentFrame.minY).contains(CGPoint(x: 10, y: caretLineMidY)))
+}
+
+@MainActor @Test func unclosedFenceDecoratesBlankLinesBeforeTheDocumentEnd() {
+    // フェンスの後ろの空行と、その後ろの追加行: 全段落が箱で、下の角は最後の段落だけ
+    let textView = makeCodeBlockTextView("```\n\n")
+    let fragments = codeBlockFragments(in: textView)
+    #expect(fragments.count == 2)
+    #expect(fragments.map(\.roundsTop) == [true, false])
+    #expect(fragments.map(\.roundsBottom) == [false, true])
+    #expect(fragments.map(\.includesTrailingExtraLine) == [false, true])
+    #expect(fragments.last?.trailingExtraLineFragment != nil)
+    // 本文がある場合も同じ
+    let withCode = codeBlockFragments(in: makeCodeBlockTextView("x\n\n```\ncode\n"))
+    #expect(withCode.count == 2)
+    #expect(withCode.map(\.roundsBottom) == [false, true])
+    #expect(withCode.last?.includesTrailingExtraLine == true)
+}
+
+@MainActor @Test func closedFenceAndIndentedCodeLeaveTheTrailingLineOutside() throws {
+    // 閉じたフェンスの後の追加行はブロックの外(従来どおり)
+    let closed = try #require(codeBlockFragments(in: makeCodeBlockTextView("```\ncode\n```\n")).last)
+    #expect(closed.roundsBottom && !closed.includesTrailingExtraLine)
+    let extra = try #require(closed.trailingExtraLineFragment)
+    #expect(closed.decorationBottom <= extra.typographicBounds.minY)
+    let indented = try #require(codeBlockFragments(in: makeCodeBlockTextView("\tcode\n")).last)
+    #expect(!indented.includesTrailingExtraLine)
+}
+
+@MainActor @Test func typingOnTheCaretLineOfAnUnclosedFenceKeepsTheBackgroundBeforeTheReparse() {
+    // 追加行に入力した直後(パース前、装飾の座標追従だけ)も新しい段落は箱の中
+    let textView = makeCodeBlockTextView("```\n")
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 4, length: 0), with: "a")
+    let provider = textView.engine.fragmentProvider
+    #expect(provider.decoration(forParagraph: NSRange(location: 4, length: 1))?.isOpenEnded == true)
+    let fragments = codeBlockFragments(in: textView)
+    #expect(fragments.count == 2)
+    // パース後も同じ(閉じていないので "a" の行が末尾、追加行は無い)
+    textView.highlightNow()
+    let after = codeBlockFragments(in: textView)
+    #expect(after.count == 2)
+    #expect(after.map(\.roundsBottom) == [false, true])
+    #expect(after.last?.includesTrailingExtraLine == true)
+    #expect(after.last?.trailingExtraLineFragment == nil)
+    #expect(after.last?.reservedBottomHeight == textView.theme.codeBlockVerticalPadding)
+    #expect(paragraphStyle(of: after[1])?.paragraphSpacing == textView.theme.codeBlockVerticalPadding)
+}
+
+@MainActor @Test func unclosedFenceCaretLineIsActuallyPainted() throws {
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = .white
+    theme.bodyColor = .black
+    theme.codeBlockBackgroundColor = .red
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+    textView.theme = theme
+    textView.string = "```\n"
+    textView.highlightAll()
+    let only = try #require(codeBlockFragments(in: textView).first)
+    let extra = try #require(only.trailingExtraLineFragment)
+    let origin = only.layoutFragmentFrame.origin
+    let caretLine = CGPoint(x: 200, y: origin.y + extra.typographicBounds.midY)
+    #expect(isClose(try renderedColor(of: textView, at: caretLine), to: .red), "caret line after the fence is painted")
+    // 箱の下(余白の下)は塗られていない
+    let below = CGPoint(x: 200, y: origin.y + only.layoutFragmentFrame.height + 4)
+    #expect(isClose(try renderedColor(of: textView, at: below), to: .white))
+}
+#endif

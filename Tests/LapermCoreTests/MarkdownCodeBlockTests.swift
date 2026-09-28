@@ -153,3 +153,31 @@ private func codeBlocks(in markdown: String) -> [MarkdownCodeBlock] {
     #expect(indented.shifted(byEditAt: NSRange(location: 1, length: 1), changeInLength: 1).codeBlocks.first?.lineStart == 4)
     #expect(plan.codeBlocks.first?.relativeToStart.range == NSRange(location: 0, length: 9))
 }
+
+@Test func unclosedFenceSpanRunsToTheDocumentEndIncludingTrailingBlankLines() throws {
+    // 開始フェンスの直後で改行しただけ: cmark のレンジはフェンス行だけだが、ブロックは文書末(改行の後の空行)まで
+    // (Laperm issue #4: 改行したカーソル行にも背景が付く)
+    func codeBlockSpan(_ md: String) -> NSRange? {
+        MarkdownParser().highlightPlan(for: md).spans.first { $0.kind == .codeBlock }?.range
+    }
+    #expect(codeBlockSpan("```\n") == NSRange(location: 0, length: 4))
+    #expect(codeBlockSpan("```\n\n") == NSRange(location: 0, length: 5))
+    #expect(codeBlockSpan("```\nabc\n\n\n") == NSRange(location: 0, length: 10))
+    #expect(codeBlockSpan("a\n\n```\n\n") == NSRange(location: 3, length: 5))
+    // ブロックのレンジは最後の行の行末(空行なら行頭 = 前の行の改行の後)まで、本文は文書末まで
+    let block = try #require(codeBlocks(in: "```\n\n").first)
+    #expect(!block.isClosed)
+    #expect(block.range == NSRange(location: 0, length: 4))
+    #expect(block.contentRange == NSRange(location: 4, length: 1))
+    #expect(block.contentLineRanges(in: "```\n\n") == [NSRange(location: 4, length: 0), NSRange(location: 5, length: 0)])
+    let fenceOnly = try #require(codeBlocks(in: "```\n").first)
+    #expect(fenceOnly.range == NSRange(location: 0, length: 3))
+    #expect(fenceOnly.contentRange == nil)
+    // 閉じたブロックとインデント型は従来どおり(末尾の空行はブロックの外)
+    #expect(codeBlockSpan("```\nabc\n```\n\n") == NSRange(location: 0, length: 11))
+    #expect(codeBlockSpan("    code\n\n") == NSRange(location: 4, length: 5))
+    // リスト項目の中の閉じていないフェンスは容器の終わりまで(cmark のレンジのまま: 最後の行の改行までで、
+    // 文書末の空行は含まない)
+    #expect(codeBlockSpan("- ```\n  x\n\n") == NSRange(location: 2, length: 8))
+    #expect(codeBlocks(in: "- ```\n  x\n\n").first?.isNested == true)
+}
