@@ -28,7 +28,10 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     affected paragraph — `recordEditAction` does NOT make `NSTextContentStorage` rebuild a cached paragraph,
     and the delegate is held weakly (keep a strong reference in tests). Regeneration is deferred while IME
     marked text exists. `HighlightMapper` limits blockquote `>` markers per line to the quote depth so code
-    inside a quote keeps its literal `>`.
+    inside a quote keeps its literal `>`. One exception to "only hide": the one-character `.listMarker` spans
+    (`-` / `*` / `+`, passed as `bullets`) are replaced by "•" in the display paragraph instead of being hidden
+    (same UTF-16 length, so hit testing, selection, copy and accessibility still read the storage's character;
+    ordered markers, the caret's paragraph and Source mode keep the typed character; Laperm issue #5).
   - Front Matter (Laperm ADR 0016): `LapermCore/FrontMatter.swift` recognises an Obsidian-style block (line 1 is
     exactly `---`, closed by a `---` line; BOM tolerated, no `...`, no leading blank line) and reads a YAML subset
     (`key: value`, `key: [a, b]`, `key:` + `- item` lines, quotes, `#` comments; anything else becomes a raw row).

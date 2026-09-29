@@ -467,6 +467,82 @@ private func displayedParagraph(at location: Int, in textView: MarkdownTextView)
     #expect(textView.string == markdown)
 }
 
+/// 箇条書きの「•」は表示だけ: 選択のコピー・アクセシビリティ・クリック位置はストレージの `-` のまま(レビュー 6957a68)。
+@MainActor @Test func bulletDisplayKeepsCopySelectionAndAccessibilityOnTheStorage() throws {
+    let markdown = "intro\n\n- one\n- two\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(displayedParagraph(at: 7, in: textView) == "• one\n")
+    // 箇条書きの行の文字を読む経路(コピー・サービス・入力メソッドが使う NSTextInputClient)は元の記号を返す
+    // (テストの NSTextView はペーストボードへの書き出しを持たないので、同じストレージを読むこの経路で確かめる)
+    textView.setSelectedRange(NSRange(location: 7, length: 11))
+    #expect(textView.attributedSubstring(forProposedRange: NSRange(location: 7, length: 11), actualRange: nil)?.string == "- one\n- two")
+    #expect((textView.string as NSString).substring(with: textView.selectedRange()) == "- one\n- two")
+    // アクセシビリティはストレージの文字列
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(textView.accessibilityValue() as? String == markdown)
+    // 「•」の上のクリックは記号の位置(7)に写る(同じ長さの差し替えなので位置はずれない)
+    let bullet = segmentFrame(of: NSRange(location: 7, length: 1), in: textView.textLayoutManager!)
+    let origin = textView.textContainerOrigin
+    let point = CGPoint(x: bullet.minX + origin.x + 1, y: bullet.midY + origin.y)
+    #expect(textView.characterIndexForInsertion(at: point) == 7)
+}
+
+/// 箇条書きは編集で位置が動いても「•」のまま(再パース前の `noteEdit` の追従も)、リストでなくなれば元の文字、
+/// Undo・Source との往復でも正しく戻る。リストの記号でない `-` / `*`(水平線・Setext の下線・強調・コードの中)は差し替えない。
+@MainActor @Test func bulletsFollowEditsUndoAndModeChangesAndSkipNonListMarkers() throws {
+    let markdown = "intro\n\n- item\n\n---\n\n*em*\n\nSetext\n---\n\n```\n- code\n```\n\n- [ ] task\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    func line(_ prefix: String) -> Int { (textView.string as NSString).range(of: prefix).location }
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+    #expect(displayedParagraph(at: line("---\n\n*em*"), in: textView)?.hasPrefix("•") == false)
+    #expect(displayedParagraph(at: line("*em*"), in: textView)?.contains("•") == false)
+    #expect(displayedParagraph(at: line("Setext\n---") + 7, in: textView)?.hasPrefix("•") == false)
+    // コードブロックは Live Preview で箱に折りたたまれるので、表示ではなく差し替えの対象かどうかを見る
+    #expect(!textView.engine.livePreview.isBullet(NSRange(location: line("- code"), length: 1)))
+    #expect(!textView.engine.livePreview.isBullet(NSRange(location: line("---\n\n*em*"), length: 1)))
+    #expect(!textView.engine.livePreview.isBullet(NSRange(location: line("*em*"), length: 1)))
+    #expect(displayedParagraph(at: line("- [ ] task"), in: textView) == "• [ ] task\n", "the task box stays as typed")
+
+    // 前に文字を足す: 再パースの前(`noteEdit` で追従)も後も「•」のまま
+    textView.insertText("XX", replacementRange: NSRange(location: 0, length: 0))
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+    textView.highlightNow()
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+
+    // リストでなくする("- " を消す): キャレットは別の行のまま、差し替えが消える
+    let item = line("- item")
+    textView.insertText("", replacementRange: NSRange(location: item, length: 2))
+    textView.highlightNow()
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(displayedParagraph(at: item, in: textView) == "item\n")
+    // Undo で戻ると「•」も戻る
+    textView.undoManager?.undo()
+    textView.highlightNow()
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(textView.string.contains("\n- item\n"))
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+
+    // Source ↔ Live Preview の往復
+    textView.isLivePreviewEnabled = false
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "- item\n")
+    textView.isLivePreviewEnabled = true
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+    // フォーカスを失う / 戻る(キャレットの行は元の文字、他の行は「•」)
+    textView.setSelectedRange(NSRange(location: line("- item") + 3, length: 0))
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "- item\n")
+    #expect(window.makeFirstResponder(nil))
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "• item\n")
+    #expect(window.makeFirstResponder(textView))
+    #expect(displayedParagraph(at: line("- item"), in: textView) == "- item\n")
+}
+
 @MainActor @Test func textViewLivePreviewSurvivesEditsAndRehighlight() {
     let (window, textView) = makeFocusedTextView("*a*\n\nplain\n")
     defer { withExtendedLifetime(window) {} }
