@@ -46,30 +46,39 @@ enum PreviewLinks {
         var result: [NSRange] = []
         for match in urlPattern.matches(in: string, range: NSRange(location: 0, length: text.length)) {
             var range = match.range
+            // 閉じ括弧ごとの「閉じ - 開き」の数を一度だけ数え、末尾を削るたびに更新する(閉じ括弧が大量に続いても線形)
+            var unmatchedClosings: [unichar: Int] = [:]
+            for index in range.location..<NSMaxRange(range) {
+                let c = text.character(at: index)
+                if openingBracket[c] != nil {
+                    unmatchedClosings[c, default: 0] += 1
+                } else if let close = closingBracket[c] {
+                    unmatchedClosings[close, default: 0] -= 1
+                }
+            }
             while range.length > 0 {
                 let last = text.character(at: NSMaxRange(range) - 1)
                 if trailingPunctuation.contains(last) {
                     range.length -= 1
-                } else if closingBrackets.contains(last) {
-                    let url = text.substring(with: range)
-                    let open = Character(UnicodeScalar(openingBracket[last]!)!)
-                    let close = Character(UnicodeScalar(last)!)
-                    guard url.filter({ $0 == close }).count > url.filter({ $0 == open }).count else { break }
+                } else if openingBracket[last] != nil, unmatchedClosings[last, default: 0] > 0 {
+                    // 対応する開き括弧の無い閉じ括弧だけ除く
+                    unmatchedClosings[last, default: 0] -= 1
                     range.length -= 1
                 } else {
                     break
                 }
             }
             // スキームだけ(ホストが無い)は URL として扱わない
-            let scheme = text.substring(with: match.range).lowercased().hasPrefix("https") ? 8 : 7
+            let scheme = text.substring(with: NSRange(location: match.range.location, length: 5)).lowercased() == "https" ? 8 : 7
             if range.length > scheme { result.append(range) }
         }
         return result
     }
 
     private static let urlPattern = try! NSRegularExpression(pattern: "https?://[^\\s<>\"']+", options: [.caseInsensitive])
-    private static let closingBrackets: Set<unichar> = Set(")]}".utf16)
+    /// 閉じ括弧 → 開き括弧、開き括弧 → 閉じ括弧
     private static let openingBracket: [unichar: unichar] = [0x29: 0x28, 0x5D: 0x5B, 0x7D: 0x7B]
+    private static let closingBracket: [unichar: unichar] = [0x28: 0x29, 0x5B: 0x5D, 0x7B: 0x7D]
     private static let trailingPunctuation: Set<unichar> = Set(".,;:!?".utf16)
 
     /// `text` の URL にリンクの色と `PreviewLinkAttribute.url` を付けたもの(Front Matter の表の値 / チップ)。
@@ -89,6 +98,8 @@ enum PreviewLinks {
     /// 判定するので、右から左の文字が混ざる行でも見た目の位置の文字を返す。高さは文字列に必要なぶん(打ち切らない)。
     static func characterIndex(in text: NSAttributedString, width: CGFloat, at point: CGPoint) -> Int? {
         guard text.length > 0, width > 0, point.x >= -2, point.y >= -2 else { return nil }
+        // リンクの印が無い文字列は組版しない(長い値の上のタップで毎回全文を組まない)
+        guard hasLinkMark(text) else { return nil }
         let framesetter = CTFramesetterCreateWithAttributedString(text as CFAttributedString)
         let constraints = CGSize(width: width, height: .greatestFiniteMagnitude)
         let suggested = CTFramesetterSuggestFrameSizeWithConstraints(framesetter, CFRange(location: 0, length: 0), nil, constraints, nil)
@@ -107,25 +118,49 @@ enum PreviewLinks {
             let top = height - origin.y - ascent
             let bottom = height - origin.y + descent + leading
             guard point.y >= top - 1, point.y < bottom + 1 else { continue }
-            guard let runs = CTLineGetGlyphRuns(line) as? [CTRun] else { return nil }
-            for run in runs {
-                let count = CTRunGetGlyphCount(run)
-                guard count > 0 else { continue }
-                var positions = [CGPoint](repeating: .zero, count: count)
-                var advances = [CGSize](repeating: .zero, count: count)
-                var indices = [CFIndex](repeating: 0, count: count)
-                CTRunGetPositions(run, CFRange(location: 0, length: 0), &positions)
-                CTRunGetAdvances(run, CFRange(location: 0, length: 0), &advances)
-                CTRunGetStringIndices(run, CFRange(location: 0, length: 0), &indices)
-                for glyph in 0..<count where advances[glyph].width > 0 {
-                    let start = origin.x + positions[glyph].x
-                    if start - 1 <= point.x, point.x < start + advances[glyph].width + 1 {
-                        return indices[glyph]
-                    }
-                }
-            }
-            return nil
+            return glyphIndex(in: line, originX: origin.x, atX: point.x)
         }
         return nil
+    }
+
+    /// 1 行で描いた `text`(`.truncatesLastVisibleLine` のチップ)の、左端からの x にある文字の添字。折り返さないので、
+    /// 省略されずに見えている文字は描いた位置のまま当たる。
+    static func characterIndex(inSingleLine text: NSAttributedString, atX x: CGFloat) -> Int? {
+        guard text.length > 0, x >= -1, hasLinkMark(text) else { return nil }
+        let line = CTLineCreateWithAttributedString(text as CFAttributedString)
+        return glyphIndex(in: line, originX: 0, atX: x)
+    }
+
+    /// 行のグリフの位置と送り幅から、x にある文字の添字(右から左の文字も見た目の位置で)。
+    private static func glyphIndex(in line: CTLine, originX: CGFloat, atX x: CGFloat) -> Int? {
+        guard let runs = CTLineGetGlyphRuns(line) as? [CTRun] else { return nil }
+        for run in runs {
+            let count = CTRunGetGlyphCount(run)
+            guard count > 0 else { continue }
+            var positions = [CGPoint](repeating: .zero, count: count)
+            var advances = [CGSize](repeating: .zero, count: count)
+            var indices = [CFIndex](repeating: 0, count: count)
+            CTRunGetPositions(run, CFRange(location: 0, length: 0), &positions)
+            CTRunGetAdvances(run, CFRange(location: 0, length: 0), &advances)
+            CTRunGetStringIndices(run, CFRange(location: 0, length: 0), &indices)
+            for glyph in 0..<count where advances[glyph].width > 0 {
+                let start = originX + positions[glyph].x
+                if start - 1 <= x, x < start + advances[glyph].width + 1 { return indices[glyph] }
+            }
+        }
+        return nil
+    }
+
+    /// リンクの印(`PreviewLinkAttribute`)がどこかにあるか。
+    static func hasLinkMark(_ text: NSAttributedString) -> Bool {
+        var found = false
+        let full = NSRange(location: 0, length: text.length)
+        for key in [PreviewLinkAttribute.url, PreviewLinkAttribute.sourceOffset] {
+            text.enumerateAttribute(key, in: full) { value, _, stop in
+                if value != nil { found = true; stop.pointee = true }
+            }
+            if found { return true }
+        }
+        return false
     }
 }

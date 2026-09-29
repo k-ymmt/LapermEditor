@@ -739,7 +739,7 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, modifiers.isEmpty, linkOptions.opensRenderedLinksOnClick,
            let hit = linkHit(atPoint: point), hit.isRendered {
             if releasesWithoutDragging(from: event) {
-                if !open(hit.target) { beginEditing(at: NSRange(location: characterIndexForInsertion(at: point), length: 0)) }
+                activateRenderedLink(hit)
                 return
             }
         }
@@ -860,6 +860,12 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
+    /// 描かれたリンクのクリック: 開く。開けなければその位置で編集を始める(表 / Front Matter ならクリックと同じセルの末尾 /
+    /// Property の行末)。
+    func activateRenderedLink(_ hit: LinkHit) {
+        if !open(hit.target) { beginEditing(at: hit.editCaret) }
+    }
+
     /// point(ビュー座標)が Live Preview で描かれたリンクの上なら開く。開いたら true。
     @discardableResult
     func openRenderedLink(atPoint point: NSPoint) -> Bool {
@@ -929,12 +935,14 @@ public final class MarkdownTextView: NSTextView {
         // コピーする文字列はメニューを作った時点のもの(表示中に本文が変わっても、見て選んだリンクをコピーする)
         let copyText = engine.copyableText(for: hit.target, baseURL: linkOptions.baseURL)
         menu.addItem(LinkMenuItem(LinkMenuTitle.open) { [weak self] in self?.open(hit.target) })
-        menu.addItem(LinkMenuItem(LinkMenuTitle.copy) {
+        let copyItem = LinkMenuItem(LinkMenuTitle.copy) {
             guard let copyText else { return }
             let pasteboard = NSPasteboard.general
             pasteboard.clearContents()
             pasteboard.setString(copyText, forType: .string)
-        })
+        }
+        copyItem.representedObject = copyText  // テスト用: コピーする文字列(メニューを作った時点のもの)
+        menu.addItem(copyItem)
         menu.addItem(LinkMenuItem(LinkMenuTitle.edit) { [weak self] in self?.beginEditing(at: hit.editCaret) })
         if let base, !base.items.isEmpty {
             menu.addItem(.separator())

@@ -100,6 +100,8 @@ private func isWhite(_ c: (r: UInt8, g: UInt8, b: UInt8)?) -> Bool {
     textView.frame = CGRect(x: 0, y: 0, width: 400, height: 240)
     textView.showsLineNumbers = false
     textView.theme = theme
+    // 再パースを必ず同期にする(負荷でパースが閾値を超えるとバックグラウンドへ回り、highlightNow が同期を待たない)
+    textView.markdownHighlighter.backgroundParseThreshold = .seconds(60)
     textView.text = "```\n"
     textView.highlightAll()
     textView.layoutIfNeeded()

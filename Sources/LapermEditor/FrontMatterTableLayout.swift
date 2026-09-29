@@ -177,8 +177,9 @@ struct FrontMatterTableLayout: Equatable {
         // (1 つのチップに URL が 2 つあっても、それぞれが自分の URL になる)
         for chip in row.chips where chip.frame.contains(point) {
             let textRect = chip.frame.insetBy(dx: Self.chipHorizontalPadding, dy: Self.chipVerticalPadding)
-            guard let index = PreviewLinks.characterIndex(
-                in: chip.text, width: textRect.width, at: CGPoint(x: point.x - textRect.minX, y: point.y - textRect.minY))
+            // チップは 1 行で描かれ、はみ出すと末尾が省略される(`.truncatesLastVisibleLine`): 同じ 1 行で判定する
+            guard point.x <= textRect.maxX,
+                  let index = PreviewLinks.characterIndex(inSingleLine: chip.text, atX: point.x - textRect.minX)
             else { return nil }
             return chip.text.attribute(PreviewLinkAttribute.url, at: index, effectiveRange: nil) as? String
         }

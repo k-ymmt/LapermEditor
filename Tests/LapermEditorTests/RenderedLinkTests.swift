@@ -41,11 +41,20 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(PreviewLinks.urlRanges(in: "http://x") == [NSRange(location: 0, length: 8)])
 }
 
+/// 対応の無い閉じ括弧が大量に続いても線形で終わる(1 文字削るたびに URL 全体を数え直さない)。
+@Test func urlRangesStayLinearOnLongRunsOfClosingBrackets() {
+    let text = "https://x.example/" + String(repeating: ")", count: 50_000)
+    let clock = ContinuousClock()
+    let start = clock.now
+    #expect(PreviewLinks.urlRanges(in: text) == [NSRange(location: 0, length: 18)])
+    #expect(clock.now - start < .seconds(1))
+}
+
 /// 右から左の文字が混ざる行でも、URL のどの文字も見た目の位置で当たる(論理順の隣の文字の境界で判定しない)。
 @MainActor @Test func characterIndexFollowsTheVisualOrderInBidirectionalText() {
     let font = NSFont.systemFont(ofSize: 14)
     let string = "אבג https://a.example דהו"
-    let text = NSAttributedString(string: string, attributes: [.font: font])
+    let text = NSAttributedString(string: string, attributes: [.font: font, PreviewLinkAttribute.url: "x"])
     let width = text.size().width + 20
     let url = (string as NSString).range(of: "https://a.example")
     var hits = Set<Int>()
@@ -63,7 +72,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
 @MainActor @Test func characterIndexReachesTheEndOfAVeryTallText() throws {
     let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
     let string = String(repeating: "abcdefgh ", count: 7_000)
-    let text = NSAttributedString(string: string, attributes: [.font: font])
+    let text = NSAttributedString(string: string, attributes: [.font: font, PreviewLinkAttribute.url: "x"])
     let size = text.boundingRect(with: CGSize(width: 100, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading]).size
     #expect(size.height > 100_000)
     let index = try #require(PreviewLinks.characterIndex(in: text, width: 100, at: CGPoint(x: 3, y: size.height - 8)))
@@ -72,7 +81,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
 
 @MainActor @Test func characterIndexFindsTheCharacterUnderThePoint() {
     let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
-    let text = NSAttributedString(string: "abc def", attributes: [.font: font])
+    let text = NSAttributedString(string: "abc def", attributes: [.font: font, PreviewLinkAttribute.url: "x"])
     let advance = text.attributedSubstring(from: NSRange(location: 0, length: 1)).size().width
     let lineHeight = font.ascender - font.descender
     #expect(PreviewLinks.characterIndex(in: text, width: 1000, at: CGPoint(x: advance * 4.5, y: lineHeight / 2)) == 4)
@@ -82,6 +91,9 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(PreviewLinks.characterIndex(in: text, width: 1000, at: CGPoint(x: advance, y: lineHeight * 3)) == nil)
     // 折り返した 2 行目
     #expect(PreviewLinks.characterIndex(in: text, width: advance * 4.2, at: CGPoint(x: advance * 0.5, y: lineHeight * 1.5)) == 4)
+    // リンクの印が無い文字列は組版せずに nil
+    let plain = NSAttributedString(string: "abc def", attributes: [.font: font])
+    #expect(PreviewLinks.characterIndex(in: plain, width: 1000, at: CGPoint(x: advance * 0.5, y: lineHeight / 2)) == nil)
 }
 
 @MainActor @Test func copyableTextResolvesURLsAndKeepsWikiSyntax() throws {
@@ -176,6 +188,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     let menu = textView.linkMenu(for: hit, appendingItemsOf: base)
     #expect(menu.items.map(\.title) == [LinkMenuTitle.open, LinkMenuTitle.copy, LinkMenuTitle.edit, "", "Cut"])
     #expect(menu.items[3].isSeparatorItem)
+    #expect(menu.items[1].representedObject as? String == "https://s.example")
     func run(_ index: Int) {
         let item = menu.items[index]
         _ = (item.target as AnyObject?)?.perform(item.action, with: item)
@@ -186,6 +199,41 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     run(2)
     #expect(textView.selectedRange() == hit.editCaret)
     #expect(NSLocationInRange(hit.editCaret.location, NSRange(location: 3, length: 25)))
+}
+
+/// メニューを出している間に本文が変わっても、コピーはメニューを作った時点のリンク、「編集」は文書の中に収まる。
+@MainActor @Test func linkMenuKeepsItsTargetWhileTheTextChanges() throws {
+    let (window, textView) = makeFocusedTextView("See [[Note|Alias]] here\n\nplain\n")
+    defer { withExtendedLifetime(window) {} }
+    textView.setSelectedRange(NSRange(location: 26, length: 0))
+    textView.layoutSubtreeIfNeeded()
+    let hit = try #require(textView.linkHit(atPoint: try center(of: NSRange(location: 11, length: 5), in: textView)))
+    let menu = textView.linkMenu(for: hit, appendingItemsOf: nil)
+    textView.insertText("XXXXXXXX", replacementRange: NSRange(location: 0, length: 0))
+    #expect(menu.items[1].representedObject as? String == "[[Note|Alias]]")
+    textView.string = "a"
+    let edit = menu.items[2]
+    _ = (edit.target as AnyObject?)?.perform(edit.action, with: edit)
+    #expect(NSMaxRange(textView.selectedRange()) <= 1)
+}
+
+/// 開けないリンク(ホストが扱わない Wiki Link)を表の格子でクリックすると、表のクリックと同じセルの末尾で編集が始まる
+/// (オーバーレイの下の隠れた文字の位置ではない)。
+@MainActor @Test func aTableLinkThatCannotOpenStartsEditingAtTheCellEnd() throws {
+    let markdown = "intro\n\n| a | b |\n|---|---|\n| x | [[Note]] |\n\nafter\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.onOpenWikiLink = { _ in false }
+    textView.setSelectedRange(NSRange(location: (markdown as NSString).length - 2, length: 0))
+    textView.layoutSubtreeIfNeeded()
+    textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
+    let entry = try #require(textView.debugTableEntries.first)
+    let cell = entry.layout.rows[1].cells[1]
+    let point = CGPoint(x: entry.frame.minX + cell.textFrame.minX + 4, y: entry.frame.minY + cell.textFrame.midY)
+    let hit = try #require(textView.linkHit(atPoint: point))
+    textView.activateRenderedLink(hit)
+    #expect(textView.selectedRange() == hit.editCaret)
+    #expect(hit.editCaret.location == (markdown as NSString).range(of: "[[Note]]").location + 8, "the end of the cell's content")
 }
 
 // MARK: - Front Matter の表
@@ -230,6 +278,26 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(textView.linkHit(atPoint: tablePoint(rows[0].keyFrame.minX + 5, rows[0].keyFrame.midY)) == nil)
     #expect(textView.linkHit(atPoint: tablePoint(rows[1].chips[0].frame.midX, rows[1].chips[0].frame.midY)) == nil)
     #expect(textView.frontMatterController.isCollapsed, "opening a link does not expand the table")
+}
+
+/// はみ出して末尾が省略されるチップは 1 行で描かれる: 見えている URL の文字は描いた位置で当たる(折り返した組版で判定しない)。
+@MainActor @Test func truncatedChipsHitTestTheirSingleVisibleLine() throws {
+    let long = "docs https://example.com/" + String(repeating: "verylongpath", count: 20)
+    let markdown = "---\ntags: [\(long)]\n---\n\nbody\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.setSelectedRange(NSRange(location: (markdown as NSString).length - 2, length: 0))
+    textView.layoutSubtreeIfNeeded()
+    textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
+    let entry = try #require(textView.debugFrontMatterEntry)
+    let chip = try #require(entry.layout.rows.first?.chips.first)
+    let textRect = chip.frame.insetBy(dx: FrontMatterTableLayout.chipHorizontalPadding, dy: FrontMatterTableLayout.chipVerticalPadding)
+    let prefix = chip.text.attributedSubstring(from: NSRange(location: 0, length: 5)).size().width
+    #expect(chip.text.size().width > textRect.width, "the chip is truncated")
+    let onURL = CGPoint(x: entry.frame.minX + textRect.minX + prefix + 40, y: entry.frame.minY + textRect.midY)
+    #expect(textView.linkHit(atPoint: onURL)?.target == .url(destination: "https://example.com/" + String(repeating: "verylongpath", count: 20)))
+    // "docs" の上はリンクではない
+    #expect(textView.linkHit(atPoint: CGPoint(x: entry.frame.minX + textRect.minX + 3, y: entry.frame.minY + textRect.midY)) == nil)
 }
 
 // MARK: - テーブルの格子

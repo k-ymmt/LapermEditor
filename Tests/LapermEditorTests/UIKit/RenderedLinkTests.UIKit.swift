@@ -51,6 +51,10 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     textView.isLivePreviewEnabled = true
     textView.layoutIfNeeded()
     textView.onOpenWikiLink = { _ in false }
+    // キーボードの無い状態から(`hostInWindow` は first responder にするので外す)
+    _ = textView.resignFirstResponder()
+    textView.layoutIfNeeded()
+    #expect(!textView.isFirstResponder)
     let onNote = try center(of: NSRange(location: 6, length: 4), in: textView)
     #expect(textView.shouldInterceptTap(atPoint: onNote, modifiers: []))
     #expect(textView.tapRenderedLink(atPoint: onNote))

@@ -938,7 +938,9 @@ public final class MarkdownTextView: UITextView {
     @discardableResult
     func tapRenderedLink(atPoint point: CGPoint) -> Bool {
         guard linkOptions.opensRenderedLinksOnClick, let hit = linkHit(atPoint: point), hit.isRendered else { return false }
-        if !open(hit.target) { beginEditing(at: hit.editCaret) }
+        if !open(hit.target, onSystemFailure: { [weak self] in self?.beginEditing(at: hit.editCaret) }) {
+            beginEditing(at: hit.editCaret)
+        }
         return true
     }
 
@@ -950,13 +952,20 @@ public final class MarkdownTextView: UITextView {
     }
 
     /// リンクを開く: Wiki Link はホスト(`onOpenWikiLink`)、URL は `onOpenLink`、無ければシステムで開く。
+    /// `onSystemFailure` はシステムに渡した URL が開けなかったとき(対応するアプリが無いなど、結果は後から届く)に呼ぶ。
     @discardableResult
-    func open(_ target: LinkHit.Target) -> Bool {
+    func open(_ target: LinkHit.Target, onSystemFailure: (@MainActor () -> Void)? = nil) -> Bool {
         switch target {
         case .wiki(let reference):
             return onOpenWikiLink?(reference) == true
         case .url(let destination):
-            return open(LinkReference(text: destination, destination: destination, range: NSRange(location: 0, length: 0)))
+            guard let url = LinkURLResolver.resolve(destination: destination, baseURL: linkOptions.baseURL) else { return false }
+            if onOpenLink?(url) == true { return true }
+            UIApplication.shared.open(url, options: [:]) { success in
+                guard !success, let onSystemFailure else { return }
+                Task { @MainActor in onSystemFailure() }
+            }
+            return true
         }
     }
 
