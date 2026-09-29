@@ -72,6 +72,21 @@ import Testing
     #expect(concealer.containsMarker(in: NSRange(location: 1, length: 2)))
 }
 
+@MainActor @Test func concealerTracksBulletsSeparatelyFromHiddenMarkers() {
+    let concealer = LivePreviewConcealer()
+    concealer.isEnabled = true
+    // "- a\n**b**\n": 箇条書きの記号(位置 0)と隠すマーカー(4, 7)
+    concealer.update(markers: [NSRange(location: 4, length: 2), NSRange(location: 7, length: 2)], bullets: [NSRange(location: 0, length: 1)])
+    #expect(concealer.markers == [NSRange(location: 0, length: 1), NSRange(location: 4, length: 2), NSRange(location: 7, length: 2)])
+    #expect(concealer.isBullet(NSRange(location: 0, length: 1)))
+    #expect(!concealer.isBullet(NSRange(location: 4, length: 2)))
+    _ = concealer.takePendingDirtyRanges()
+    // 同じレンジが箇条書きでなくなった(隠すマーカーのまま)だけでも、その段落を作り直す
+    concealer.update(markers: [NSRange(location: 0, length: 1), NSRange(location: 4, length: 2), NSRange(location: 7, length: 2)], bullets: [])
+    #expect(concealer.takePendingDirtyRanges() == [NSRange(location: 0, length: 1)])
+    #expect(!concealer.isBullet(NSRange(location: 0, length: 1)))
+}
+
 @MainActor @Test func togglingLivePreviewQueuesAFullRegeneration() {
     let concealer = LivePreviewConcealer()
     concealer.update(markers: [NSRange(location: 0, length: 1)])
@@ -409,6 +424,46 @@ private func makeFocusedTextView(_ markdown: String) -> (NSWindow, MarkdownTextV
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     textView.isLivePreviewEnabled = false
     #expect(segmentFrame(of: NSRange(location: 14, length: 2), in: layoutManager).width > 5)
+    #expect(textView.string == markdown)
+}
+
+/// 表示用段落の文字列(ストレージではなく、レイアウトに使われている段落)。
+@MainActor
+private func displayedParagraph(at location: Int, in textView: MarkdownTextView) -> String? {
+    let layoutManager = textView.textLayoutManager!
+    let contentManager = layoutManager.textContentManager!
+    guard let textLocation = contentManager.location(contentManager.documentRange.location, offsetBy: location) else { return nil }
+    layoutManager.ensureLayout(for: NSTextRange(location: textLocation))
+    let paragraph = layoutManager.textLayoutFragment(for: textLocation)?.textElement as? NSTextParagraph
+    return paragraph?.attributedString.string
+}
+
+/// Live Preview の箇条書き(Laperm issue #5): フォーカスの無い行の `-` `*` `+` は表示だけ「•」になる
+/// (同じ長さの文字に差し替えるので位置はずれない)。番号付きリストとキャレットのある行はそのまま、Source では何もしない、
+/// ストレージは変えない。
+@MainActor @Test func textViewLivePreviewShowsBulletsForUnorderedListMarkers() {
+    let markdown = "intro\n\n- one\n* two\n+ three\n1. four\n  - nested\n- [ ] task\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.setSelectedRange(NSRange(location: 0, length: 0))
+    let text = markdown as NSString
+    func line(_ prefix: String) -> Int { text.range(of: prefix).location }
+    #expect(displayedParagraph(at: line("- one"), in: textView) == "• one\n")
+    #expect(displayedParagraph(at: line("* two"), in: textView) == "• two\n")
+    #expect(displayedParagraph(at: line("+ three"), in: textView) == "• three\n")
+    #expect(displayedParagraph(at: line("1. four"), in: textView) == "1. four\n")
+    #expect(displayedParagraph(at: line("  - nested"), in: textView) == "  • nested\n")
+    #expect(displayedParagraph(at: line("- [ ] task"), in: textView)?.hasPrefix("• ") == true)
+
+    // キャレットのある行は元の記号のまま
+    textView.setSelectedRange(NSRange(location: line("- one") + 3, length: 0))
+    #expect(displayedParagraph(at: line("- one"), in: textView) == "- one\n")
+    #expect(displayedParagraph(at: line("* two"), in: textView) == "• two\n")
+
+    // Source では差し替えない。文字列は終始そのまま
+    textView.isLivePreviewEnabled = false
+    #expect(displayedParagraph(at: line("* two"), in: textView) == "* two\n")
     #expect(textView.string == markdown)
 }
 

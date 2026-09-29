@@ -532,7 +532,10 @@ final class MarkdownEditorEngine: NSObject {
     /// パース確定後に隠すマーカーを最新プランへ同期し、変わった段落を再生成させる。
     private func updateLivePreview() {
         refreshLivePreviewFocus()
-        livePreview.update(markers: highlighter.currentPlan.concealableMarkers)
+        let plan = highlighter.currentPlan
+        // 1 文字のリストマーカーは箇条書きの記号(`-` `*` `+`)。番号付き(`1.` `1)`)は 2 文字以上
+        let bullets = plan.spans.lazy.filter { $0.kind == .listMarker && $0.range.length == 1 }.map(\.range)
+        livePreview.update(markers: plan.concealableMarkers, bullets: Array(bullets))
         applyLivePreviewChanges()
     }
 

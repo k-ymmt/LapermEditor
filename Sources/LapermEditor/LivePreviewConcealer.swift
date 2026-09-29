@@ -15,6 +15,9 @@ import LapermCore
 /// フォーカスのある段落は無くなり、全行のマーカーが隠れる(閲覧表示)。
 /// 状態の変化で再生成が要る段落は `pendingDirtyRanges` に溜め、`MarkdownEditorEngine` が
 /// 段落を作り直させる(`regenerateParagraphs`)。
+///
+/// 箇条書きの記号(`-` `*` `+`、1 文字のリストマーカー)は隠さずに「•」へ差し替える(Laperm issue #5)。同じ UTF-16 長の
+/// 文字に置き換えるだけなので、表示用段落とストレージの位置はずれない(キャレット・選択・コピーはストレージのまま)。
 @MainActor
 final class LivePreviewConcealer {
     /// 隠すマーカーに付ける表示用フォント。TextKit 2 は `.expansion` を無視するので、
@@ -26,8 +29,12 @@ final class LivePreviewConcealer {
 
     var isEnabled = false
 
-    /// 隠せるマーカー(開始位置で昇順、互いに交差しない)
+    /// 隠せるマーカーと箇条書きの記号(開始位置で昇順、互いに交差しない)。フォーカスの変化で作り直す段落の判定は両方で行う。
     private(set) var markers: [NSRange] = []
+    /// `markers` のうち、隠さずに「•」を表示する箇条書きの記号(1 文字)の開始位置。
+    private var bulletLocations: Set<Int> = []
+    /// 箇条書きの記号の代わりに表示する文字。
+    static let bullet = "\u{2022}"
     /// 選択範囲が触れる段落のレンジ(文書座標、改行を含む)。キャレットだけなら 1 つ、選択範囲は
     /// 触れる段落をまとめて 1 レンジ、複数選択(macOS)は複数。エディタのフォーカスとは独立に追従し、
     /// `isEditorFocused` と合わせて「フォーカスのある段落」になる(`isFocused(paragraph:)`)。
@@ -40,17 +47,28 @@ final class LivePreviewConcealer {
 
     // MARK: - 状態の更新
 
-    /// パース確定後の同期。マーカーの増減があった段落を無効化対象に載せる。
-    func update(markers newMarkers: [NSRange]) {
-        let sorted = newMarkers.sorted { $0.location < $1.location }
-        guard sorted != markers else { return }
+    /// パース確定後の同期。マーカー(と箇条書きの記号)の増減があった段落を無効化対象に載せる。
+    /// `bullets` は 1 文字の箇条書きの記号(`-` `*` `+`)のレンジ。
+    func update(markers newMarkers: [NSRange], bullets: [NSRange] = []) {
+        let sorted = (newMarkers + bullets).sorted { $0.location < $1.location }
+        let newBullets = Set(bullets.map(\.location))
+        guard sorted != markers || newBullets != bulletLocations else { return }
         if isEnabled {
             let oldSet = Set(markers)
             let newSet = Set(sorted)
             pendingDirtyRanges += markers.filter { !newSet.contains($0) }
             pendingDirtyRanges += sorted.filter { !oldSet.contains($0) }
+            // 同じレンジのまま箇条書きになった / でなくなった記号の段落も作り直す
+            let flipped = newBullets.symmetricDifference(bulletLocations)
+            pendingDirtyRanges += sorted.filter { flipped.contains($0.location) && oldSet.contains($0) }
         }
         markers = sorted
+        bulletLocations = newBullets
+    }
+
+    /// `marker` が箇条書きの記号(隠さずに「•」を表示する)か。
+    func isBullet(_ marker: NSRange) -> Bool {
+        marker.length == 1 && bulletLocations.contains(marker.location)
     }
 
     /// 選択範囲の変化。フォーカスのある段落が変わったら、古い段落と新しい段落のうち
@@ -135,13 +153,20 @@ final class LivePreviewConcealer {
     func noteEdit(editedRange: NSRange, changeInLength delta: Int) {
         let preEdit = NSRange(location: editedRange.location, length: max(0, editedRange.length - delta))
         if !markers.isEmpty {
+            var bullets: Set<Int> = []
             markers = markers.compactMap { marker in
-                if NSMaxRange(marker) <= preEdit.location { return marker }
-                if marker.location >= NSMaxRange(preEdit) {
-                    return NSRange(location: marker.location + delta, length: marker.length)
+                let moved: NSRange
+                if NSMaxRange(marker) <= preEdit.location {
+                    moved = marker
+                } else if marker.location >= NSMaxRange(preEdit) {
+                    moved = NSRange(location: marker.location + delta, length: marker.length)
+                } else {
+                    return nil
                 }
-                return nil
+                if bulletLocations.contains(marker.location) { bullets.insert(moved.location) }
+                return moved
             }
+            bulletLocations = bullets
         }
         focusedParagraphs = focusedParagraphs.map { Self.shiftMerging($0, editedRange: editedRange, preEdit: preEdit, delta: delta) }
         pendingDirtyRanges = pendingDirtyRanges.map { Self.shiftMerging($0, editedRange: editedRange, preEdit: preEdit, delta: delta) }
@@ -225,6 +250,11 @@ final class LivePreviewConcealer {
             let clipped = NSIntersectionRange(marker, range)
             guard clipped.length > 0 else { continue }
             let local = NSRange(location: clipped.location - range.location, length: clipped.length)
+            if isBullet(marker), clipped == marker {
+                // 箇条書きの記号は隠さず「•」に(差し替えた文字は元の記号の属性を引き継ぐ)
+                text.replaceCharacters(in: local, with: Self.bullet)
+                continue
+            }
             text.addAttribute(.font, value: Self.hiddenFont, range: local)
             hiddenLength += clipped.length
             if string.rangeOfCharacter(from: .init(charactersIn: "\t"), options: [], range: local).location != NSNotFound {
