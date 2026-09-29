@@ -9,6 +9,7 @@ enum BlockDecoration: Equatable {
     case codeBlock
     case blockquote
     case thematicBreak
+    /// テーブル(Source / 展開中はコードブロックと同じ箱で `tableBackgroundColor`。折りたたみ中の格子は `TablePreviewController`)
     case table
     /// Front Matter(Source / 展開中はコードブロックと同じ箱。折りたたみ中の表は `FrontMatterController`)
     case frontMatter
@@ -249,7 +250,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
 
     /// 装飾ブロックの段落に、表示用の段落スタイルを付けた段落を返す
     /// (NSTextContentStorageDelegate.textContentStorage(_:textParagraphWith:) 用)。
-    /// - コードブロックの先頭 / 末尾段落: 上下余白(paragraphSpacingBefore / paragraphSpacing)。
+    /// - コードブロック・Front Matter・テーブルの先頭 / 末尾段落: 上下余白(paragraphSpacingBefore / paragraphSpacing)。
     /// - 引用の段落: 本文を `blockquoteIndent` ぶん下げる(headIndent / firstLineHeadIndent)。
     ///   縦バーはこの余白の中に描く(`BlockquoteFragment`)。折り返した行も同じだけ下がる。
     /// それ以外の段落は nil(既定の段落をそのまま使う)。textStorage の属性は変更しない。
@@ -261,7 +262,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         else { return nil }
         let apply: (NSMutableParagraphStyle) -> Void
         switch decoration.kind {
-        case .codeBlock, .frontMatter:
+        case .codeBlock, .frontMatter, .table:
             let edges = Self.edges(of: range, in: decoration, documentLength: storage.length)
             // 末尾段落の下余白は paragraphSpacing で確保する。ただし改行で終わる文書の最後の段落で、その後ろの
             // 追加行(キャレット行)までブロックに入るときは、余白が本文と追加行の間に入ってしまうので付けず、
@@ -282,7 +283,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
                 style.firstLineHeadIndent = indent
                 style.headIndent = indent
             }
-        case .thematicBreak, .table:
+        case .thematicBreak:
             return nil
         }
         let text = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
@@ -320,10 +321,14 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         }
         let isBlockStart = paragraph.location <= decoration.range.location
         switch decoration.kind {
-        case .codeBlock, .frontMatter:
+        case .codeBlock, .frontMatter, .table:
+            // テーブルも文字の後ろだけでなくコンテナ全幅の 1 つの箱にする(コードブロックと同じ見た目、Laperm issue #3)
             let fragment = CodeBlockFragment(textElement: textElement, range: textElement.elementRange)
-            fragment.fillColor = decoration.kind == .frontMatter
-                ? theme.frontMatterBackgroundColor : theme.codeBlockBackgroundColor
+            fragment.fillColor = switch decoration.kind {
+            case .frontMatter: theme.frontMatterBackgroundColor
+            case .table: theme.tableBackgroundColor
+            default: theme.codeBlockBackgroundColor
+            }
             fragment.lineSpacing = theme.lineSpacing
             fragment.isBlockStart = isBlockStart
             let documentLength = contentManager.offset(
@@ -350,13 +355,6 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
         case .thematicBreak:
             let fragment = ThematicBreakFragment(textElement: textElement, range: textElement.elementRange)
             fragment.lineColor = theme.thematicBreakLineColor
-            fragment.reservedBottomHeight = reservation
-            return fragment
-        case .table:
-            let fragment = TableBackgroundFragment(textElement: textElement, range: textElement.elementRange)
-            fragment.fillColor = theme.tableBackgroundColor
-            fragment.lineSpacing = theme.lineSpacing
-            fragment.isBlockStart = isBlockStart
             fragment.reservedBottomHeight = reservation
             return fragment
         }

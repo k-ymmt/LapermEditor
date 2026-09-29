@@ -63,24 +63,41 @@ private func layoutFragments(in textView: MarkdownTextView) -> [NSTextLayoutFrag
     #expect(!layoutFragments(in: textView).contains { $0 is CodeBlockFragment })
 }
 
+/// テーブルの段落(Source / 展開中)はコードブロックと同じ箱のフラグメントで、色は `tableBackgroundColor`(Laperm issue #3)。
+@MainActor
+private func tableFragments(in textView: MarkdownTextView) -> [CodeBlockFragment] {
+    layoutFragments(in: textView).compactMap { $0 as? CodeBlockFragment }
+        .filter { $0.fillColor == textView.theme.tableBackgroundColor }
+}
+
 @MainActor @Test func tableGetsTableBackgroundFragment() {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.tableBackgroundColor = .green
+    textView.theme = theme
     textView.string = "| a | b |\n|---|---|\n| c | d |"
     textView.highlightAll()
-    #expect(layoutFragments(in: textView).contains { $0 is TableBackgroundFragment })
+    let rows = tableFragments(in: textView)
+    #expect(rows.count == 3)
+    // 1 つの箱: 上の角は先頭行だけ、下の角は末尾行だけ丸める
+    #expect(rows.map(\.roundsTop) == [true, false, false])
+    #expect(rows.map(\.roundsBottom) == [false, false, true])
 }
 
 @MainActor @Test func breakingTableRemovesTableFragment() {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.tableBackgroundColor = .green
+    textView.theme = theme
     textView.string = "| a |\n|---|"
     textView.highlightAll()
-    #expect(layoutFragments(in: textView).contains { $0 is TableBackgroundFragment })
+    #expect(!tableFragments(in: textView).isEmpty)
     // 区切り行の先頭を壊す → テーブル消滅
     textView.textStorage!.replaceCharacters(in: NSRange(location: 6, length: 1), with: "x")
     textView.highlightNow()
-    #expect(!layoutFragments(in: textView).contains { $0 is TableBackgroundFragment })
+    #expect(!layoutFragments(in: textView).contains { $0 is CodeBlockFragment })
 }
 #endif
 
@@ -277,15 +294,21 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     textView.string = "x\n\n> one\n> two\n\n| a | b |\n| - | - |\n| 1 | 2 |\n\ny"
     textView.highlightAll()
     let quotes = layoutFragments(in: textView).compactMap { $0 as? BlockquoteFragment }
-    let rows = layoutFragments(in: textView).compactMap { $0 as? TableBackgroundFragment }
+    let rows = tableFragments(in: textView)
     #expect(quotes.count == 2)
     #expect(rows.count == 3)
     // 先頭段落だけ行間ぶん下げ、続く段落は上端から描いて隣と隙間なく連なる
     #expect(quotes.map(\.decorationRect.minY) == [6, 0])
-    #expect(rows.map(\.decorationRect.minY) == [6, 0, 0])
-    for fragment in quotes + rows {
+    #expect(rows.map(\.backgroundRect.minY) == [6, 0, 0])
+    for fragment in quotes {
         #expect(fragment.decorationRect.maxY == fragment.layoutFragmentFrame.height)
     }
+    // テーブルの箱はコードブロックと同じく上下に余白を取り(先頭行の上・末尾行の下)、行どうしは隙間なく連なる
+    for fragment in rows.dropLast() {
+        #expect(fragment.backgroundRect.maxY == fragment.layoutFragmentFrame.height)
+    }
+    let first = try #require(rows.first?.textLineFragments.first)
+    #expect(first.typographicBounds.minY == 6 + theme.codeBlockVerticalPadding)
 }
 
 // MARK: - 引用の縦バー
@@ -728,6 +751,38 @@ private func isClose(_ color: NSColor, to expected: NSColor, tolerance: CGFloat 
     // ブロックの外は背景色
     #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: box.minY - 2)), to: .white))
     #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: box.maxY + 2)), to: .white))
+}
+
+/// テーブル(Source / 展開中)の背景は文字の後ろだけでなく、コードブロックと同じくコンテナ全幅の 1 つの箱(Laperm issue #3)。
+@MainActor @Test func tableBackgroundIsDrawnAsOneFullWidthBox() throws {
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = .white
+    theme.bodyColor = .black
+    theme.tableBackgroundColor = .red
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 200)
+    textView.theme = theme
+    textView.string = "x\n\n| a | b |\n|---|---|\n| c | d |\n\ny"
+    textView.highlightAll()
+    textView.layoutSubtreeIfNeeded()
+    let rows = tableFragments(in: textView)
+    try #require(rows.count == 3)
+    let origin = textView.textContainerOrigin
+    let right = origin.x + textView.textContainer!.size.width
+    func frame(_ i: Int) -> CGRect { rows[i].layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y) }
+    let top = frame(0).minY + rows[0].backgroundRect.minY
+    let bottom = frame(2).minY + rows[2].backgroundRect.maxY
+    // 行の中央の高さで、テキストより右(右端の手前)も塗られている
+    for i in 0..<3 {
+        #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: frame(i).midY)), to: .red), "row \(i)")
+    }
+    // 行の継ぎ目と上下の余白の帯も塗られている(行ごとの角丸の隙間が出ない)
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: frame(1).minY)), to: .red))
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: top + 1)), to: .red))
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: bottom - 1)), to: .red))
+    // 箱の外は背景色
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: top - 2)), to: .white))
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: bottom + 2)), to: .white))
 }
 
 @MainActor @Test func drawHonorsTheGivenOrigin() throws {

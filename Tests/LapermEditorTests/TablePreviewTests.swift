@@ -506,7 +506,7 @@ private func layoutFragments(_ textView: MarkdownTextView) -> [NSTextLayoutFragm
     let textLinesBottom = header.textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
     #expect(textLinesBottom < 1, "極小フォントの行は高さほぼ 0")
     #expect(abs(header.layoutFragmentFrame.height - (textLinesBottom + reserved)) < 1)
-    #expect(!(header is TableBackgroundFragment), "the hidden header row is not decorated")
+    #expect(!(header is CodeBlockFragment), "the hidden header row is not decorated")
 
     // ビューポートレイアウトで表が置かれる: 左端は本文の左端、その下(余白の後)に本文が続く
     textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
@@ -536,7 +536,7 @@ private func layoutFragments(_ textView: MarkdownTextView) -> [NSTextLayoutFragm
     // 展開中はヘッダー行が Source と同じ高さと装飾で見える
     let expanded = try #require(layoutFragments(textView).first { fragmentOffset($0, in: textView) == 5 })
     #expect(expanded.textLineFragments.first!.typographicBounds.height > 5)
-    #expect(expanded is TableBackgroundFragment)
+    #expect((expanded as? CodeBlockFragment)?.fillColor == textView.theme.tableBackgroundColor)
     // 表の外のクリックは何もしない
     #expect(!textView.expandTable(atPoint: CGPoint(x: 10, y: 280)))
 

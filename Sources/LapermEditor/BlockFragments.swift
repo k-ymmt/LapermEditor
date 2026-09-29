@@ -296,19 +296,3 @@ final class ThematicBreakFragment: ReservingTextLayoutFragment {
         super.draw(at: point, in: context)
     }
 }
-
-/// テーブル: テキスト背面に角丸背景
-final class TableBackgroundFragment: ReservingTextLayoutFragment {
-    var fillColor: PlatformColor = .quaternarySystemFill
-
-    override func draw(at point: CGPoint, in context: CGContext) {
-        context.saveGState()
-        let rect = decorationRect.offsetBy(dx: point.x, dy: point.y).insetBy(dx: 2, dy: 0)
-        let path = CGPath(roundedRect: rect, cornerWidth: 4, cornerHeight: 4, transform: nil)
-        context.setFillColor(fillColor.cgColor)
-        context.addPath(path)
-        context.fillPath()
-        context.restoreGState()
-        super.draw(at: point, in: context)
-    }
-}
