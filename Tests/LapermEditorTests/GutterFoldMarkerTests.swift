@@ -120,4 +120,50 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
     let gutter = scrollView.verticalRulerView as! LineNumberGutterView
     #expect(gutter.lines.first?.yInTextView == 12)
 }
+// MARK: - 背景(Laperm issue #8)
+
+/// ガターをオフスクリーン描画し、ガター座標(pt、flipped でない)の点の色を返す。
+@MainActor
+private func renderedGutterColor(_ gutter: LineNumberGutterView, at point: CGPoint) throws -> NSColor {
+    let rep = try #require(gutter.bitmapImageRepForCachingDisplay(in: gutter.bounds))
+    gutter.cacheDisplay(in: gutter.bounds, to: rep)
+    let scaleX = CGFloat(rep.pixelsWide) / gutter.bounds.width
+    let scaleY = CGFloat(rep.pixelsHigh) / gutter.bounds.height
+    // ビットマップの y は上から数える
+    let y = gutter.isFlipped ? point.y : gutter.bounds.height - point.y
+    let color = try #require(rep.colorAt(x: Int(point.x * scaleX), y: Int(y * scaleY)))
+    return try #require(color.usingColorSpace(.sRGB))
+}
+
+/// 描画はビットマップの色空間を経由するので成分が数 % ずれる(青で green が 0.05)。検査に使う色は既定のガター
+/// (灰色)と大きく違うので、この許容誤差でも取り違えない。
+private func isGutterColor(_ color: NSColor, close expected: NSColor) -> Bool {
+    guard let expected = expected.usingColorSpace(.sRGB) else { return false }
+    return abs(color.redComponent - expected.redComponent) <= 0.08
+        && abs(color.greenComponent - expected.greenComponent) <= 0.08
+        && abs(color.blueComponent - expected.blueComponent) <= 0.08
+}
+
+/// 行番号ガターの背景はエディタ(Theme)の背景と同じ色で、右端に境界線も引かない(Xcode と同じ見た目)。
+/// NSRulerView の既定の描画はコントロール背景色 + 境界線なので、ウィンドウ上部のタイトルがガターの所で切れて見えていた。
+@MainActor @Test func gutterBackgroundMatchesTheEditorThemeWithoutABorder() throws {
+    let (gutter, textView) = makeGutterWithLines()
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = NSColor(srgbRed: 0.8, green: 0.1, blue: 0.1, alpha: 1)
+    textView.theme = theme
+    let midY = gutter.bounds.midY
+    // 番号の無い高さ(下の方)の左寄りと、境界線の位置(右端の 1pt)
+    let low = min(gutter.bounds.maxY, gutter.bounds.minY + 10)
+    for point in [CGPoint(x: 2, y: midY), CGPoint(x: gutter.bounds.width - 0.5, y: midY), CGPoint(x: 2, y: low)] {
+        let color = try renderedGutterColor(gutter, at: point)
+        #expect(isGutterColor(color, close: theme.backgroundColor), "gutter pixel at \(point) is \(color)")
+    }
+
+    // Theme を変えるとガターも追従する
+    theme.backgroundColor = NSColor(srgbRed: 0.1, green: 0.1, blue: 0.8, alpha: 1)
+    textView.theme = theme
+    let after = try renderedGutterColor(gutter, at: CGPoint(x: 2, y: midY))
+    #expect(isGutterColor(after, close: theme.backgroundColor), "gutter after a theme change is \(after)")
+}
+
 #endif

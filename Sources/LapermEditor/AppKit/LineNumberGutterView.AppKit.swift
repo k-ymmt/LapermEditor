@@ -11,6 +11,10 @@ final class LineNumberGutterView: NSRulerView {
     var numberFont: NSFont = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
     var numberColor: NSColor = .tertiaryLabelColor
     var chevronColor: NSColor = .secondaryLabelColor
+    /// 背景色。テキストビューが Theme の背景色を渡す(ガターとエディタを 1 枚の面に見せる。Xcode と同じ)。
+    var backgroundColor: NSColor = .textBackgroundColor {
+        didSet { if backgroundColor != oldValue { needsDisplay = true } }
+    }
     /// シェブロンのクリックで呼ばれる(引数は headingLocation)
     var onToggleFold: ((Int) -> Void)?
 
@@ -53,6 +57,13 @@ final class LineNumberGutterView: NSRulerView {
             return
         }
         super.mouseDown(with: event)
+    }
+
+    /// NSRulerView の既定の描画(コントロール背景色 + 本文側の境界線)は使わず、背景を塗って番号だけ描く。
+    override func draw(_ dirtyRect: NSRect) {
+        backgroundColor.setFill()
+        dirtyRect.fill()
+        drawHashMarksAndLabels(in: dirtyRect)
     }
 
     override func drawHashMarksAndLabels(in rect: NSRect) {
