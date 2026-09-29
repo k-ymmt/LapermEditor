@@ -154,4 +154,56 @@ private func isWhite(_ c: (r: UInt8, g: UInt8, b: UInt8)?) -> Bool {
     let lastFrame = try #require(after.last).layoutFragmentFrame.offsetBy(dx: origin.x, dy: origin.y)
     #expect(caretAfter.minY >= lastFrame.minY - 0.5 && caretAfter.maxY <= lastFrame.maxY + 0.5, "caret \(caretAfter) in \(lastFrame)")
 }
+/// テーブルの箱(Laperm issue #3)も iOS で全幅に塗られ、末尾に行を足す / 消すと旧末尾・新末尾の段落の下余白と角丸が
+/// 付け替わる(UITextView は変わらない段落のフラグメントを使い回すので、再生成されることを確かめる)。
+@MainActor @Test func tableBoxIsFullWidthAndItsPaddingMovesWithTheLastRowOnIOS() throws {
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = .white
+    theme.bodyColor = .black
+    theme.tableBackgroundColor = .red
+    let textView = MarkdownTextView()
+    textView.frame = CGRect(x: 0, y: 0, width: 400, height: 240)
+    textView.showsLineNumbers = false
+    textView.theme = theme
+    textView.text = "| a |\n|---|\n| 1 |\n\nafter\n"
+    textView.highlightAll()
+    textView.layoutIfNeeded()
+    let layoutManager = try #require(textView.textLayoutManager)
+    let contentManager = try #require(layoutManager.textContentManager)
+    func fragment(at location: Int) -> NSTextLayoutFragment? {
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        layoutManager.textViewportLayoutController.layoutViewport()
+        return contentManager.location(contentManager.documentRange.location, offsetBy: location).flatMap { layoutManager.textLayoutFragment(for: $0) }
+    }
+    func spacingAfter(at location: Int) -> CGFloat {
+        let paragraph = fragment(at: location)?.textElement as? NSTextParagraph
+        let style = paragraph?.attributedString.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        return style?.paragraphSpacing ?? 0
+    }
+    let padding = theme.codeBlockVerticalPadding
+    #expect(spacingAfter(at: 12) == padding)
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == true)
+
+    // 行の中央の高さで、文字より右(右端の手前)も塗られている
+    let row = try #require(fragment(at: 12))
+    let image = renderedPixels(of: textView)
+    let origin = CGPoint(x: textView.textContainerInset.left, y: textView.textContainerInset.top)
+    let right = origin.x + textView.textContainer.size.width
+    let rowMidY = origin.y + row.layoutFragmentFrame.minY + (row.textLineFragments.first?.typographicBounds.midY ?? 0)
+    #expect(isRed(color(in: image, at: CGPoint(x: right - 20, y: rowMidY))), "right of the text at y \(rowMidY)")
+
+    // 末尾に行を足す("| 1 |" の段落は編集しない)
+    textView.textStorage.replaceCharacters(in: NSRange(location: 18, length: 0), with: "| 2 |\n")
+    textView.highlightNow()
+    #expect(spacingAfter(at: 12) == 0, "the old last row loses its bottom padding")
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == false)
+    #expect(spacingAfter(at: 18) == padding)
+    #expect((fragment(at: 18) as? CodeBlockFragment)?.roundsBottom == true)
+
+    // 消すと元に戻る
+    textView.textStorage.replaceCharacters(in: NSRange(location: 18, length: 6), with: "")
+    textView.highlightNow()
+    #expect(spacingAfter(at: 12) == padding)
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == true)
+}
 #endif

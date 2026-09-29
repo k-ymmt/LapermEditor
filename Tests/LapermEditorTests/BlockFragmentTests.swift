@@ -438,6 +438,47 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     #expect(textStart(at: 7) == padding)
 }
 
+/// テーブルの末尾に行を足す / 末尾の行を消すと、旧末尾・新末尾の段落の下余白と角丸が付け替わる(編集されていない段落も
+/// 表示用段落が作り直される)。Source の表の箱(Laperm issue #3)。
+@MainActor @Test func tablePaddingMovesWithTheLastRowWhenRowsAreAddedOrRemoved() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    var theme = textView.theme
+    theme.tableBackgroundColor = .green
+    textView.theme = theme
+    textView.string = "| a |\n|---|\n| 1 |\n\nafter\n"
+    textView.highlightAll()
+    let padding = theme.codeBlockVerticalPadding
+    func fragment(at location: Int) -> NSTextLayoutFragment {
+        let layoutManager = textView.textLayoutManager!
+        let contentManager = layoutManager.textContentManager!
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        return layoutManager.textLayoutFragment(for: contentManager.location(contentManager.documentRange.location, offsetBy: location)!)!
+    }
+    func spacingAfter(at location: Int) -> CGFloat {
+        let paragraph = fragment(at: location).textElement as? NSTextParagraph
+        let style = paragraph?.attributedString.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle
+        return style?.paragraphSpacing ?? 0
+    }
+    // "| 1 |" (12) が末尾: 下余白と下の角丸
+    #expect(spacingAfter(at: 12) == padding)
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == true)
+
+    // 末尾に行を足す("| 1 |" の段落は編集しない: 追加は次の行の先頭)
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 18, length: 0), with: "| 2 |\n")
+    textView.highlightNow()
+    #expect(spacingAfter(at: 12) == 0, "the old last row loses its bottom padding")
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == false)
+    #expect(spacingAfter(at: 18) == padding)
+    #expect((fragment(at: 18) as? CodeBlockFragment)?.roundsBottom == true)
+
+    // 足した行を消すと元に戻る
+    textView.textStorage!.replaceCharacters(in: NSRange(location: 18, length: 6), with: "")
+    textView.highlightNow()
+    #expect(spacingAfter(at: 12) == padding, "the row that is last again gets its padding back")
+    #expect((fragment(at: 12) as? CodeBlockFragment)?.roundsBottom == true)
+}
+
 @MainActor @Test func negativeBlockquoteIndentAssignedAfterInitDrawsTheBarAtTheLineStart() {
     let textView = MarkdownTextView()
     textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
@@ -776,8 +817,19 @@ private func isClose(_ color: NSColor, to expected: NSColor, tolerance: CGFloat 
     for i in 0..<3 {
         #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: frame(i).midY)), to: .red), "row \(i)")
     }
-    // 行の継ぎ目と上下の余白の帯も塗られている(行ごとの角丸の隙間が出ない)
-    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: frame(1).minY)), to: .red))
+    // 行の継ぎ目と上下の余白の帯も塗られている(行ごとの角丸の隙間が出ない)。継ぎ目は左右の端の 1pt 内側でも見る
+    // (行ごとに角丸の矩形を描くと、端では角の分だけ塗られない)
+    let left = origin.x
+    for seam in [frame(1).minY, frame(2).minY] {
+        for x in [left + 1, right - 20, right - 1] {
+            #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: x, y: seam)), to: .red), "seam y \(seam) x \(x)")
+        }
+    }
+    // 上下の余白は Theme の値: 先頭行の文字の上端・末尾行の文字の下端から箱の端まで(実装の矩形ではなく文字から測る)
+    let firstLineTop = frame(0).minY + rows[0].textLineFragments.first!.typographicBounds.minY
+    let lastLineBottom = frame(2).minY + rows[2].textLineFragments.last!.typographicBounds.maxY
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: firstLineTop - theme.codeBlockVerticalPadding + 1)), to: .red))
+    #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: lastLineBottom + theme.codeBlockVerticalPadding - 1)), to: .red))
     #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: top + 1)), to: .red))
     #expect(isClose(try renderedColor(of: textView, at: CGPoint(x: right - 20, y: bottom - 1)), to: .red))
     // 箱の外は背景色
