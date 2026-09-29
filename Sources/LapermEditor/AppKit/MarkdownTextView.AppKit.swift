@@ -24,7 +24,7 @@ public final class MarkdownTextView: NSTextView {
         set {
             engine.theme = newValue
             backgroundColor = newValue.backgroundColor
-            gutterView?.backgroundColor = newValue.backgroundColor
+            gutterView?.apply(theme: newValue)
             font = newValue.bodyFont
             engine.applyThemeChange()
             updateTextInsets()
@@ -392,7 +392,7 @@ public final class MarkdownTextView: NSTextView {
         gutter.onToggleFold = { [weak textView] headingLocation in
             textView?.toggleFold(at: headingLocation)
         }
-        gutter.backgroundColor = textView.backgroundColor
+        gutter.apply(theme: textView.theme)
         scrollView.verticalRulerView = gutter
         scrollView.hasVerticalRuler = true
         scrollView.rulersVisible = textView.showsLineNumbers

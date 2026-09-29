@@ -15,6 +15,19 @@ final class LineNumberGutterView: NSRulerView {
     var backgroundColor: NSColor = .textBackgroundColor {
         didSet { if backgroundColor != oldValue { needsDisplay = true } }
     }
+
+    /// 行番号 / シェブロンの色の、Theme の本文色に対する不透明度(システムの tertiary / secondary label 相当)。
+    static let numberAlpha: CGFloat = 0.3
+    static let chevronAlpha: CGFloat = 0.55
+
+    /// Theme を反映する: 背景は Theme の背景、番号とシェブロンは本文色を薄めたもの。背景だけ Theme にすると、
+    /// Theme とシステムの外観が食い違うとき(ライト外観で黒背景の Theme など)システムの label 色の番号が背景に埋もれる。
+    func apply(theme: MarkdownTheme) {
+        backgroundColor = theme.backgroundColor
+        numberColor = theme.bodyColor.withAlphaComponent(Self.numberAlpha)
+        chevronColor = theme.bodyColor.withAlphaComponent(Self.chevronAlpha)
+        needsDisplay = true
+    }
     /// シェブロンのクリックで呼ばれる(引数は headingLocation)
     var onToggleFold: ((Int) -> Void)?
 

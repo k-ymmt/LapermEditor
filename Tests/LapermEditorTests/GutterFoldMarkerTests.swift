@@ -122,26 +122,41 @@ private func makeGutterWithLines() -> (LineNumberGutterView, MarkdownTextView) {
 }
 // MARK: - 背景(Laperm issue #8)
 
-/// ガターをオフスクリーン描画し、ガター座標(pt、flipped でない)の点の色を返す。
+/// ガターをオフスクリーン描画したビットマップと、ガター座標(pt、flipped でない)→ ピクセルの変換。
 @MainActor
-private func renderedGutterColor(_ gutter: LineNumberGutterView, at point: CGPoint) throws -> NSColor {
+private func renderGutter(_ gutter: LineNumberGutterView) throws -> (NSBitmapImageRep, (CGPoint) -> (Int, Int)) {
     let rep = try #require(gutter.bitmapImageRepForCachingDisplay(in: gutter.bounds))
     gutter.cacheDisplay(in: gutter.bounds, to: rep)
     let scaleX = CGFloat(rep.pixelsWide) / gutter.bounds.width
     let scaleY = CGFloat(rep.pixelsHigh) / gutter.bounds.height
-    // ビットマップの y は上から数える
-    let y = gutter.isFlipped ? point.y : gutter.bounds.height - point.y
-    let color = try #require(rep.colorAt(x: Int(point.x * scaleX), y: Int(y * scaleY)))
-    return try #require(color.usingColorSpace(.sRGB))
+    let toPixel: (CGPoint) -> (Int, Int) = { point in
+        // ビットマップの y は上から数える
+        let y = gutter.isFlipped ? point.y : gutter.bounds.height - point.y
+        return (min(rep.pixelsWide - 1, Int(point.x * scaleX)), min(rep.pixelsHigh - 1, Int(y * scaleY)))
+    }
+    return (rep, toPixel)
 }
 
-/// 描画はビットマップの色空間を経由するので成分が数 % ずれる(青で green が 0.05)。検査に使う色は既定のガター
-/// (灰色)と大きく違うので、この許容誤差でも取り違えない。
+@MainActor
+private func renderedGutterColor(_ gutter: LineNumberGutterView, at point: CGPoint) throws -> NSColor {
+    let (rep, toPixel) = try renderGutter(gutter)
+    let (x, y) = toPixel(point)
+    return try #require(rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB))
+}
+
+/// 描画はビットマップの色空間を経由するので、Theme の色との比較は成分が数 % ずれる(青で green が 0.05)。
+/// 検査に使う色は既定のガター(灰色)と大きく違うので、この許容誤差でも取り違えない。同じビットマップ内の比較は
+/// `isSameColor` で厳しく見る。
 private func isGutterColor(_ color: NSColor, close expected: NSColor) -> Bool {
     guard let expected = expected.usingColorSpace(.sRGB) else { return false }
     return abs(color.redComponent - expected.redComponent) <= 0.08
         && abs(color.greenComponent - expected.greenComponent) <= 0.08
         && abs(color.blueComponent - expected.blueComponent) <= 0.08
+}
+
+private func isSameColor(_ a: NSColor, _ b: NSColor) -> Bool {
+    abs(a.redComponent - b.redComponent) <= 0.01 && abs(a.greenComponent - b.greenComponent) <= 0.01
+        && abs(a.blueComponent - b.blueComponent) <= 0.01
 }
 
 /// 行番号ガターの背景はエディタ(Theme)の背景と同じ色で、右端に境界線も引かない(Xcode と同じ見た目)。
@@ -158,6 +173,16 @@ private func isGutterColor(_ color: NSColor, close expected: NSColor) -> Bool {
         let color = try renderedGutterColor(gutter, at: point)
         #expect(isGutterColor(color, close: theme.backgroundColor), "gutter pixel at \(point) is \(color)")
     }
+    // 境界線が無い: 右端の数ピクセル列は、同じビットマップの内側の背景と同じ色(色空間の差が出ないので厳しく比べる)
+    let (rep, toPixel) = try renderGutter(gutter)
+    for y in [midY, low] {
+        let (_, py) = toPixel(CGPoint(x: 2, y: y))
+        let inside = try #require(rep.colorAt(x: toPixel(CGPoint(x: 2, y: y)).0, y: py))
+        for px in (rep.pixelsWide - 3)..<rep.pixelsWide {
+            let edge = try #require(rep.colorAt(x: px, y: py))
+            #expect(isSameColor(edge, inside), "column \(px) at y \(y) is \(edge), inside is \(inside)")
+        }
+    }
 
     // Theme を変えるとガターも追従する
     theme.backgroundColor = NSColor(srgbRed: 0.1, green: 0.1, blue: 0.8, alpha: 1)
@@ -166,4 +191,28 @@ private func isGutterColor(_ color: NSColor, close expected: NSColor) -> Bool {
     #expect(isGutterColor(after, close: theme.backgroundColor), "gutter after a theme change is \(after)")
 }
 
+/// 作った時点の Theme(ファクトリに渡したもの)がガターに届いている(Theme を付け直さなくても)。
+@MainActor @Test func gutterStartsWithTheFactoryTheme() throws {
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = NSColor(srgbRed: 0.1, green: 0.6, blue: 0.1, alpha: 1)
+    let scrollView = MarkdownTextView.scrollableMarkdownEditor(theme: theme)
+    scrollView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    scrollView.layoutSubtreeIfNeeded()
+    let gutter = try #require(scrollView.verticalRulerView as? LineNumberGutterView)
+    let color = try renderedGutterColor(gutter, at: CGPoint(x: 2, y: gutter.bounds.midY))
+    #expect(isGutterColor(color, close: theme.backgroundColor), "gutter starts as \(color)")
+}
+
+/// 番号とシェブロンは Theme の本文色から作る: 外観と食い違う Theme(ライト外観で黒背景・白文字)でも背景に埋もれない。
+@MainActor @Test func gutterNumbersFollowTheThemeBodyColor() throws {
+    let (gutter, textView) = makeGutterWithLines()
+    var theme = MarkdownTheme.default
+    theme.backgroundColor = .black
+    theme.bodyColor = .white
+    textView.theme = theme
+    let number = try #require(gutter.numberColor.usingColorSpace(.sRGB))
+    let chevron = try #require(gutter.chevronColor.usingColorSpace(.sRGB))
+    #expect(number.redComponent > 0.9 && number.alphaComponent == LineNumberGutterView.numberAlpha)
+    #expect(chevron.redComponent > 0.9 && chevron.alphaComponent == LineNumberGutterView.chevronAlpha)
+}
 #endif
