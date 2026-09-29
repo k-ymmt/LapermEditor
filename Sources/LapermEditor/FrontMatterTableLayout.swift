@@ -173,15 +173,14 @@ struct FrontMatterTableLayout: Equatable {
            let url = value.attribute(PreviewLinkAttribute.url, at: index, effectiveRange: nil) as? String {
             return url
         }
+        // チップの文字は枠のパディングの内側に 1 行で描かれる(`FrontMatterTableRenderer`)。押した文字の URL を返す
+        // (1 つのチップに URL が 2 つあっても、それぞれが自分の URL になる)
         for chip in row.chips where chip.frame.contains(point) {
-            var found: String?
-            chip.text.enumerateAttribute(PreviewLinkAttribute.url, in: NSRange(location: 0, length: chip.text.length)) { value, _, stop in
-                if let url = value as? String {
-                    found = url
-                    stop.pointee = true
-                }
-            }
-            if let found { return found }
+            let textRect = chip.frame.insetBy(dx: Self.chipHorizontalPadding, dy: Self.chipVerticalPadding)
+            guard let index = PreviewLinks.characterIndex(
+                in: chip.text, width: textRect.width, at: CGPoint(x: point.x - textRect.minX, y: point.y - textRect.minY))
+            else { return nil }
+            return chip.text.attribute(PreviewLinkAttribute.url, at: index, effectiveRange: nil) as? String
         }
         return nil
     }

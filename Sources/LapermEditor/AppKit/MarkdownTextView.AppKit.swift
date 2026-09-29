@@ -734,9 +734,14 @@ public final class MarkdownTextView: NSTextView {
         if modifiers == [.control], popUpLinkMenu(for: event) {
             return
         }
-        // Live Preview で描かれたリンクはクリックで開く(ADR 0031)
-        if event.clickCount == 1, modifiers.isEmpty, openRenderedLink(atPoint: point) {
-            return
+        // Live Preview で描かれたリンクはクリックで開く(ADR 0031)。押した所から動かさずに離したときだけ: リンクの上から
+        // 始めたドラッグは通常の選択にする
+        if event.clickCount == 1, modifiers.isEmpty, linkOptions.opensRenderedLinksOnClick,
+           let hit = linkHit(atPoint: point), hit.isRendered {
+            if releasesWithoutDragging(from: event) {
+                if !open(hit.target) { beginEditing(at: NSRange(location: characterIndexForInsertion(at: point), length: 0)) }
+                return
+            }
         }
         if event.clickCount == 1, modifiers.isEmpty, expandFrontMatter(atPoint: point) {
             return
@@ -839,6 +844,22 @@ public final class MarkdownTextView: NSTextView {
         engine.linkHit(atPoint: point, characterIndex: characterIndexForInsertion(at: point))
     }
 
+    /// マウスボタンを押した(`down`)後、動かさずに離したら true。ドラッグになったら、そのイベントをキューの先頭へ戻して
+    /// false(呼び出し側は通常の `mouseDown` に進み、NSTextView の選択の追跡がそのイベントから続ける)。
+    private func releasesWithoutDragging(from down: NSEvent) -> Bool {
+        guard let window else { return true }
+        while let next = window.nextEvent(matching: [.leftMouseUp, .leftMouseDragged]) {
+            if next.type == .leftMouseUp { return true }
+            let dx = next.locationInWindow.x - down.locationInWindow.x
+            let dy = next.locationInWindow.y - down.locationInWindow.y
+            if dx * dx + dy * dy > 9 {
+                NSApp.postEvent(next, atStart: true)
+                return false
+            }
+        }
+        return true
+    }
+
     /// point(ビュー座標)が Live Preview で描かれたリンクの上なら開く。開いたら true。
     @discardableResult
     func openRenderedLink(atPoint point: NSPoint) -> Bool {
@@ -870,10 +891,11 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
-    /// 「編集」: リンクの位置(表なら従来のクリックと同じ位置)にキャレットを置く。
+    /// 「編集」: リンクの位置(表なら従来のクリックと同じ位置)にキャレットを置く。メニューを出している間に本文が
+    /// 変わっていても文書の中に収める。
     func beginEditing(at caret: NSRange) {
         if window?.firstResponder !== self { window?.makeFirstResponder(self) }
-        setSelectedRange(caret)
+        setSelectedRange(NSRange(location: min(caret.location, (string as NSString).length), length: 0))
     }
 
     /// リンクの上の右クリックは、選択を動かさずにリンクのメニューを出す。NSTextView 標準の右クリック(`menu(for:)` を含む)は
@@ -904,9 +926,16 @@ public final class MarkdownTextView: NSTextView {
     /// リンクのメニュー。`base` の項目はその下に区切り線を挟んで続ける。
     func linkMenu(for hit: LinkHit, appendingItemsOf base: NSMenu?) -> NSMenu {
         let menu = NSMenu()
-        menu.addItem(LinkMenuItem(String(localized: "Open Link", bundle: .module)) { [weak self] in self?.open(hit.target) })
-        menu.addItem(LinkMenuItem(String(localized: "Copy Link", bundle: .module)) { [weak self] in self?.copyLink(hit.target) })
-        menu.addItem(LinkMenuItem(String(localized: "Edit", bundle: .module)) { [weak self] in self?.beginEditing(at: hit.editCaret) })
+        // コピーする文字列はメニューを作った時点のもの(表示中に本文が変わっても、見て選んだリンクをコピーする)
+        let copyText = engine.copyableText(for: hit.target, baseURL: linkOptions.baseURL)
+        menu.addItem(LinkMenuItem(LinkMenuTitle.open) { [weak self] in self?.open(hit.target) })
+        menu.addItem(LinkMenuItem(LinkMenuTitle.copy) {
+            guard let copyText else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(copyText, forType: .string)
+        })
+        menu.addItem(LinkMenuItem(LinkMenuTitle.edit) { [weak self] in self?.beginEditing(at: hit.editCaret) })
         if let base, !base.items.isEmpty {
             menu.addItem(.separator())
             for item in base.items {

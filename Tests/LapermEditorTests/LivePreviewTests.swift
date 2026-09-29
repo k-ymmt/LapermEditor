@@ -496,6 +496,8 @@ private func displayedParagraph(at location: Int, in textView: MarkdownTextView)
     let markdown = "intro\n\n- item\n\n---\n\n*em*\n\nSetext\n---\n\n```\n- code\n```\n\n- [ ] task\n"
     let (window, textView) = makeFocusedTextView(markdown)
     defer { withExtendedLifetime(window) {} }
+    // 再パースを必ず同期にする(負荷でパースが閾値を超えるとバックグラウンドへ回り、highlightNow が同期を待たない)
+    textView.markdownHighlighter.backgroundParseThreshold = .seconds(60)
     textView.isLivePreviewEnabled = true
     textView.setSelectedRange(NSRange(location: 0, length: 0))
     func line(_ prefix: String) -> Int { (textView.string as NSString).range(of: prefix).location }

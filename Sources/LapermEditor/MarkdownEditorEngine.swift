@@ -1036,21 +1036,22 @@ final class MarkdownEditorEngine: NSObject {
         }
         let caret = NSRange(location: characterIndex, length: 0)
         if let wiki = wikiLinkReference(atPoint: point, characterIndex: characterIndex) {
-            return LinkHit(target: .wiki(wiki), editCaret: caret, isRendered: isRenderedAsLink(wiki.range))
+            return LinkHit(target: .wiki(wiki), editCaret: caret, isRendered: isRenderedAsLink(at: characterIndex))
         }
         if let link = linkReference(atPoint: point, characterIndex: characterIndex) {
-            return LinkHit(target: .url(destination: link.destination), editCaret: caret, isRendered: isRenderedAsLink(link.range))
+            return LinkHit(target: .url(destination: link.destination), editCaret: caret, isRendered: isRenderedAsLink(at: characterIndex))
         }
         return nil
     }
 
-    /// 本文のリンクがリンクとして描かれているか: Live Preview で、リンクの段落にフォーカスが無く(キャレットが無い、
-    /// またはエディタがフォーカスを持たない)、展開中のテーブル / コードブロック(Source と同じ見た目)の中でもない。
-    func isRenderedAsLink(_ range: NSRange) -> Bool {
+    /// 本文の `characterIndex` の文字がリンクとして描かれているか: Live Preview で、その文字の段落にフォーカスが無く
+    /// (キャレットが無い、またはエディタがフォーカスを持たない)、展開中のテーブル / コードブロック(Source と同じ見た目)の
+    /// 中でもない。段落は押した文字のもの(複数の段落にまたがるリンクは、段落ごとに描かれ方が違う)。
+    func isRenderedAsLink(at characterIndex: Int) -> Bool {
         guard livePreview.isEnabled, let host else { return false }
         let text = host.editorText as NSString
-        guard NSMaxRange(range) <= text.length else { return false }
-        let paragraph = text.paragraphRange(for: range)
+        guard characterIndex <= text.length else { return false }
+        let paragraph = text.paragraphRange(for: NSRange(location: characterIndex, length: 0))
         if livePreview.isFocused(paragraph: paragraph) { return false }
         if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) { return false }
         return true

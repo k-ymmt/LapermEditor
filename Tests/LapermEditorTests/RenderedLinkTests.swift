@@ -34,6 +34,40 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(PreviewLinks.urlRanges(in: text) == [NSRange(location: 4, length: 21), NSRange(location: 31, length: 10)])
     #expect(PreviewLinks.urlRanges(in: "(https://a.example/b)") == [NSRange(location: 1, length: 19)])
     #expect(PreviewLinks.urlRanges(in: "plain text").isEmpty)
+    // 対応する開き括弧のある閉じ括弧は URL の一部(本文の裸の URL と同じ)。短いホストも URL
+    let wiki = "https://en.wikipedia.org/wiki/Swift_(programming_language)"
+    #expect(PreviewLinks.urlRanges(in: wiki + ".") == [NSRange(location: 0, length: (wiki as NSString).length)])
+    #expect(PreviewLinks.urlRanges(in: "(see \(wiki))") == [NSRange(location: 5, length: (wiki as NSString).length)])
+    #expect(PreviewLinks.urlRanges(in: "http://x") == [NSRange(location: 0, length: 8)])
+}
+
+/// 右から左の文字が混ざる行でも、URL のどの文字も見た目の位置で当たる(論理順の隣の文字の境界で判定しない)。
+@MainActor @Test func characterIndexFollowsTheVisualOrderInBidirectionalText() {
+    let font = NSFont.systemFont(ofSize: 14)
+    let string = "אבג https://a.example דהו"
+    let text = NSAttributedString(string: string, attributes: [.font: font])
+    let width = text.size().width + 20
+    let url = (string as NSString).range(of: "https://a.example")
+    var hits = Set<Int>()
+    var x: CGFloat = 0
+    while x < width {
+        if let index = PreviewLinks.characterIndex(in: text, width: width, at: CGPoint(x: x, y: 8)) { hits.insert(index) }
+        x += 0.5
+    }
+    for index in url.location..<NSMaxRange(url) where (string as NSString).character(at: index) != 0x20 {
+        #expect(hits.contains(index), "URL character \(index) should be reachable")
+    }
+}
+
+/// 組版の高さを打ち切らない: 長い値の最後の文字にも当たる。
+@MainActor @Test func characterIndexReachesTheEndOfAVeryTallText() throws {
+    let font = NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+    let string = String(repeating: "abcdefgh ", count: 7_000)
+    let text = NSAttributedString(string: string, attributes: [.font: font])
+    let size = text.boundingRect(with: CGSize(width: 100, height: CGFloat.greatestFiniteMagnitude), options: [.usesLineFragmentOrigin, .usesFontLeading]).size
+    #expect(size.height > 100_000)
+    let index = try #require(PreviewLinks.characterIndex(in: text, width: 100, at: CGPoint(x: 3, y: size.height - 8)))
+    #expect(index > (string as NSString).length - 20)
 }
 
 @MainActor @Test func characterIndexFindsTheCharacterUnderThePoint() {
@@ -106,6 +140,18 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(!textView.openRenderedLink(atPoint: try center(of: NSRange(location: 4, length: 4), in: textView)))
 }
 
+/// 複数の段落にまたがるリンクは、押した文字の段落が描かれているかで決まる(キャレットの無い段落の部分だけ開く)。
+@MainActor @Test func aLinkAcrossParagraphsIsRenderedPerParagraph() throws {
+    let markdown = "[first\nsecond](https://example.com)\n\nplain\n"
+    let (window, textView) = makeFocusedTextView(markdown)
+    defer { withExtendedLifetime(window) {} }
+    textView.setSelectedRange(NSRange(location: 2, length: 0))  // 1 行目
+    textView.layoutSubtreeIfNeeded()
+    #expect(textView.linkHit(atPoint: try center(of: NSRange(location: 1, length: 5), in: textView))?.isRendered == false)
+    let second = try #require(textView.linkHit(atPoint: try center(of: NSRange(location: 7, length: 6), in: textView)))
+    #expect(second.isRendered, "the second line has no caret, so its part of the link is drawn as a link")
+}
+
 @MainActor @Test func renderedWikiLinksOpenThroughTheHost() throws {
     let (window, textView) = makeFocusedTextView("See [[Note]] here\n\nplain\n")
     defer { withExtendedLifetime(window) {} }
@@ -128,7 +174,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     let base = NSMenu()
     base.addItem(NSMenuItem(title: "Cut", action: nil, keyEquivalent: ""))
     let menu = textView.linkMenu(for: hit, appendingItemsOf: base)
-    #expect(menu.items.map(\.title) == ["Open Link", "Copy Link", "Edit", "", "Cut"])
+    #expect(menu.items.map(\.title) == [LinkMenuTitle.open, LinkMenuTitle.copy, LinkMenuTitle.edit, "", "Cut"])
     #expect(menu.items[3].isSeparatorItem)
     func run(_ index: Int) {
         let item = menu.items[index]
@@ -145,7 +191,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
 // MARK: - Front Matter の表
 
 @MainActor @Test func frontMatterTableLinksURLValuesAndChips() throws {
-    let markdown = "---\nsource: https://example.com/a\ntags: [x, https://b.example]\nplain: text\n---\n\nbody\n"
+    let markdown = "---\nsource: https://example.com/a\ntags: [x, https://b.example]\nplain: text\npair: [https://a.example https://c.example]\n---\n\nbody\n"
     let (window, textView) = makeFocusedTextView(markdown)
     defer { withExtendedLifetime(window) {} }
     var opened: [URL] = []
@@ -155,7 +201,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     textView.textLayoutManager!.textViewportLayoutController.layoutViewport()
     let entry = try #require(textView.debugFrontMatterEntry)
     let rows = entry.layout.rows
-    try #require(rows.count == 3)
+    try #require(rows.count == 4)
     // URL の値はリンクの色と印を持つ
     let value = try #require(rows[0].value)
     #expect(value.attribute(PreviewLinkAttribute.url, at: 0, effectiveRange: nil) as? String == "https://example.com/a")
@@ -173,6 +219,12 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     // リストの URL のチップ
     let chip = rows[1].chips[1]
     #expect(textView.linkHit(atPoint: tablePoint(chip.frame.midX, chip.frame.midY))?.target == .url(destination: "https://b.example"))
+    // 1 つのチップに URL が 2 つあれば、押した方の URL
+    let pair = rows[3].chips[0]
+    let pairText = pair.frame.insetBy(dx: FrontMatterTableLayout.chipHorizontalPadding, dy: FrontMatterTableLayout.chipVerticalPadding)
+    let firstWidth = pair.text.attributedSubstring(from: NSRange(location: 0, length: 18)).size().width
+    #expect(textView.linkHit(atPoint: tablePoint(pairText.minX + 10, pairText.midY))?.target == .url(destination: "https://a.example"))
+    #expect(textView.linkHit(atPoint: tablePoint(pairText.minX + firstWidth + 10, pairText.midY))?.target == .url(destination: "https://c.example"))
     // URL でない値・キー・URL でないチップはリンクではない(従来どおりクリックで展開)
     #expect(textView.linkHit(atPoint: tablePoint(rows[2].valueFrame.minX + 5, rows[2].valueFrame.midY)) == nil)
     #expect(textView.linkHit(atPoint: tablePoint(rows[0].keyFrame.minX + 5, rows[0].keyFrame.midY)) == nil)

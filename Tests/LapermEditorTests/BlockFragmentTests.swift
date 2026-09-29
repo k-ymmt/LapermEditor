@@ -446,6 +446,8 @@ private func paragraphStyle(of fragment: NSTextLayoutFragment) -> NSParagraphSty
     var theme = textView.theme
     theme.tableBackgroundColor = .green
     textView.theme = theme
+    // 再パースを必ず同期にする(負荷でパースが閾値を超えるとバックグラウンドへ回り、highlightNow が同期を待たない)
+    textView.markdownHighlighter.backgroundParseThreshold = .seconds(60)
     textView.string = "| a |\n|---|\n| 1 |\n\nafter\n"
     textView.highlightAll()
     let padding = theme.codeBlockVerticalPadding

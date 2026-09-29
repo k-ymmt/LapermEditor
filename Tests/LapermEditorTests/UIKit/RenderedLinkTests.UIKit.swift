@@ -32,7 +32,7 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     #expect(!textView.shouldInterceptTap(atPoint: try center(of: NSRange(location: 29, length: 3), in: textView), modifiers: []))
 
     let menu = textView.linkMenu(for: hit)
-    #expect(menu.children.compactMap { ($0 as? UIAction)?.title } == ["Open Link", "Copy Link", "Edit"])
+    #expect(menu.children.compactMap { ($0 as? UIAction)?.title } == [LinkMenuTitle.open, LinkMenuTitle.copy, LinkMenuTitle.edit])
 
     // 「編集」: キャレットを置いて編集を始めると、その段落のリンクは描かれた状態ではなくなる(タップはキャレット移動)
     textView.beginEditing(at: hit.editCaret)
@@ -41,5 +41,20 @@ private func center(of range: NSRange, in textView: MarkdownTextView) throws -> 
     let editing = try center(of: NSRange(location: 4, length: 4), in: textView)
     #expect(textView.linkHit(atPoint: editing)?.isRendered == false)
     #expect(!textView.shouldInterceptTap(atPoint: editing, modifiers: []))
+}
+
+/// 開けないリンク(ホストが扱わない Wiki Link)のタップは横取りしたまま捨てず、その位置で編集を始める。
+@MainActor @Test func tappingARenderedLinkThatCannotOpenStartsEditingThereOnIOS() throws {
+    let textView = makeLaidOutTextView("See [[Note]] here\n\nplain\n")
+    let window = hostInWindow(textView)
+    defer { withExtendedLifetime(window) {} }
+    textView.isLivePreviewEnabled = true
+    textView.layoutIfNeeded()
+    textView.onOpenWikiLink = { _ in false }
+    let onNote = try center(of: NSRange(location: 6, length: 4), in: textView)
+    #expect(textView.shouldInterceptTap(atPoint: onNote, modifiers: []))
+    #expect(textView.tapRenderedLink(atPoint: onNote))
+    #expect(textView.isFirstResponder)
+    #expect(NSLocationInRange(textView.selectedRange.location, NSRange(location: 4, length: 9)))
 }
 #endif

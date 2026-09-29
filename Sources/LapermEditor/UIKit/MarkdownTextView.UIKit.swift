@@ -804,7 +804,7 @@ public final class MarkdownTextView: UITextView {
         let modifiers = recognizer.modifierFlags.intersection([.shift, .control, .alternate, .command])
         if modifiers == [.command], openLink(atPoint: point) { return }
         // Live Preview で描かれたリンクはタップで開く(ADR 0031)
-        if modifiers.isEmpty, openRenderedLink(atPoint: point) { return }
+        if modifiers.isEmpty, tapRenderedLink(atPoint: point) { return }
         if modifiers.isEmpty, expandFrontMatter(atPoint: point) { return }
         if modifiers.isEmpty, expandTable(atPoint: point) { return }
         if modifiers.isEmpty, copyCodeBlock(atPoint: point) || expandCodeBlock(atPoint: point) { return }
@@ -933,6 +933,15 @@ public final class MarkdownTextView: UITextView {
         engine.linkHit(atPoint: point, characterIndex: characterIndex(at: point))
     }
 
+    /// 描かれたリンクのタップ: 開く。開けなかったとき(解決できない相対リンク、ホストが扱わない Wiki Link)は、横取りした
+    /// 標準のタップの代わりにその位置で編集を始める。描かれたリンクの上でなければ何もせず false。
+    @discardableResult
+    func tapRenderedLink(atPoint point: CGPoint) -> Bool {
+        guard linkOptions.opensRenderedLinksOnClick, let hit = linkHit(atPoint: point), hit.isRendered else { return false }
+        if !open(hit.target) { beginEditing(at: hit.editCaret) }
+        return true
+    }
+
     /// point(ビュー座標)が Live Preview で描かれたリンクの上なら開く。開いたら true。
     @discardableResult
     func openRenderedLink(atPoint point: CGPoint) -> Bool {
@@ -962,7 +971,8 @@ public final class MarkdownTextView: UITextView {
     /// 「編集」: リンクの位置(表なら従来のタップと同じ位置)にキャレットを置く。
     func beginEditing(at caret: NSRange) {
         if !isFirstResponder { becomeFirstResponder() }
-        selectedRange = caret
+        // メニューを出している間に本文が変わっていても文書の中に収める
+        selectedRange = NSRange(location: min(caret.location, (text as NSString).length), length: 0)
     }
 
     /// 長押しのメニューの対象(メニューを出している間だけ)。
@@ -970,14 +980,16 @@ public final class MarkdownTextView: UITextView {
 
     /// 長押しのメニュー。
     func linkMenu(for hit: LinkHit) -> UIMenu {
-        UIMenu(children: [
-            UIAction(title: String(localized: "Open Link", bundle: .module), image: UIImage(systemName: "safari")) { [weak self] _ in
+        // コピーする文字列はメニューを作った時点のもの(表示中に本文が変わっても、見て選んだリンクをコピーする)
+        let copyText = engine.copyableText(for: hit.target, baseURL: linkOptions.baseURL)
+        return UIMenu(children: [
+            UIAction(title: LinkMenuTitle.open, image: UIImage(systemName: "safari")) { [weak self] _ in
                 self?.open(hit.target)
             },
-            UIAction(title: String(localized: "Copy Link", bundle: .module), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
-                self?.copyLink(hit.target)
+            UIAction(title: LinkMenuTitle.copy, image: UIImage(systemName: "doc.on.doc")) { _ in
+                if let copyText { UIPasteboard.general.string = copyText }
             },
-            UIAction(title: String(localized: "Edit", bundle: .module), image: UIImage(systemName: "pencil")) { [weak self] _ in
+            UIAction(title: LinkMenuTitle.edit, image: UIImage(systemName: "pencil")) { [weak self] _ in
                 self?.beginEditing(at: hit.editCaret)
             },
         ])
