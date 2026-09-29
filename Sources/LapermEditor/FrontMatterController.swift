@@ -253,4 +253,10 @@ final class FrontMatterController {
         guard !isModelStale else { return nil }
         return presented.layout?.row(at: point)?.lineRange
     }
+
+    /// 表座標の点に重なっている値の URL(ADR 0031)。触る編集の後(次のパース待ち)なら nil。
+    func linkURL(atTablePoint point: CGPoint) -> String? {
+        guard !isModelStale else { return nil }
+        return presented.layout?.linkURL(at: point)
+    }
 }

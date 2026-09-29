@@ -730,6 +730,14 @@ public final class MarkdownTextView: NSTextView {
         if event.clickCount == 1, modifiers == [.command], openLink(atPoint: point) {
             return
         }
+        // Control+クリックは右クリックと同じ(リンクの上なら選択を動かさずにリンクのメニュー)
+        if modifiers == [.control], popUpLinkMenu(for: event) {
+            return
+        }
+        // Live Preview で描かれたリンクはクリックで開く(ADR 0031)
+        if event.clickCount == 1, modifiers.isEmpty, openRenderedLink(atPoint: point) {
+            return
+        }
         if event.clickCount == 1, modifiers.isEmpty, expandFrontMatter(atPoint: point) {
             return
         }
@@ -824,6 +832,91 @@ public final class MarkdownTextView: NSTextView {
         return true
     }
 
+    // MARK: - 描かれたリンクのクリックとリンクのメニュー(Laperm ADR 0031)
+
+    /// point(ビュー座標)のリンク(本文 / テーブルの格子 / Front Matter の表)。
+    func linkHit(atPoint point: NSPoint) -> LinkHit? {
+        engine.linkHit(atPoint: point, characterIndex: characterIndexForInsertion(at: point))
+    }
+
+    /// point(ビュー座標)が Live Preview で描かれたリンクの上なら開く。開いたら true。
+    @discardableResult
+    func openRenderedLink(atPoint point: NSPoint) -> Bool {
+        guard linkOptions.opensRenderedLinksOnClick, let hit = linkHit(atPoint: point), hit.isRendered else { return false }
+        return open(hit.target)
+    }
+
+    /// リンクを開く: Wiki Link はホスト(`onOpenWikiLink`)、URL は `onOpenLink`、無ければシステムで開く。
+    @discardableResult
+    func open(_ target: LinkHit.Target) -> Bool {
+        switch target {
+        case .wiki(let reference):
+            return onOpenWikiLink?(reference) == true
+        case .url(let destination):
+            guard let url = LinkURLResolver.resolve(destination: destination, baseURL: linkOptions.baseURL) else { return false }
+            if onOpenLink?(url) == true { return true }
+            NSWorkspace.shared.open(url)
+            return true
+        }
+    }
+
+    /// リンクの文字列をペーストボードへ(URL は解決したもの、Wiki Link は記法そのもの)。
+    @discardableResult
+    func copyLink(_ target: LinkHit.Target) -> Bool {
+        guard let text = engine.copyableText(for: target, baseURL: linkOptions.baseURL) else { return false }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(text, forType: .string)
+        return true
+    }
+
+    /// 「編集」: リンクの位置(表なら従来のクリックと同じ位置)にキャレットを置く。
+    func beginEditing(at caret: NSRange) {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        setSelectedRange(caret)
+    }
+
+    /// リンクの上の右クリックは、選択を動かさずにリンクのメニューを出す。NSTextView 標準の右クリック(`menu(for:)` を含む)は
+    /// その位置の単語を選択してフォーカスも取るので、描かれたリンクの段落が編集状態(記号が見える)に切り替わってしまう。
+    /// 標準の項目は位置に依らない既定のメニュー(今の選択に対する切り取り・コピーなど)から足す。
+    public override func rightMouseDown(with event: NSEvent) {
+        if popUpLinkMenu(for: event) { return }
+        super.rightMouseDown(with: event)
+    }
+
+    /// event の位置がリンクの上ならリンクのメニューを出して true。
+    private func popUpLinkMenu(for event: NSEvent) -> Bool {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = linkHit(atPoint: point) else { return false }
+        let standard = Self.defaultMenu?.copy() as? NSMenu
+        NSMenu.popUpContextMenu(linkMenu(for: hit, appendingItemsOf: standard), with: event, for: self)
+        return true
+    }
+
+    /// コンテキストメニュー(Control+クリックなど): リンクの上なら「リンクを開く / リンクをコピー / 編集」を標準の項目の上に足す。
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        let base = super.menu(for: event)
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = linkHit(atPoint: point) else { return base }
+        return linkMenu(for: hit, appendingItemsOf: base)
+    }
+
+    /// リンクのメニュー。`base` の項目はその下に区切り線を挟んで続ける。
+    func linkMenu(for hit: LinkHit, appendingItemsOf base: NSMenu?) -> NSMenu {
+        let menu = NSMenu()
+        menu.addItem(LinkMenuItem(String(localized: "Open Link", bundle: .module)) { [weak self] in self?.open(hit.target) })
+        menu.addItem(LinkMenuItem(String(localized: "Copy Link", bundle: .module)) { [weak self] in self?.copyLink(hit.target) })
+        menu.addItem(LinkMenuItem(String(localized: "Edit", bundle: .module)) { [weak self] in self?.beginEditing(at: hit.editCaret) })
+        if let base, !base.items.isEmpty {
+            menu.addItem(.separator())
+            for item in base.items {
+                base.removeItem(item)
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
     /// point(ビュー座標)にオンスクリーンで実際に重なっているリンク参照を返す。
     /// `characterIndexForInsertion` は最寄りの文字へクランプするため、リンクを含む行の
     /// 末尾より右や次行の余白をクリック/ホバーしても、そのままではリンクにヒットしてしまう。
@@ -915,5 +1008,22 @@ extension MarkdownTextView: MarkdownEditorHost {
     func editorSelect(_ range: NSRange) {
         setSelectedRange(range)
     }
+}
+/// クロージャで動くメニュー項目(リンクのメニュー)。
+final class LinkMenuItem: NSMenuItem {
+    private let handler: () -> Void
+
+    init(_ title: String, handler: @escaping () -> Void) {
+        self.handler = handler
+        super.init(title: title, action: #selector(run), keyEquivalent: "")
+        target = self
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("LinkMenuItem does not support NSCoder")
+    }
+
+    @objc private func run() { handler() }
 }
 #endif

@@ -16,6 +16,38 @@
           }
         }
       }
+    },
+    "Copy Link" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Copy Link"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "リンクをコピー"
+          }
+        }
+      }
+    },
+    "Edit" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Edit"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "編集"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

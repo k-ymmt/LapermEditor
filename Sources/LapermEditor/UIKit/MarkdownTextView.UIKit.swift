@@ -32,6 +32,9 @@ public final class MarkdownTextView: UITextView {
     private var lastHoverPoint: CGPoint?
     private var commandKeyHeld = false
     private let tapDelegate = EditorTapGestureDelegate()
+    private let linkLongPressDelegate = LinkLongPressGestureDelegate()
+    private let linkMenuDelegate = LinkEditMenuDelegate()
+    private lazy var linkMenuInteraction = UIEditMenuInteraction(delegate: linkMenuDelegate)
 
     /// テスト用: 共有エンジンのコンポーネントへの近道
     var markdownHighlighter: Highlighter { engine.highlighter }
@@ -327,6 +330,17 @@ public final class MarkdownTextView: UITextView {
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleEditorTap(_:)))
         tap.delegate = tapDelegate
         addGestureRecognizer(tap)
+
+        // リンクの長押し: 「リンクを開く / リンクをコピー / 編集」のメニュー(ADR 0031)。リンクの上のタッチだけ受け取り、
+        // UITextView 標準の長押し(ルーペ・選択)を待たせる。リンクの上のタップは長押しが失敗してから成立させる。
+        linkLongPressDelegate.owner = self
+        linkMenuDelegate.owner = self
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLinkLongPress(_:)))
+        longPress.minimumPressDuration = 0.4
+        longPress.delegate = linkLongPressDelegate
+        addGestureRecognizer(longPress)
+        tap.require(toFail: longPress)
+        addInteraction(linkMenuInteraction)
 
         let hover = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
         addGestureRecognizer(hover)
@@ -789,6 +803,8 @@ public final class MarkdownTextView: UITextView {
         let point = recognizer.location(in: self)
         let modifiers = recognizer.modifierFlags.intersection([.shift, .control, .alternate, .command])
         if modifiers == [.command], openLink(atPoint: point) { return }
+        // Live Preview で描かれたリンクはタップで開く(ADR 0031)
+        if modifiers.isEmpty, openRenderedLink(atPoint: point) { return }
         if modifiers.isEmpty, expandFrontMatter(atPoint: point) { return }
         if modifiers.isEmpty, expandTable(atPoint: point) { return }
         if modifiers.isEmpty, copyCodeBlock(atPoint: point) || expandCodeBlock(atPoint: point) { return }
@@ -806,6 +822,7 @@ public final class MarkdownTextView: UITextView {
                 && engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndex(at: point)) != nil
         }
         guard actual.isEmpty else { return false }
+        if linkOptions.opensRenderedLinksOnClick, linkHit(atPoint: point)?.isRendered == true { return true }
         // Live Preview の Front Matter の表: 標準のタップ(展開後のレイアウトで最寄りの文字にキャレットを置く)
         // より先に、タップした Property の行へキャレットを置く
         if engine.frontMatterCaretRange(atPoint: point) != nil { return true }
@@ -907,6 +924,71 @@ public final class MarkdownTextView: UITextView {
         if onOpenLink?(url) == true { return true }
         UIApplication.shared.open(url)
         return true
+    }
+
+    // MARK: - 描かれたリンクのタップと長押しのメニュー(Laperm ADR 0031)
+
+    /// point(ビュー座標)のリンク(本文 / テーブルの格子 / Front Matter の表)。
+    func linkHit(atPoint point: CGPoint) -> LinkHit? {
+        engine.linkHit(atPoint: point, characterIndex: characterIndex(at: point))
+    }
+
+    /// point(ビュー座標)が Live Preview で描かれたリンクの上なら開く。開いたら true。
+    @discardableResult
+    func openRenderedLink(atPoint point: CGPoint) -> Bool {
+        guard linkOptions.opensRenderedLinksOnClick, let hit = linkHit(atPoint: point), hit.isRendered else { return false }
+        return open(hit.target)
+    }
+
+    /// リンクを開く: Wiki Link はホスト(`onOpenWikiLink`)、URL は `onOpenLink`、無ければシステムで開く。
+    @discardableResult
+    func open(_ target: LinkHit.Target) -> Bool {
+        switch target {
+        case .wiki(let reference):
+            return onOpenWikiLink?(reference) == true
+        case .url(let destination):
+            return open(LinkReference(text: destination, destination: destination, range: NSRange(location: 0, length: 0)))
+        }
+    }
+
+    /// リンクの文字列をペーストボードへ(URL は解決したもの、Wiki Link は記法そのもの)。
+    @discardableResult
+    func copyLink(_ target: LinkHit.Target) -> Bool {
+        guard let text = engine.copyableText(for: target, baseURL: linkOptions.baseURL) else { return false }
+        UIPasteboard.general.string = text
+        return true
+    }
+
+    /// 「編集」: リンクの位置(表なら従来のタップと同じ位置)にキャレットを置く。
+    func beginEditing(at caret: NSRange) {
+        if !isFirstResponder { becomeFirstResponder() }
+        selectedRange = caret
+    }
+
+    /// 長押しのメニューの対象(メニューを出している間だけ)。
+    fileprivate var pendingLinkHit: LinkHit?
+
+    /// 長押しのメニュー。
+    func linkMenu(for hit: LinkHit) -> UIMenu {
+        UIMenu(children: [
+            UIAction(title: String(localized: "Open Link", bundle: .module), image: UIImage(systemName: "safari")) { [weak self] _ in
+                self?.open(hit.target)
+            },
+            UIAction(title: String(localized: "Copy Link", bundle: .module), image: UIImage(systemName: "doc.on.doc")) { [weak self] _ in
+                self?.copyLink(hit.target)
+            },
+            UIAction(title: String(localized: "Edit", bundle: .module), image: UIImage(systemName: "pencil")) { [weak self] _ in
+                self?.beginEditing(at: hit.editCaret)
+            },
+        ])
+    }
+
+    @objc private func handleLinkLongPress(_ recognizer: UILongPressGestureRecognizer) {
+        guard recognizer.state == .began else { return }
+        let point = recognizer.location(in: self)
+        guard let hit = linkHit(atPoint: point) else { return }
+        pendingLinkHit = hit
+        linkMenuInteraction.presentEditMenu(with: UIEditMenuConfiguration(identifier: nil, sourcePoint: point))
     }
 
     /// point(ビュー座標)にオンスクリーンで実際に重なっているリンク参照を返す。
@@ -1196,6 +1278,44 @@ private final class EditorTapGestureDelegate: NSObject, UIGestureRecognizerDeleg
         shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
     ) -> Bool {
         otherGestureRecognizer is UITapGestureRecognizer
+    }
+}
+
+/// リンクの長押しのジェスチャ: リンクの上のタッチだけ受け取り、UITextView 標準の長押し(ルーペ・選択)を待たせる。
+@MainActor
+private final class LinkLongPressGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var owner: MarkdownTextView?
+
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+        guard let owner else { return false }
+        return owner.linkHit(atPoint: touch.location(in: owner)) != nil
+    }
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldBeRequiredToFailBy otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        otherGestureRecognizer is UILongPressGestureRecognizer
+    }
+}
+
+/// 長押しで出すリンクのメニュー(`UIEditMenuInteraction` の中身)。
+@MainActor
+private final class LinkEditMenuDelegate: NSObject, UIEditMenuInteractionDelegate {
+    weak var owner: MarkdownTextView?
+
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction, menuFor configuration: UIEditMenuConfiguration, suggestedActions: [UIMenuElement]
+    ) -> UIMenu? {
+        guard let owner, let hit = owner.pendingLinkHit else { return nil }
+        return owner.linkMenu(for: hit)
+    }
+
+    func editMenuInteraction(
+        _ interaction: UIEditMenuInteraction, willDismissMenuFor configuration: UIEditMenuConfiguration,
+        animator: any UIEditMenuInteractionAnimating
+    ) {
+        owner?.pendingLinkHit = nil
     }
 }
 #endif

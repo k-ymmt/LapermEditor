@@ -65,6 +65,8 @@ struct FrontMatterTableLayout: Equatable {
         var background: PlatformColor
         var separator: PlatformColor
         var chipFill: PlatformColor
+        /// 値の中の URL の色(Theme のリンク色。Laperm ADR 0031)
+        var linkColor: PlatformColor
 
         init(theme: MarkdownTheme) {
             keyFont = theme.layoutFont(for: .frontMatterKey) ?? theme.bodyFont
@@ -78,6 +80,7 @@ struct FrontMatterTableLayout: Equatable {
             background = theme.frontMatterBackgroundColor
             separator = theme.thematicBreakLineColor
             chipFill = theme.backgroundColor
+            linkColor = theme.renderingColor(for: .link) ?? .lapermLink
         }
     }
 
@@ -102,8 +105,10 @@ struct FrontMatterTableLayout: Equatable {
             var contentHeight: CGFloat = valueLineHeight
             switch property.value {
             case .text(let string):
-                let attributed = NSAttributedString(
-                    string: string, attributes: [.font: appearance.valueFont, .foregroundColor: appearance.valueColor])
+                // 値の中の URL はリンクとして描く(クリック / タップで開く。ADR 0031)
+                let attributed = PreviewLinks.linkifyingURLs(in: NSAttributedString(
+                    string: string, attributes: [.font: appearance.valueFont, .foregroundColor: appearance.valueColor]),
+                    color: appearance.linkColor)
                 value = attributed
                 if !string.isEmpty { contentHeight = max(contentHeight, measure(attributed, width: valueWidth).height) }
             case .raw(let string):
@@ -116,8 +121,9 @@ struct FrontMatterTableLayout: Equatable {
                 var chipX: CGFloat = 0
                 var chipY: CGFloat = 0
                 for item in items {
-                    let attributed = NSAttributedString(
-                        string: item, attributes: [.font: appearance.valueFont, .foregroundColor: appearance.valueColor])
+                    let attributed = PreviewLinks.linkifyingURLs(in: NSAttributedString(
+                        string: item, attributes: [.font: appearance.valueFont, .foregroundColor: appearance.valueColor]),
+                        color: appearance.linkColor)
                     let textWidth = ceil(measure(attributed, width: .greatestFiniteMagnitude).width)
                     let chipWidth = min(valueWidth, textWidth + chipHorizontalPadding * 2)
                     if chipX > 0, chipX + chipWidth > valueWidth {
@@ -155,6 +161,29 @@ struct FrontMatterTableLayout: Equatable {
         guard !rows.isEmpty, CGRect(origin: .zero, size: size).insetBy(dx: -4, dy: -4).contains(point) else { return nil }
         if let hit = rows.first(where: { $0.frame.minY <= point.y && point.y < $0.frame.maxY }) { return hit }
         return point.y < 0 ? rows.first : rows.last
+    }
+
+    /// 表座標の点に重なっている値の中の URL(ADR 0031)。文字列の値はその文字の上、リストの値はチップの上。無ければ nil。
+    func linkURL(at point: CGPoint) -> String? {
+        guard let row = row(at: point) else { return nil }
+        if let value = row.value, row.valueFrame.insetBy(dx: -2, dy: -2).contains(point),
+           let index = PreviewLinks.characterIndex(
+               in: value, width: row.valueFrame.width,
+               at: CGPoint(x: point.x - row.valueFrame.minX, y: point.y - row.valueFrame.minY)),
+           let url = value.attribute(PreviewLinkAttribute.url, at: index, effectiveRange: nil) as? String {
+            return url
+        }
+        for chip in row.chips where chip.frame.contains(point) {
+            var found: String?
+            chip.text.enumerateAttribute(PreviewLinkAttribute.url, in: NSRange(location: 0, length: chip.text.length)) { value, _, stop in
+                if let url = value as? String {
+                    found = url
+                    stop.pointee = true
+                }
+            }
+            if let found { return found }
+        }
+        return nil
     }
 
     static func lineHeight(of font: PlatformFont) -> CGFloat {

@@ -198,6 +198,16 @@ struct TablePreviewLayout: Equatable {
     static func measure(_ text: NSAttributedString, width: CGFloat) -> CGSize {
         FrontMatterTableLayout.measure(text, width: width)
     }
+
+    /// 表座標の点に重なっているリンクの、テーブルの先頭からの相対位置(ADR 0031)。セルの文字の上でなければ nil。
+    func linkSourceOffset(at point: CGPoint) -> Int? {
+        guard let cell = cell(at: point), cell.frame.contains(point),
+              let index = PreviewLinks.characterIndex(
+                  in: cell.text, width: cell.textFrame.width,
+                  at: CGPoint(x: point.x - cell.textFrame.minX, y: point.y - cell.textFrame.minY))
+        else { return nil }
+        return cell.text.attribute(PreviewLinkAttribute.sourceOffset, at: index, effectiveRange: nil) as? Int
+    }
 }
 
 /// オーバーレイに渡す表の配置(frame はテキストビュー座標)。両 OS 共通。

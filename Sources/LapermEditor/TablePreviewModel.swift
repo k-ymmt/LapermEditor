@@ -39,8 +39,10 @@ struct TablePreviewModel: Equatable {
         // 色を付けるスパンだけ(テーマに色の無い種類と Syntax Marker は除く: パイプ 1 本ごとのマーカーが巨大な表では
         // スパンの大半で、セルの中のマーカーは隠す対象なのでどのみち取り除かれる)。セルごとの検索は区間の索引で。
         let unresolved = Set(unresolvedWikiLinks)
+        // リンク(Markdown Link / Wiki Link)は色が無くてもクリック先の印を付けるので残す(ADR 0031)
         let colouredSpans = spans.filter {
-            $0.kind != .syntaxMarker && (theme.renderingColor(for: $0.kind) != nil || ($0.kind == .wikiLink && unresolved.contains($0.range)))
+            $0.kind != .syntaxMarker
+                && (theme.renderingColor(for: $0.kind) != nil || $0.kind == .link || $0.kind == .wikiLink)
         }
         let spanIndex = RangeIndex(colouredSpans.map { ($0.range, $0) })
         let markerIndex = RangeIndex(markers.map { ($0, $0) })
@@ -49,7 +51,8 @@ struct TablePreviewModel: Equatable {
             Cell(
                 text: cellText(
                     range: cell.range, storage: storage, spans: spanIndex.elements(intersecting: cell.range),
-                    markers: markerIndex.elements(intersecting: cell.range), unresolvedWikiLinks: unresolved, theme: theme),
+                    markers: markerIndex.elements(intersecting: cell.range), unresolvedWikiLinks: unresolved, theme: theme,
+                    tableOrigin: origin),
                 caretOffset: NSMaxRange(cell.range) - origin)
         }
         func row(_ row: MarkdownTable.Row) -> Row {
@@ -60,9 +63,11 @@ struct TablePreviewModel: Equatable {
 
     /// セル 1 つの表示用文字列。`spans` / `markers` はセルと交差するものだけ(文書座標)。
     @MainActor
+    /// リンク(Markdown Link / Wiki Link)の文字には、そのリンクのテーブルの先頭(`tableOrigin`)からの相対位置を
+    /// `PreviewLinkAttribute.sourceOffset` として付ける(格子のクリックで計画のリンクを引く。ADR 0031)。
     static func cellText(
         range: NSRange, storage: NSAttributedString, spans: [HighlightSpan], markers: [NSRange],
-        unresolvedWikiLinks: Set<NSRange> = [], theme: MarkdownTheme
+        unresolvedWikiLinks: Set<NSRange> = [], theme: MarkdownTheme, tableOrigin: Int = 0
     ) -> NSAttributedString {
         guard range.length > 0, NSMaxRange(range) <= storage.length else { return NSAttributedString() }
         let text = NSMutableAttributedString(attributedString: storage.attributedSubstring(from: range))
@@ -79,6 +84,10 @@ struct TablePreviewModel: Equatable {
         for span in spans {
             let overlap = NSIntersectionRange(span.range, range)
             guard overlap.length > 0 else { continue }
+            let local = NSRange(location: overlap.location - range.location, length: overlap.length)
+            if span.kind == .link || span.kind == .wikiLink {
+                text.addAttribute(PreviewLinkAttribute.sourceOffset, value: span.range.location - tableOrigin, range: local)
+            }
             // Unresolved な Wiki Link は Source と同じく Unresolved の色(解決結果は Key に入っていて、変われば作り直される)
             let color: PlatformColor
             if span.kind == .wikiLink, unresolvedWikiLinks.contains(span.range) {
@@ -88,7 +97,7 @@ struct TablePreviewModel: Equatable {
             } else {
                 continue
             }
-            text.addAttribute(.foregroundColor, value: color, range: NSRange(location: overlap.location - range.location, length: overlap.length))
+            text.addAttribute(.foregroundColor, value: color, range: local)
         }
         // 隠す Syntax Marker と `\|` のバックスラッシュを取り除く。重なる範囲(`\|` を含むリンクの閉じ側など)は
         // 先に 1 つにまとめ、後ろから消す(前の位置がずれないように)。

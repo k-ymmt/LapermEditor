@@ -1010,6 +1010,65 @@ final class MarkdownEditorEngine: NSObject {
         return linkReference(atPoint: point, characterIndex: characterIndex)?.range
     }
 
+    // MARK: - リンクのクリック / タップとメニュー(Laperm ADR 0031)
+
+    /// point(ビュー座標)に重なっているリンク: 折りたたまれた Front Matter の表の値の URL、折りたたまれたテーブルの格子の
+    /// セルの中のリンク、本文の Wiki Link / Markdown Link(裸の URL を含む)の順に見る。`characterIndex` は point に最も
+    /// 近い文字(本文の判定に使う)。無ければ nil。
+    func linkHit(atPoint point: CGPoint, characterIndex: Int) -> LinkHit? {
+        if frontMatter.isCollapsed, let tableFrame = frontMatterTableFrame, tableFrame.contains(point) {
+            guard let url = frontMatter.linkURL(atTablePoint: CGPoint(x: point.x - tableFrame.minX, y: point.y - tableFrame.minY)),
+                  let caret = frontMatterCaretRange(atPoint: point)
+            else { return nil }
+            return LinkHit(target: .url(destination: url), editCaret: caret, isRendered: true)
+        }
+        for (location, frame) in tablePreviewFrames where frame.contains(point) {
+            guard let layout = tables.presentedTable(at: location)?.layout,
+                  let relative = layout.linkSourceOffset(at: CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)),
+                  let caret = tableCaretRange(atPoint: point)
+            else { return nil }
+            let offset = location + relative
+            if let wiki = wikiLinkReference(at: offset) {
+                return LinkHit(target: .wiki(wiki), editCaret: caret, isRendered: true)
+            }
+            guard let link = linkReference(at: offset) else { return nil }
+            return LinkHit(target: .url(destination: link.destination), editCaret: caret, isRendered: true)
+        }
+        let caret = NSRange(location: characterIndex, length: 0)
+        if let wiki = wikiLinkReference(atPoint: point, characterIndex: characterIndex) {
+            return LinkHit(target: .wiki(wiki), editCaret: caret, isRendered: isRenderedAsLink(wiki.range))
+        }
+        if let link = linkReference(atPoint: point, characterIndex: characterIndex) {
+            return LinkHit(target: .url(destination: link.destination), editCaret: caret, isRendered: isRenderedAsLink(link.range))
+        }
+        return nil
+    }
+
+    /// 本文のリンクがリンクとして描かれているか: Live Preview で、リンクの段落にフォーカスが無く(キャレットが無い、
+    /// またはエディタがフォーカスを持たない)、展開中のテーブル / コードブロック(Source と同じ見た目)の中でもない。
+    func isRenderedAsLink(_ range: NSRange) -> Bool {
+        guard livePreview.isEnabled, let host else { return false }
+        let text = host.editorText as NSString
+        guard NSMaxRange(range) <= text.length else { return false }
+        let paragraph = text.paragraphRange(for: range)
+        if livePreview.isFocused(paragraph: paragraph) { return false }
+        if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) { return false }
+        return true
+    }
+
+    /// 「リンクをコピー」で渡す文字列: URL は解決したもの(できなければ書かれたまま)、Wiki Link は記法そのもの。
+    func copyableText(for target: LinkHit.Target, baseURL: URL?) -> String? {
+        switch target {
+        case .url(let destination):
+            return LinkURLResolver.resolve(destination: destination, baseURL: baseURL)?.absoluteString ?? destination
+        case .wiki(let reference):
+            guard let host else { return nil }
+            let text = host.editorText as NSString
+            guard NSMaxRange(reference.range) <= text.length else { return nil }
+            return text.substring(with: reference.range)
+        }
+    }
+
     /// `range` のリンクの下線の色: Wiki Link なら解決結果に従った実効色(Unresolved は Unresolved の色)、それ以外はリンク色。
     func hoverUnderlineColor(for range: NSRange) -> PlatformColor {
         let theme = highlighter.theme
