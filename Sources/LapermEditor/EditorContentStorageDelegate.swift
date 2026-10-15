@@ -77,9 +77,9 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         if let collapsed = codeBlocks?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         if let collapsed = linkPreviews?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
-        // 展開中のテーブル / コードブロック / Link Preview のブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
-        if tables?.isExempt(paragraph: range) == true || codeBlocks?.isExempt(paragraph: range) == true
-            || linkPreviews?.isExempt(paragraph: range) == true { return base }
+        // 展開中のテーブル / コードブロックのブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)。
+        // Link Preview の候補は除外しない(`exemptsExpandedBlocks` false: 隠すマーカーが無く、描かれたリンクのまま)
+        if tables?.isExempt(paragraph: range) == true || codeBlocks?.isExempt(paragraph: range) == true { return base }
         return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
 }

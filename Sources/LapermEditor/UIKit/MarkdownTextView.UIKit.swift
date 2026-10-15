@@ -853,7 +853,8 @@ public final class MarkdownTextView: UITextView {
         let actual = modifiers.intersection([.shift, .control, .alternate, .command])
         if actual == [.command] {
             return linkOptions.opensOnCommandClick
-                && engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndex(at: point)) != nil
+                && (engine.linkPreviewHit(atPoint: point) != nil
+                    || engine.interactiveLinkRange(atPoint: point, characterIndex: characterIndex(at: point)) != nil)
         }
         guard actual.isEmpty else { return false }
         if linkOptions.opensRenderedLinksOnClick, linkHit(atPoint: point)?.isRendered == true { return true }
@@ -934,6 +935,8 @@ public final class MarkdownTextView: UITextView {
     /// ジェスチャから分離してあるのはテストで座標を直接渡せるようにするため。
     func openLink(atPoint point: CGPoint) -> Bool {
         guard linkOptions.opensOnCommandClick else { return false }
+        // Link Preview のカード(ADR 0046): 隠れた URL の文字ではなくカードで当てる
+        if let hit = engine.linkPreviewHit(atPoint: point) { return open(hit.target) }
         if let wiki = engine.wikiLinkReference(atPoint: point, characterIndex: characterIndex(at: point)) {
             return onOpenWikiLink?(wiki) == true
         }

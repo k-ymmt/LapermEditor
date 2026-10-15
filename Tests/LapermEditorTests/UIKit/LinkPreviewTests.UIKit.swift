@@ -21,11 +21,12 @@ private final class FixedLinkPreviewProvider: LinkPreviewProvider {
 }
 
 @MainActor
-private func settle(_ condition: () -> Bool) async {
-    for _ in 0..<200 {
+private func settle(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
+    for _ in 0..<500 {
         if condition() { return }
         await Task.yield()
     }
+    if !condition() { Issue.record("the condition never held", sourceLocation: sourceLocation) }
 }
 
 @MainActor @Test func linkPreviewCollapsesIntoACardThatOpensOnTapAndExpandsFromTheMenu() async throws {
@@ -57,6 +58,10 @@ private func settle(_ condition: () -> Bool) async {
     #expect(textView.tapRenderedLink(atPoint: onCard))
     #expect(opened == [sampleURL])
     #expect(textView.linkPreviewController.collapsedLocations == [5])
+    // Cmd+タップもカードで当てて開く
+    #expect(textView.shouldInterceptTap(atPoint: onCard, modifiers: .command))
+    #expect(textView.openLink(atPoint: onCard))
+    #expect(opened == [sampleURL, sampleURL])
 
     // 長押しのメニュー: Open Link / Copy Link / Edit。Edit で URL の末尾にキャレットが置かれ、展開する
     let menu = textView.linkMenu(for: hit)

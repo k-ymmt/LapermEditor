@@ -108,9 +108,10 @@ final class MarkdownEditorEngine: NSObject {
         tables.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         codeBlocks.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         linkPreviews.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
+        linkPreviews.exemptsExpandedBlocks = false
         imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
         linkPreviewStore.imageLoader = imagePreviewController.loader
-        linkPreviewStore.onChange = { [weak self] in self?.linkPreviewsDidLoad() }
+        linkPreviewStore.onChange = { [weak self] destinations in self?.linkPreviewsDidLoad(destinations: destinations) }
 
         foldingController.onOutlineChanged = { [weak self] in
             guard let self else { return }
@@ -590,10 +591,16 @@ final class MarkdownEditorEngine: NSObject {
         applyBlockPreviewChanges(linkPreviews)
     }
 
-    /// 取得(ページの情報、画像)が終わった: レイアウトを取り直して、折りたたみ / 高さ / 見た目の変化を反映する。
-    private func linkPreviewsDidLoad() {
-        linkPreviews.invalidateLayouts()
-        applyLinkPreviewChanges()
+    /// 取得(ページの情報、画像)が終わった: その URL の候補(空なら全部)のレイアウトを取り直して、折りたたみ / 高さ / 見た目の
+    /// 変化を反映する。マウスの追跡中(ドラッグ選択)は作り直しを保留し、追跡の終わりでまとめて反映する(選択・フォーカスの
+    /// 変化と同じ: 途中で本文が動くと選択位置が変わる)。
+    private func linkPreviewsDidLoad(destinations: Set<String>) {
+        if destinations.isEmpty {
+            linkPreviews.invalidateLayouts()
+        } else {
+            linkPreviews.invalidateLayouts { destinations.contains($0.block.destination) }
+        }
+        if canRegenerateNow { applyLinkPreviewChanges() }
     }
 
     /// このフラグメント(1 テキスト段落)が折りたたまれた候補の段落なら、カードの配置を返す。ビューポートレイアウトパスから
@@ -1172,9 +1179,7 @@ final class MarkdownEditorEngine: NSObject {
         guard characterIndex <= text.length else { return false }
         let paragraph = text.paragraphRange(for: NSRange(location: characterIndex, length: 0))
         if livePreview.isFocused(paragraph: paragraph) { return false }
-        if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) || linkPreviews.isExempt(paragraph: paragraph) {
-            return false
-        }
+        if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) { return false }
         return true
     }
 

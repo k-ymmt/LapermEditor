@@ -46,8 +46,9 @@ final class LinkPreviewStore {
             resetImages()
         }
     }
-    /// 取得(ページの情報、画像)が終わって表示が変わりうるときに呼ばれる(エンジンがカードを作り直す)。
-    var onChange: (() -> Void)?
+    /// 取得(ページの情報、画像)が終わって表示が変わりうるときに、影響する URL(書かれたまま)の集合で呼ばれる(エンジンが
+    /// その候補のカードだけ作り直す)。空の集合は「全部」(ローダーや設定の変更)。
+    var onChange: ((Set<String>) -> Void)?
 
     private(set) var states: [String: State] = [:]
     private var tasks: [String: Task<Void, Never>] = [:]
@@ -118,7 +119,7 @@ final class LinkPreviewStore {
         for task in imageTasks.values { task.cancel() }
         imageTasks = [:]
         images = [:]
-        onChange?()
+        onChange?([])
     }
 
     private func startLoad(destination: String) {
@@ -128,13 +129,15 @@ final class LinkPreviewStore {
         }
         states[destination] = .loading
         tasks[destination] = Task { [weak self] in
+            // 走る前に取り消された(URL が消えた、設定 OFF、Store の解放)Task は Provider を呼ばない: 要求を出さない約束
+            guard !Task.isCancelled, self != nil else { return }
             let result = await provider.linkPreview(for: url)
             guard let self, !Task.isCancelled else { return }
             self.tasks[destination] = nil
             // 編集レース対策: この URL がまだ loading のときだけ反映する(update / resetLoads で破棄済みなら何もしない)
             guard self.states[destination] == .loading else { return }
             self.states[destination] = result.map(State.loaded) ?? .unavailable
-            self.onChange?()
+            self.onChange?([destination])
         }
     }
 
@@ -146,19 +149,29 @@ final class LinkPreviewStore {
         images[url] = .loading
         let loader = imageLoader
         imageTasks[url] = Task { [weak self] in
+            guard !Task.isCancelled, self != nil else { return }
             let result: ImageState
             do {
                 result = .loaded(try await loader.loadImage(for: url))
             } catch {
-                Self.logger.info("Link Preview の画像を読めません: \(url.absoluteString, privacy: .public) error=\(String(describing: error), privacy: .public)")
+                // `og:image` の URL は署名付きのこともある: 公開ログに出さない
+                Self.logger.info("Link Preview の画像を読めません: \(url.absoluteString, privacy: .private) error=\(String(describing: error), privacy: .private)")
                 result = .failed
             }
             guard let self, !Task.isCancelled else { return }
             self.imageTasks[url] = nil
             guard self.images[url] == .loading else { return }
             self.images[url] = result
-            self.onChange?()
+            self.onChange?(self.destinations(usingImage: url))
         }
+    }
+
+    /// その画像を使う(取れたページの情報の `imageURL` が一致する)URL の集合。
+    func destinations(usingImage url: URL) -> Set<String> {
+        Set(states.compactMap { destination, state -> String? in
+            if case .loaded(let preview) = state, preview.imageURL == url { return destination }
+            return nil
+        })
     }
 
     /// テスト用: 状態を直接注入する。

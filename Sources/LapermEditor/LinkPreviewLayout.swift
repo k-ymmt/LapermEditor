@@ -80,30 +80,48 @@ struct LinkPreviewLayout: Equatable, BlockPreviewLayout {
 
     var reservedHeight: CGFloat { Self.topMargin + size.height + Self.bottomMargin }
 
+    /// 組版する文字数の上限(タイトル 1 行・説明 2 行・ホスト名 1 行に見える以上は組まない: 50 万文字の説明を返す Provider で
+    /// メインアクターを数十 ms 塞がない)。
+    static let maxTitleLength = 300
+    static let maxDescriptionLength = 600
+    static let maxHostLength = 200
+    /// 画像を置くのに要る文字の列の最小の幅。これより狭ければ画像無しのレイアウト。
+    static let minimumTextWidthBesideImage: CGFloat = 60
+
     static func make(preview: LinkPreview, image: PlatformImage?, host: String?, maxWidth: CGFloat, appearance: Appearance) -> LinkPreviewLayout {
         let available = maxWidth.isFinite && maxWidth > 0 ? maxWidth : fallbackWidth
         let width = min(available, self.maxWidth)
+        // 寸法の無い画像、画像を置くと文字の列が潰れる幅では画像無し
+        let image = image.flatMap { image -> PlatformImage? in
+            let size = image.size
+            guard size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0,
+                  width - padding * 2 - imageSide - imageGap >= minimumTextWidthBesideImage else { return nil }
+            return image
+        }
         let imageWidth = image == nil ? 0 : imageSide + imageGap
         let textWidth = max(1, width - padding * 2 - imageWidth)
 
         let titleText = NSAttributedString(
-            string: preview.title, attributes: attributes(font: appearance.titleFont, color: appearance.titleColor, lineBreakMode: .byTruncatingTail))
+            string: String(preview.title.prefix(maxTitleLength)),
+            attributes: attributes(font: appearance.titleFont, color: appearance.titleColor, lineBreakMode: .byTruncatingTail))
         let titleHeight = FrontMatterTableLayout.lineHeight(of: appearance.titleFont)
         var y = titleHeight
         var descriptionText: NSAttributedString?
         var descriptionHeight: CGFloat = 0
-        if let description = preview.description?.trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty {
+        if let description = preview.description?.prefix(maxDescriptionLength).trimmingCharacters(in: .whitespacesAndNewlines), !description.isEmpty {
             let text = NSAttributedString(
                 string: description, attributes: attributes(font: appearance.detailFont, color: appearance.descriptionColor, lineBreakMode: .byWordWrapping))
             let lineHeight = FrontMatterTableLayout.lineHeight(of: appearance.detailFont)
-            let measured = FrontMatterTableLayout.measure(text, width: textWidth).height
+            // 2 行ぶんの高さの中で測る(それより下は描かない)
+            let measured = text.boundingRect(
+                with: CGSize(width: textWidth, height: lineHeight * 2), options: [.usesLineFragmentOrigin, .usesFontLeading], context: nil).height
             descriptionHeight = min(ceil(measured), lineHeight * 2)
             descriptionText = text
             y += lineGap + descriptionHeight
         }
         var hostText: NSAttributedString?
         var hostHeight: CGFloat = 0
-        if let host = (preview.siteName ?? host)?.trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
+        if let host = (preview.siteName ?? host)?.prefix(maxHostLength).trimmingCharacters(in: .whitespacesAndNewlines), !host.isEmpty {
             hostText = NSAttributedString(
                 string: host, attributes: attributes(font: appearance.detailFont, color: appearance.hostColor, lineBreakMode: .byTruncatingTail))
             hostHeight = FrontMatterTableLayout.lineHeight(of: appearance.detailFont)

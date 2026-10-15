@@ -45,13 +45,14 @@ final class StubLinkPreviewProvider: LinkPreviewProvider {
     var pendingURLs: [URL] { Array(pending.keys) }
 }
 
-/// 条件が成り立つまでメインアクターの Task を進める(取得は Task で届く)。
+/// 条件が成り立つまでメインアクターの Task を進める(取得は Task で届く)。成り立たないまま尽きたらテストの失敗として記録する。
 @MainActor
-func settle(_ condition: () -> Bool) async {
-    for _ in 0..<200 {
+func settle(_ condition: () -> Bool, sourceLocation: SourceLocation = #_sourceLocation) async {
+    for _ in 0..<500 {
         if condition() { return }
         await Task.yield()
     }
+    if !condition() { Issue.record("the condition never held", sourceLocation: sourceLocation) }
 }
 
 @MainActor
@@ -60,7 +61,7 @@ private func makeController(_ text: String, provider: (any LinkPreviewProvider)?
     let controller = LinkPreviewController(theme: .default)
     let store = LinkPreviewStore()
     store.provider = provider
-    store.onChange = { [weak controller] in controller?.invalidateLayouts() }
+    store.onChange = { [weak controller] _ in controller?.invalidateLayouts() }
     controller.setEnabled(true)
     controller.containerWidthDidChange(width)
     // エンジンと同じ: 設定で有効、かつ Provider があるときだけ候補を持つ
@@ -175,6 +176,90 @@ private func update(_ controller: LinkPreviewController, store: LinkPreviewStore
     #expect(controller.collapsedLocations.isEmpty)
 }
 
+/// 取得中・取れなかった候補の URL は、描かれたリンクのまま(ADR 0031): クリックで開く、編集に落ちない。候補の段落は行単位の
+/// Syntax Marker 隠しから除外しない(除外すると「描かれていない」扱いになる。codex review of a070b6c)。
+@MainActor @Test func aLoadingOrUnavailableCandidateStaysARenderedLinkThatOpensOnClick() async throws {
+    let provider = StubLinkPreviewProvider()
+    provider.holds = true
+    let (window, textView) = makeTextView(sample, provider: provider)
+    defer { withExtendedLifetime(window) {} }
+    #expect(window.makeFirstResponder(textView))
+    textView.setSelectedRange(NSRange(location: 31, length: 0))
+    await settle { provider.pendingURLs == [sampleURL] }
+    layoutViewport(textView)
+    var opened: [URL] = []
+    textView.onOpenLink = { opened.append($0); return true }
+    #expect(!textView.linkPreviewController.isExempt(paragraph: NSRange(location: 5, length: 23)))
+    let onURL = try center(of: NSRange(location: 5, length: 22), in: textView)
+    #expect(textView.linkHit(atPoint: onURL)?.isRendered == true, "loading: the URL is still a rendered link")
+    #expect(textView.openRenderedLink(atPoint: onURL))
+    // 取れなかった: 同じ
+    provider.answer(sampleURL, with: nil)
+    await settle { textView.engine.linkPreviewStore.states[sampleURL.absoluteString] == .unavailable }
+    layoutViewport(textView)
+    #expect(textView.linkPreviewController.collapsedLocations.isEmpty)
+    #expect(textView.openRenderedLink(atPoint: try center(of: NSRange(location: 5, length: 22), in: textView)))
+    #expect(opened == [sampleURL, sampleURL])
+}
+
+/// カードの Cmd+クリックも書いた URL を開く(`opensOnCommandClick`。隠れた URL の文字ではなくカードで当てる)。
+@MainActor @Test func commandClickOnTheCardOpensTheWrittenURL() async throws {
+    let provider = StubLinkPreviewProvider(previews: [sampleURL.absoluteString: samplePreview])
+    let (window, textView) = makeTextView(sample, provider: provider)
+    defer { withExtendedLifetime(window) {} }
+    #expect(window.makeFirstResponder(textView))
+    textView.setSelectedRange(NSRange(location: 31, length: 0))
+    await settle { textView.linkPreviewController.isCollapsed(linkPreviewAt: 5) }
+    layoutViewport(textView)
+    let entry = try #require(textView.debugLinkPreviewEntries.first)
+    var opened: [URL] = []
+    textView.onOpenLink = { opened.append($0); return true }
+    textView.linkOptions.opensRenderedLinksOnClick = false
+    #expect(textView.openLink(atPoint: CGPoint(x: entry.frame.midX, y: entry.frame.midY)))
+    #expect(opened == [sampleURL])
+    textView.linkOptions.opensOnCommandClick = false
+    #expect(!textView.openLink(atPoint: CGPoint(x: entry.frame.midX, y: entry.frame.midY)))
+}
+
+/// 走る前に取り消された要求は Provider を呼ばない(URL が消えた、設定 OFF)。
+@MainActor @Test func aRequestCancelledBeforeItRunsNeverReachesTheProvider() async throws {
+    let provider = StubLinkPreviewProvider(previews: [sampleURL.absoluteString: samplePreview])
+    let (controller, store) = makeController(sample, provider: provider)
+    update(controller, store: store, with: sample, isActive: false)
+    for _ in 0..<20 { await Task.yield() }
+    #expect(provider.requested.isEmpty)
+    #expect(store.states.isEmpty)
+}
+
+/// 取得の完了はマウスの追跡中(ドラッグ選択)に段落を作り直さず、追跡の終わりで反映する。完了した URL の候補だけレイアウトを
+/// 取り直す(他のカードは触らない)。
+@MainActor @Test func aLoadDuringMouseTrackingIsAppliedWhenTrackingEnds() async throws {
+    let two = "https://a.example/post\n\nhttps://b.example\n\nafter"
+    let provider = StubLinkPreviewProvider(previews: [
+        sampleURL.absoluteString: samplePreview, "https://b.example": LinkPreview(title: "B"),
+    ])
+    provider.holds = true
+    let (window, textView) = makeTextView(two, provider: provider)
+    defer { withExtendedLifetime(window) {} }
+    #expect(window.makeFirstResponder(textView))
+    textView.setSelectedRange(NSRange(location: 44, length: 0))
+    await settle { provider.pendingURLs.count == 2 }
+    provider.answer(URL(string: "https://b.example")!, with: LinkPreview(title: "B"))
+    await settle { textView.linkPreviewController.isCollapsed(linkPreviewAt: 24) }
+    layoutViewport(textView)
+    #expect(textView.debugLinkPreviewEntries.map(\.location) == [24])
+
+    textView.engine.isMouseTracking = true
+    provider.answer(sampleURL, with: samplePreview)
+    await settle { textView.linkPreviewController.isCollapsed(linkPreviewAt: 0) }
+    // 表示は移したが、段落の作り直しは追跡が終わるまで保留
+    #expect(textView.linkPreviewController.hasPendingDirtyRanges)
+    textView.engine.isMouseTracking = false
+    #expect(!textView.linkPreviewController.hasPendingDirtyRanges)
+    layoutViewport(textView)
+    #expect(textView.debugLinkPreviewEntries.map(\.location) == [0, 24])
+}
+
 @MainActor @Test func onlyTheFirstHundredCandidatesOfADocumentAreFetched() async throws {
     let urls = (0..<120).map { "https://example.com/\($0)" }
     let provider = StubLinkPreviewProvider(previews: Dictionary(uniqueKeysWithValues: urls.map { ($0, LinkPreview(title: $0)) }))
@@ -239,6 +324,15 @@ private func update(_ controller: LinkPreviewController, store: LinkPreviewStore
     #expect(withImage.imageFrame == CGRect(x: 300 - 10 - 88, y: 10, width: 88, height: 88))
     #expect(withImage.titleFrame.maxX == 300 - 10 - 88 - LinkPreviewLayout.imageGap)
     #expect(withImage.size.height == 88 + LinkPreviewLayout.padding * 2)
+    // 狭い幅では画像を置かない(文字の列が潰れる)、寸法の無い画像も置かない、長すぎる文字列は組む前に切る
+    #expect(LinkPreviewLayout.make(preview: long, image: image, host: nil, maxWidth: 150, appearance: appearance).imageFrame == nil)
+    #expect(LinkPreviewLayout.make(preview: long, image: NSImage(size: .zero), host: nil, maxWidth: 300, appearance: appearance).imageFrame == nil)
+    let huge = LinkPreview(title: String(repeating: "t", count: 10_000), description: String(repeating: "d ", count: 100_000), siteName: String(repeating: "s", count: 5_000))
+    let capped = LinkPreviewLayout.make(preview: huge, image: nil, host: nil, maxWidth: 300, appearance: appearance)
+    #expect(capped.titleText.length == LinkPreviewLayout.maxTitleLength)
+    #expect(capped.descriptionText!.length <= LinkPreviewLayout.maxDescriptionLength)
+    #expect(capped.hostText!.length == LinkPreviewLayout.maxHostLength)
+    #expect(capped.descriptionFrame?.height == detailHeight * 2)
     // Theme の既存の項目だけを使う
     #expect(appearance.background == MarkdownTheme.default.codeBlockBackgroundColor)
     #expect(appearance.titleColor == MarkdownTheme.default.style(for: .link)?.foregroundColor)
@@ -258,6 +352,13 @@ private func makeTextView(_ markdown: String, provider: (any LinkPreviewProvider
     textView.highlightAll()
     textView.isLivePreviewEnabled = true
     return (window, textView)
+}
+
+/// 文字範囲の最初の行の矩形の中央(ビュー座標)。
+@MainActor
+private func center(of range: NSRange, in textView: MarkdownTextView) throws -> CGPoint {
+    let frame = try #require(textView.engine.segmentFrames(for: range)?.first)
+    return CGPoint(x: frame.midX, y: frame.midY)
 }
 
 @MainActor

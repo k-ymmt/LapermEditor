@@ -933,6 +933,8 @@ public final class MarkdownTextView: NSTextView {
     /// mouseDown から分離してあるのはテストで座標を直接渡せるようにするため。
     func openLink(atPoint point: NSPoint) -> Bool {
         guard linkOptions.opensOnCommandClick else { return false }
+        // Link Preview のカード(ADR 0046): 隠れた URL の文字ではなくカードで当てる
+        if let hit = engine.linkPreviewHit(atPoint: point) { return open(hit.target) }
         if let wiki = engine.wikiLinkReference(atPoint: point, characterIndex: characterIndexForInsertion(at: point)) {
             return onOpenWikiLink?(wiki) == true
         }

@@ -118,6 +118,10 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
     private(set) var exemptRanges: [NSRange] = []
     /// 今 TextKit の表示を変えてよいか(IME 変換中は false)。既定は常に true。
     var canPresent: () -> Bool = { true }
+    /// 展開中のブロックを行単位の Syntax Marker 隠しから除外する(Source の見た目にする)か。テーブル / コードブロックは true。
+    /// Link Preview は false: 候補の段落は URL だけで隠すマーカーが無く、除外すると「描かれたリンク」でなくなって取得中 / 取れな
+    /// かった URL のクリックが開かなくなる(codex review of a070b6c)。
+    var exemptsExpandedBlocks = true
 
     // MARK: 表示
 
@@ -185,7 +189,7 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
     private func refreshExemptRanges() {
         // 表示を移せない間(IME 変換中)は除外も動かさない(移せたときに `present` がまとめて取り直す)
         guard canPresent() else { return }
-        let new: [NSRange] = isEnabled
+        let new: [NSRange] = isEnabled && exemptsExpandedBlocks
             ? entries.filter { entry in !presented.contains { $0.blockParagraphsRange.location == entry.blockParagraphsRange.location } }
                 .map(\.blockParagraphsRange)
             : []
@@ -348,8 +352,8 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
 
     /// 全ブロックのレイアウトのキャッシュを捨てて表示を取り直す。材料の外にある入力(Link Preview の取得結果や画像)が
     /// 変わったときに使う: 作れなかったレイアウトが作れるようになれば折りたたみ、高さが変われば作り直し、見た目だけなら描き直す。
-    func invalidateLayouts() {
-        for index in entries.indices { entries[index].layout = nil }
+    func invalidateLayouts(where affected: (Source) -> Bool = { _ in true }) {
+        for index in entries.indices where affected(entries[index].source) { entries[index].layout = nil }
         present()
     }
 

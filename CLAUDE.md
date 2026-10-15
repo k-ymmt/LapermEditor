@@ -147,15 +147,19 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     text. `LinkPreviewStore` (engine-owned) keeps one request per written URL (first 100 candidates of a document,
     `update(destinations:)` cancels the ones that left, `provider` / option changes reset), loads the `og:image` through
     the engine's `ImageLoader` on first layout (file URLs always, http(s) only with `allowsRemoteImages`) and calls
-    `onChange` → `MarkdownEditorEngine.linkPreviewsDidLoad` → `BlockPreviewController.invalidateLayouts()` (drops every
-    cached layout and re-presents: collapse, re-reserve or redraw). `LinkPreviewOptions.isEnabled` false = no candidates
-    and no requests. `LinkPreviewLayout` (title 1 line bold, description ≤ 2 lines, site name or host 1 line, 88 pt
-    aspect-fill square image on the right when loaded, width = min(container, 560), `codeBlockBackground`, `link` colour,
-    body colour at 70 % / 50 %, drawn with `.truncatesLastVisibleLine`) and `BlockPreviewOverlayView<LinkPreviewEntry>`
+    `onChange(destinations)` → `MarkdownEditorEngine.linkPreviewsDidLoad` → `BlockPreviewController.invalidateLayouts(where:)`
+    (drops the cached layouts of those destinations only and re-presents: collapse, re-reserve or redraw; the paragraph
+    regeneration waits for `mouseTrackingDidEnd` while a drag is in progress). A task cancelled before it runs never calls
+    the provider. `LinkPreviewOptions.isEnabled` false = no candidates and no requests. The controller has
+    `exemptsExpandedBlocks = false`: a loading / unavailable candidate is not exempt from concealing, so its URL stays a
+    rendered link that opens on click (ADR 0031). `LinkPreviewLayout` (title 1 line bold, description ≤ 2 lines, site name or host 1 line, 88 pt
+    aspect-fill square image on the right when loaded and the text column keeps ≥ 60 pt, width = min(container, 560),
+    strings capped before layout (300 / 600 / 200 characters), `codeBlockBackground`, `link` colour, body colour at 70 % /
+    50 %, drawn with `.truncatesLastVisibleLine`) and `BlockPreviewOverlayView<LinkPreviewEntry>`
     placed at the text's left edge by `linkPreviewEntry(for:)`. The whole card is a rendered link:
     `linkPreviewHit(atPoint:)` runs first in `linkHit` with the written destination, `isRendered`, edit caret at the URL's
-    end — so clicks / taps open through `onOpenLink` (`opensRenderedLinksOnClick`), the menu offers Open / Copy / Edit, and
-    `shouldInterceptTap` claims the touch on iOS. Expanding = the caret touching the line (arrow keys from a neighbour,
+    end — so clicks / taps open through `onOpenLink` (`opensRenderedLinksOnClick`), Cmd+click / Cmd+tap (`openLink(atPoint:)`
+    checks the card first), the menu offers Open / Copy / Edit, and `shouldInterceptTap` claims the touch on iOS. Expanding = the caret touching the line (arrow keys from a neighbour,
     Edit) or an edit touching it (Backspace at the next line's start). Tests: `LinkPreviewTests.swift` (controller, store,
     layout, text view) with a `StubLinkPreviewProvider` that can hold answers; `UIKit/LinkPreviewTests.UIKit.swift`.
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
