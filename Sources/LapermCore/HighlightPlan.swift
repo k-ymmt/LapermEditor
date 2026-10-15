@@ -30,12 +30,14 @@ public struct HighlightPlan: Equatable, Sendable {
     public var tables: [MarkdownTable]
     /// コードブロック(出現順)。Live Preview がコードブロックの箱として描くために使う(Laperm ADR 0020)。
     public var codeBlocks: [MarkdownCodeBlock]
+    /// 裸の URL 1 つだけの段落(出現順)。Live Preview が Link Preview のカードとして描くために使う(Laperm ADR 0046)。
+    public var linkPreviews: [LinkPreviewCandidate]
 
     public init(
         spans: [HighlightSpan] = [], images: [ImageReference] = [], links: [LinkReference] = [],
         wikiLinks: [WikiLinkReference] = [],
         concealableMarkers: [NSRange] = [], frontMatter: FrontMatter? = nil, tables: [MarkdownTable] = [],
-        codeBlocks: [MarkdownCodeBlock] = []
+        codeBlocks: [MarkdownCodeBlock] = [], linkPreviews: [LinkPreviewCandidate] = []
     ) {
         self.spans = spans
         self.images = images
@@ -45,6 +47,7 @@ public struct HighlightPlan: Equatable, Sendable {
         self.frontMatter = frontMatter
         self.tables = tables
         self.codeBlocks = codeBlocks
+        self.linkPreviews = linkPreviews
     }
 
     /// 編集(NSTextStorageDelegate の didProcessEditing 相当の情報)に合わせて
@@ -117,10 +120,15 @@ public struct HighlightPlan: Equatable, Sendable {
             if block.isTouched(byEditBefore: preEditRange) { return nil }
             return block.range.location >= NSMaxRange(preEditRange) ? block.shifted(by: delta) : block
         }
+        // Link Preview の候補も同じ規則(Live Preview のカードと共有)
+        let resultLinkPreviews = linkPreviews.compactMap { candidate -> LinkPreviewCandidate? in
+            if candidate.isTouched(byEditBefore: preEditRange) { return nil }
+            return candidate.range.location >= NSMaxRange(preEditRange) ? candidate.shifted(by: delta) : candidate
+        }
         return HighlightPlan(
             spans: resultSpans, images: resultImages, links: resultLinks, wikiLinks: resultWikiLinks,
             concealableMarkers: resultMarkers,
-            frontMatter: resultFrontMatter, tables: resultTables, codeBlocks: resultCodeBlocks)
+            frontMatter: resultFrontMatter, tables: resultTables, codeBlocks: resultCodeBlocks, linkPreviews: resultLinkPreviews)
     }
 
     /// 編集より前なら不変、後なら delta 平行移動、交差なら nil(破棄)。

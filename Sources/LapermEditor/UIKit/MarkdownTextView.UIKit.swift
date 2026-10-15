@@ -24,6 +24,8 @@ public final class MarkdownTextView: UITextView {
     private var collectedTableEntries: [TablePreviewEntry] = []
     private let codeBlockPreviewOverlay = CodeBlockPreviewOverlayView()
     private var collectedCodeBlockEntries: [CodeBlockPreviewEntry] = []
+    private let linkPreviewOverlay = LinkPreviewOverlayView()
+    private var collectedLinkPreviewEntries: [LinkPreviewEntry] = []
     private let linkHoverOverlay = LinkHoverOverlayView()
     private var collectedLines: [GutterLine] = []
     private var collectedImageEntries: [ImagePreviewOverlayEntry] = []
@@ -71,6 +73,10 @@ public final class MarkdownTextView: UITextView {
     var debugCodeBlockEntries: [CodeBlockPreviewEntry] { collectedCodeBlockEntries }
     /// テスト用: コードブロックの折りたたみ状態。
     var codeBlockPreviewController: CodeBlockPreviewController { engine.codeBlocks }
+    /// テスト用: 直近のビューポートレイアウトで置いた Link Preview のカード(折りたたまれているものだけ)。
+    var debugLinkPreviewEntries: [LinkPreviewEntry] { collectedLinkPreviewEntries }
+    /// テスト用: Link Preview の折りたたみ状態。
+    var linkPreviewController: LinkPreviewController { engine.linkPreviews }
 
     public var theme: MarkdownTheme {
         get { engine.theme }
@@ -220,6 +226,18 @@ public final class MarkdownTextView: UITextView {
         set { engine.imageLoader = newValue }
     }
 
+    /// Link Preview(Laperm ADR 0046)のページの情報の取得元。nil(既定)なら機能は無効。差し替えると全部取り直す。
+    public var linkPreviewProvider: (any LinkPreviewProvider)? {
+        get { engine.linkPreviewProvider }
+        set { engine.linkPreviewProvider = newValue }
+    }
+
+    /// Link Preview の設定。無効にすると進行中の取得も取り消す。
+    public var linkPreviewOptions: LinkPreviewOptions {
+        get { engine.linkPreviewOptions }
+        set { engine.linkPreviewOptions = newValue }
+    }
+
     // MARK: - アウトライン / 折りたたみ
 
     /// 現在のアウトライン(パース確定時に更新される)
@@ -330,6 +348,7 @@ public final class MarkdownTextView: UITextView {
         addSubview(frontMatterTableView)
         addSubview(tablePreviewOverlay)
         addSubview(codeBlockPreviewOverlay)
+        addSubview(linkPreviewOverlay)
         updateTextInsets()
 
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
@@ -702,6 +721,7 @@ public final class MarkdownTextView: UITextView {
             x: 0, y: 0, width: bounds.width, height: max(contentSize.height, bounds.height))
         tablePreviewOverlay.frame = imageOverlay.frame
         codeBlockPreviewOverlay.frame = imageOverlay.frame
+        linkPreviewOverlay.frame = imageOverlay.frame
         updateLinkHoverOverlay()
         if imageContainerWidth != lastImageContainerWidth {
             lastImageContainerWidth = imageContainerWidth
@@ -769,6 +789,7 @@ public final class MarkdownTextView: UITextView {
         collectedFrontMatterEntry = nil
         collectedTableEntries.removeAll(keepingCapacity: true)
         collectedCodeBlockEntries.removeAll(keepingCapacity: true)
+        collectedLinkPreviewEntries.removeAll(keepingCapacity: true)
         engine.viewportLayoutWillBegin()
     }
 
@@ -784,6 +805,7 @@ public final class MarkdownTextView: UITextView {
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
         if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
         if let entry = engine.codeBlockPreviewEntry(for: textLayoutFragment) { collectedCodeBlockEntries.append(entry) }
+        if let entry = engine.linkPreviewEntry(for: textLayoutFragment) { collectedLinkPreviewEntries.append(entry) }
         guard showsLineNumbers, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -797,6 +819,7 @@ public final class MarkdownTextView: UITextView {
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
         tablePreviewOverlay.update(entries: collectedTableEntries)
         codeBlockPreviewOverlay.update(entries: collectedCodeBlockEntries)
+        linkPreviewOverlay.update(entries: collectedLinkPreviewEntries)
     }
 
     // MARK: - 座標

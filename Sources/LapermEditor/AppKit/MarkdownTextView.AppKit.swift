@@ -170,6 +170,18 @@ public final class MarkdownTextView: NSTextView {
         set { engine.imageLoader = newValue }
     }
 
+    /// Link Preview(Laperm ADR 0046)のページの情報の取得元。nil(既定)なら機能は無効。差し替えると全部取り直す。
+    public var linkPreviewProvider: (any LinkPreviewProvider)? {
+        get { engine.linkPreviewProvider }
+        set { engine.linkPreviewProvider = newValue }
+    }
+
+    /// Link Preview の設定。無効にすると進行中の取得も取り消す。
+    public var linkPreviewOptions: LinkPreviewOptions {
+        get { engine.linkPreviewOptions }
+        set { engine.linkPreviewOptions = newValue }
+    }
+
     // MARK: - アウトライン / 折りたたみ
 
     /// 現在のアウトライン(パース確定時に更新される)
@@ -256,6 +268,8 @@ public final class MarkdownTextView: NSTextView {
     private var collectedTableEntries: [TablePreviewEntry] = []
     private let codeBlockPreviewOverlay = CodeBlockPreviewOverlayView()
     private var collectedCodeBlockEntries: [CodeBlockPreviewEntry] = []
+    private let linkPreviewOverlay = LinkPreviewOverlayView()
+    private var collectedLinkPreviewEntries: [LinkPreviewEntry] = []
 
     /// テスト用: 直近のビューポートレイアウトで収集したオーバーレイ配置。
     var debugImageEntries: [ImagePreviewOverlayEntry] { collectedImageEntries }
@@ -271,6 +285,10 @@ public final class MarkdownTextView: NSTextView {
     var debugCodeBlockEntries: [CodeBlockPreviewEntry] { collectedCodeBlockEntries }
     /// テスト用: コードブロックの折りたたみ状態。
     var codeBlockPreviewController: CodeBlockPreviewController { engine.codeBlocks }
+    /// テスト用: 直近のビューポートレイアウトで置いた Link Preview のカード(折りたたまれているものだけ)。
+    var debugLinkPreviewEntries: [LinkPreviewEntry] { collectedLinkPreviewEntries }
+    /// テスト用: Link Preview の折りたたみ状態。
+    var linkPreviewController: LinkPreviewController { engine.linkPreviews }
 
     public convenience init(theme: MarkdownTheme = .default) {
         let contentStorage = NSTextContentStorage()
@@ -320,6 +338,8 @@ public final class MarkdownTextView: NSTextView {
         addSubview(tablePreviewOverlay)
         codeBlockPreviewOverlay.autoresizingMask = [.width, .height]
         addSubview(codeBlockPreviewOverlay)
+        linkPreviewOverlay.autoresizingMask = [.width, .height]
+        addSubview(linkPreviewOverlay)
         syncEditorFocus()
     }
 
@@ -366,6 +386,7 @@ public final class MarkdownTextView: NSTextView {
         collectedFrontMatterEntry = nil
         collectedTableEntries.removeAll(keepingCapacity: true)
         collectedCodeBlockEntries.removeAll(keepingCapacity: true)
+        collectedLinkPreviewEntries.removeAll(keepingCapacity: true)
         engine.viewportLayoutWillBegin()
     }
 
@@ -381,6 +402,7 @@ public final class MarkdownTextView: NSTextView {
         if let entry = engine.frontMatterTableEntry(for: textLayoutFragment) { collectedFrontMatterEntry = entry }
         if let entry = engine.tablePreviewEntry(for: textLayoutFragment) { collectedTableEntries.append(entry) }
         if let entry = engine.codeBlockPreviewEntry(for: textLayoutFragment) { collectedCodeBlockEntries.append(entry) }
+        if let entry = engine.linkPreviewEntry(for: textLayoutFragment) { collectedLinkPreviewEntries.append(entry) }
         guard gutterView != nil, let line = engine.gutterLine(for: textLayoutFragment) else { return }
         collectedLines.append(line)
     }
@@ -394,6 +416,7 @@ public final class MarkdownTextView: NSTextView {
         frontMatterTableView.update(entry: collectedFrontMatterEntry)
         tablePreviewOverlay.update(entries: collectedTableEntries)
         codeBlockPreviewOverlay.update(entries: collectedCodeBlockEntries)
+        linkPreviewOverlay.update(entries: collectedLinkPreviewEntries)
     }
 
     /// ガター付きの推奨構成。documentView は MarkdownTextView。

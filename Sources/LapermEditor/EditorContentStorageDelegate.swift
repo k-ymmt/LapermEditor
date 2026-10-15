@@ -28,11 +28,14 @@ final class EditorContentStorageDelegate: NSObject {
     let tables: TablePreviewController?
     /// nil ならコードブロックの折りたたみ無し(単体テストの継ぎ目)。
     let codeBlocks: CodeBlockPreviewController?
+    /// nil なら Link Preview の折りたたみ無し(単体テストの継ぎ目)。
+    let linkPreviews: LinkPreviewController?
 
     init(
         foldingController: FoldingController, fragmentProvider: BlockFragmentProvider,
         livePreview: LivePreviewConcealer, frontMatter: FrontMatterController? = nil,
-        tables: TablePreviewController? = nil, codeBlocks: CodeBlockPreviewController? = nil
+        tables: TablePreviewController? = nil, codeBlocks: CodeBlockPreviewController? = nil,
+        linkPreviews: LinkPreviewController? = nil
     ) {
         self.foldingController = foldingController
         self.fragmentProvider = fragmentProvider
@@ -40,6 +43,7 @@ final class EditorContentStorageDelegate: NSObject {
         self.frontMatter = frontMatter
         self.tables = tables
         self.codeBlocks = codeBlocks
+        self.linkPreviews = linkPreviews
     }
 }
 
@@ -51,12 +55,14 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
     ) -> Bool {
         // 折りたたまれた Front Matter の段落(開きの `---` 以外)、テーブルの段落(ヘッダー行以外)、コードブロックの
         // 段落(先頭の行以外)は列挙しない
-        if frontMatter?.isCollapsed == true || tables?.presented.isEmpty == false || codeBlocks?.presented.isEmpty == false,
+        if frontMatter?.isCollapsed == true || tables?.presented.isEmpty == false || codeBlocks?.presented.isEmpty == false
+            || linkPreviews?.presented.isEmpty == false,
            let location = textElement.elementRange?.location {
             let offset = textContentManager.offset(from: textContentManager.documentRange.location, to: location)
             if let frontMatter, frontMatter.isCollapsed, !frontMatter.shouldEnumerate(paragraphStartingAt: offset) { return false }
             if let tables, !tables.shouldEnumerate(paragraphStartingAt: offset) { return false }
             if let codeBlocks, !codeBlocks.shouldEnumerate(paragraphStartingAt: offset) { return false }
+            if let linkPreviews, !linkPreviews.shouldEnumerate(paragraphStartingAt: offset) { return false }
         }
         return foldingController.textContentManager(
             textContentManager, shouldEnumerate: textElement, options: options)
@@ -69,9 +75,11 @@ extension EditorContentStorageDelegate: NSTextContentStorageDelegate {
         if let collapsed = frontMatter?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         if let collapsed = tables?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         if let collapsed = codeBlocks?.textParagraph(with: range, in: textContentStorage) { return collapsed }
+        if let collapsed = linkPreviews?.textParagraph(with: range, in: textContentStorage) { return collapsed }
         let base = fragmentProvider.textParagraph(with: range, in: textContentStorage)
-        // 展開中のテーブル / コードブロックのブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
-        if tables?.isExempt(paragraph: range) == true || codeBlocks?.isExempt(paragraph: range) == true { return base }
+        // 展開中のテーブル / コードブロック / Link Preview のブロックは Source と同じ見た目(行単位の Syntax Marker 隠し無し。ADR 0019)
+        if tables?.isExempt(paragraph: range) == true || codeBlocks?.isExempt(paragraph: range) == true
+            || linkPreviews?.isExempt(paragraph: range) == true { return base }
         return livePreview.textParagraph(with: range, base: base, in: textContentStorage)
     }
 }

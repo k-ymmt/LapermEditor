@@ -18,7 +18,8 @@ enum HighlightMapper {
             wikiLinks: visitor.wikiLinkReferences,
             concealableMarkers: visitor.concealableMarkers,
             tables: visitor.tables,
-            codeBlocks: visitor.codeBlocks
+            codeBlocks: visitor.codeBlocks,
+            linkPreviews: visitor.linkPreviews
         )
     }
 
@@ -37,6 +38,10 @@ enum HighlightMapper {
         var tables: [MarkdownTable] = []
         /// コードブロックの構造。Live Preview のコードブロックの箱が使う。
         var codeBlocks: [MarkdownCodeBlock] = []
+        /// 裸の URL 1 つだけの段落。Live Preview の Link Preview のカードが使う(Laperm ADR 0046)。
+        var linkPreviews: [LinkPreviewCandidate] = []
+        /// 裸の URL として拾ったレンジ(`appendBareURLs`。`[]()` や `<URL>` のリンクは含まない)。段落が URL だけかの判定に使う。
+        private var bareURLRanges: [NSRange] = []
         /// 走査中のテーブル(セル内のインライン要素の位置補正に使う)。
         private var currentTable: MarkdownTable?
         private var tableDepth = 0
@@ -206,6 +211,36 @@ enum HighlightMapper {
             if let range = nsRange(of: thematicBreak), range.length > 0 {
                 blockSpans.append(HighlightSpan(range: range, kind: .thematicBreak))
             }
+        }
+
+        /// 文書直下(リスト項目・引用・表の外)の段落で、中身が裸の `http(s)://` の URL 1 つだけ(前後は空白のみ、1 行)の
+        /// ものを Link Preview の候補にする(Laperm ADR 0046)。`[]()` と `<URL>` は Link ノードなので裸の URL として拾われず、
+        /// 文中の URL は段落の中身が URL だけではないので、どちらも候補にならない。
+        mutating func visitParagraph(_ paragraph: Paragraph) {
+            let bareURLsBefore = bareURLRanges.count
+            descendInto(paragraph)
+            guard paragraph.parent is Document, bareURLRanges.count == bareURLsBefore + 1,
+                  let range = nsRange(of: paragraph), range.length > 0 else { return }
+            let urlRange = bareURLRanges[bareURLsBefore]
+            // 段落の行全体(行頭の空白を含む。cmark の段落のレンジは内容の先頭から始まる)。複数行の段落は候補にしない。
+            let line = text.lineRange(for: NSRange(location: range.location, length: 0))
+            var lineEnd = 0
+            var contentsEnd = 0
+            text.getLineStart(nil, end: &lineEnd, contentsEnd: &contentsEnd, for: NSRange(location: range.location, length: 0))
+            guard NSMaxRange(range) <= contentsEnd else { return }
+            let lineContent = NSRange(location: line.location, length: contentsEnd - line.location)
+            // 行の中身が空白以外は URL だけか
+            var start = lineContent.location
+            while start < urlRange.location, isWhitespace(text.character(at: start)) { start += 1 }
+            var end = NSMaxRange(lineContent)
+            while end > NSMaxRange(urlRange), isWhitespace(text.character(at: end - 1)) { end -= 1 }
+            guard start == urlRange.location, end == NSMaxRange(urlRange) else { return }
+            linkPreviews.append(LinkPreviewCandidate(
+                range: lineContent, urlRange: urlRange, destination: text.substring(with: urlRange)))
+        }
+
+        private func isWhitespace(_ c: unichar) -> Bool {
+            c == ASCII.space || c == ASCII.tab
         }
 
         mutating func visitTable(_ table: Markdown.Table) {
@@ -799,6 +834,7 @@ enum HighlightMapper {
                     inlineSpans.append(HighlightSpan(range: urlRange, kind: .link))
                     linkReferences.append(LinkReference(
                         text: destination, destination: destination, range: urlRange))
+                    bareURLRanges.append(urlRange)
                 }
                 i = j
             }

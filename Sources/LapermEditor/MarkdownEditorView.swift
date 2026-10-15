@@ -13,6 +13,8 @@ public struct MarkdownEditorView {
     private var imagePreviewOptions = ImagePreviewOptions()
     private var imageLoader: (any ImageLoader)?
     private var linkOptions = LinkOptions()
+    private var linkPreviewProvider: (any LinkPreviewProvider)?
+    private var linkPreviewOptions = LinkPreviewOptions()
     private var onOpenLink: ((URL) -> Bool)?
     private var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
     private var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)?
@@ -83,6 +85,20 @@ public struct MarkdownEditorView {
     }
 
     /// リンク操作の設定(Cmd+クリックで開く・相対パスの baseURL)。
+    /// Link Preview(Laperm ADR 0046)のページの情報の取得元。注入しなければ機能は無効。
+    public func linkPreviewProvider(_ provider: (any LinkPreviewProvider)?) -> MarkdownEditorView {
+        var copy = self
+        copy.linkPreviewProvider = provider
+        return copy
+    }
+
+    /// Link Preview の設定(有効 / 無効)。無効なら取得もしない。
+    public func linkPreviewOptions(_ options: LinkPreviewOptions) -> MarkdownEditorView {
+        var copy = self
+        copy.linkPreviewOptions = options
+        return copy
+    }
+
     public func linkOptions(_ options: LinkOptions) -> MarkdownEditorView {
         var copy = self
         copy.linkOptions = options
@@ -282,6 +298,8 @@ public struct MarkdownEditorView {
         textView.imagePreviewOptions = imagePreviewOptions
         if let imageLoader { textView.imageLoader = imageLoader }
         textView.linkOptions = linkOptions
+        textView.linkPreviewOptions = linkPreviewOptions
+        if textView.linkPreviewProvider !== linkPreviewProvider { textView.linkPreviewProvider = linkPreviewProvider }
         textView.isFoldingEnabled = foldingEnabled
         textView.isLivePreviewEnabled = livePreviewEnabled
         textView.editingOptions = editingOptions

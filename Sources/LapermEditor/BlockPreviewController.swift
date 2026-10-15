@@ -346,6 +346,13 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
     /// 望む表示と現在の表示がずれているか(`canPresent` が false で移せていない)。
     var hasPendingPresentation: Bool { desiredPresentation() != presented }
 
+    /// 全ブロックのレイアウトのキャッシュを捨てて表示を取り直す。材料の外にある入力(Link Preview の取得結果や画像)が
+    /// 変わったときに使う: 作れなかったレイアウトが作れるようになれば折りたたみ、高さが変われば作り直し、見た目だけなら描き直す。
+    func invalidateLayouts() {
+        for index in entries.indices { entries[index].layout = nil }
+        present()
+    }
+
     /// 望む表示を TextKit に見せる表示へ移す(`canPresent()` が true のとき)。変わった分の作り直し範囲を溜める。
     @discardableResult
     func present() -> Bool {

@@ -72,4 +72,5 @@ final class BlockPreviewItemView<Entry: BlockPreviewOverlayEntry>: UIView {
 
 typealias TablePreviewOverlayView = BlockPreviewOverlayView<TablePreviewEntry>
 typealias CodeBlockPreviewOverlayView = BlockPreviewOverlayView<CodeBlockPreviewEntry>
+typealias LinkPreviewOverlayView = BlockPreviewOverlayView<LinkPreviewEntry>
 #endif

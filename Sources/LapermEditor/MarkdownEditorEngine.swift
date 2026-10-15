@@ -50,6 +50,10 @@ final class MarkdownEditorEngine: NSObject {
     let tables: TablePreviewController
     /// Live Preview でコードブロックを箱に折りたたむ(ADR 0020)。
     let codeBlocks: CodeBlockPreviewController
+    /// Live Preview で裸の URL だけの段落を Link Preview のカードに折りたたむ(ADR 0046)。
+    let linkPreviews: LinkPreviewController
+    /// Link Preview の取得の状態(Provider への問い合わせとカードの画像)。
+    let linkPreviewStore = LinkPreviewStore()
     /// NSTextContentStorage の delegate(折畳の列挙除外とコードブロック段落の表示用スタイル)。
     /// delegate は weak 参照なのでここで保持する。
     private var contentStorageDelegate: EditorContentStorageDelegate?
@@ -80,6 +84,7 @@ final class MarkdownEditorEngine: NSObject {
             frontMatter.themeDidChange(newValue)
             tables.themeDidChange(newValue)
             codeBlocks.themeDidChange(newValue)
+            linkPreviews.themeDidChange(newValue)
         }
     }
 
@@ -89,18 +94,23 @@ final class MarkdownEditorEngine: NSObject {
         frontMatter = FrontMatterController(theme: theme)
         tables = TablePreviewController(theme: theme)
         codeBlocks = CodeBlockPreviewController(theme: theme)
+        linkPreviews = LinkPreviewController(theme: theme)
         super.init()
         fragmentProvider.collapsedBlockReservation = { [weak self] paragraph in
             guard let self else { return nil }
             return self.frontMatter.reservedHeight(forParagraph: paragraph)
                 ?? self.tables.reservedHeight(forParagraph: paragraph)
                 ?? self.codeBlocks.reservedHeight(forParagraph: paragraph)
+                ?? self.linkPreviews.reservedHeight(forParagraph: paragraph)
         }
         // IME 変換中は表示を切り替えない(段落の作り直しが変換セッションを乱す)。確定後の flush で移す。
         frontMatter.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         tables.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         codeBlocks.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
+        linkPreviews.canPresent = { [weak self] in self?.host?.editorHasMarkedText != true }
         imagePreviewController.baseParagraphStyle = theme.baseParagraphStyle
+        linkPreviewStore.imageLoader = imagePreviewController.loader
+        linkPreviewStore.onChange = { [weak self] in self?.linkPreviewsDidLoad() }
 
         foldingController.onOutlineChanged = { [weak self] in
             guard let self else { return }
@@ -146,7 +156,7 @@ final class MarkdownEditorEngine: NSObject {
         // コードブロック先頭 / 末尾段落に上下余白の段落スタイルを付ける(いずれもストレージ無変更)。
         let delegate = EditorContentStorageDelegate(
             foldingController: foldingController, fragmentProvider: fragmentProvider, livePreview: livePreview,
-            frontMatter: frontMatter, tables: tables, codeBlocks: codeBlocks)
+            frontMatter: frontMatter, tables: tables, codeBlocks: codeBlocks, linkPreviews: linkPreviews)
         contentStorageDelegate = delegate
         contentStorage.delegate = delegate
         fragmentProvider.fallbackDelegate = layoutManager.delegate
@@ -214,6 +224,7 @@ final class MarkdownEditorEngine: NSObject {
         updateFrontMatter()
         updateTables()
         updateCodeBlocks()
+        updateLinkPreviews()
         syncFolding()
         updateImagePreviews()
         host?.editorDidResync()
@@ -261,6 +272,9 @@ final class MarkdownEditorEngine: NSObject {
             refreshCodeBlockInputs()
             codeBlocks.setEnabled(newValue)
             applyCodeBlockChanges()
+            refreshLinkPreviewInputs()
+            linkPreviews.setEnabled(newValue)
+            applyLinkPreviewChanges()
         }
     }
 
@@ -400,12 +414,15 @@ final class MarkdownEditorEngine: NSObject {
     private var tablePreviewFrames: [Int: CGRect] = [:]
     /// 直近のビューポートレイアウトでコードブロックの箱を置いた矩形(ビュー座標)。ブロックの先頭位置がキー。
     private var codeBlockPreviewFrames: [Int: CGRect] = [:]
+    /// 直近のビューポートレイアウトで Link Preview のカードを置いた矩形(ビュー座標)。段落の先頭位置がキー。
+    private var linkPreviewFrames: [Int: CGRect] = [:]
 
     /// ビューポートレイアウトの開始。前回置いた表 / 箱の矩形を捨てる(ビューポートの外へ出た表の古い矩形が
     /// 本文の上に残らないように)。
     func viewportLayoutWillBegin() {
         tablePreviewFrames.removeAll(keepingCapacity: true)
         codeBlockPreviewFrames.removeAll(keepingCapacity: true)
+        linkPreviewFrames.removeAll(keepingCapacity: true)
     }
 
     /// このフラグメント(1 テキスト段落)が折りたたまれたテーブルのヘッダー行なら、表の配置を返す。
@@ -529,6 +546,86 @@ final class MarkdownEditorEngine: NSObject {
         }
     }
 
+    // MARK: - Link Preview(ADR 0046)
+
+    /// ページの情報の取得元。注入されなければ機能は無効(候補を持たず、要求も飛ばない)。差し替えると取り直す。
+    var linkPreviewProvider: (any LinkPreviewProvider)? {
+        get { linkPreviewStore.provider }
+        set {
+            guard linkPreviewStore.provider !== newValue else { return }
+            linkPreviewStore.provider = newValue
+            updateLinkPreviews()
+        }
+    }
+
+    /// Link Preview の設定。無効なら候補を持たず、進行中の取得も取り消す(外への要求はゼロ)。
+    var linkPreviewOptions = LinkPreviewOptions() {
+        didSet {
+            guard linkPreviewOptions != oldValue else { return }
+            updateLinkPreviews()
+        }
+    }
+
+    /// 候補が取得の対象になるか(設定で有効、かつ Provider あり)。
+    private var isLinkPreviewActive: Bool { linkPreviewOptions.isEnabled && linkPreviewStore.provider != nil }
+
+    /// パース確定後に候補を最新プラン(とハイライト適用済みのストレージ)へ同期し、折りたたみ / カードの高さが変われば作り直す。
+    private func updateLinkPreviews() {
+        guard let host, let storage = host.editorContentStorage?.textStorage else { return }
+        refreshLinkPreviewInputs()
+        linkPreviews.update(
+            plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString, store: linkPreviewStore,
+            isActive: isLinkPreviewActive)
+        applyLinkPreviewChanges()
+    }
+
+    /// 選択範囲とカードの幅(本文の幅: 表と同じ)を最新にする。
+    private func refreshLinkPreviewInputs() {
+        guard let host else { return }
+        linkPreviews.selectionDidChange(host.editorSelectedRanges)
+        linkPreviews.containerWidthDidChange(host.imageContainerWidth)
+    }
+
+    private func applyLinkPreviewChanges() {
+        applyBlockPreviewChanges(linkPreviews)
+    }
+
+    /// 取得(ページの情報、画像)が終わった: レイアウトを取り直して、折りたたみ / 高さ / 見た目の変化を反映する。
+    private func linkPreviewsDidLoad() {
+        linkPreviews.invalidateLayouts()
+        applyLinkPreviewChanges()
+    }
+
+    /// このフラグメント(1 テキスト段落)が折りたたまれた候補の段落なら、カードの配置を返す。ビューポートレイアウトパスから
+    /// 呼ぶ。カードの左端は本文の左端(行のパディングの内側。表と同じ)。
+    func linkPreviewEntry(for fragment: NSTextLayoutFragment) -> LinkPreviewEntry? {
+        guard !linkPreviews.presented.isEmpty,
+              let host, let contentManager = host.editorLayoutManager?.textContentManager,
+              let elementRange = fragment.textElement?.elementRange else { return nil }
+        let location = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
+        guard let item = linkPreviews.presentedLinkPreview(at: location) else { return nil }
+        let origin = host.editorTextContainerOrigin
+        let frame = fragment.layoutFragmentFrame
+        let textLinesBottom = fragment.textLineFragments.reduce(0) { max($0, $1.typographicBounds.maxY) }
+        let cardFrame = CGRect(
+            x: origin.x + host.editorLineFragmentPadding,
+            y: frame.minY + textLinesBottom + origin.y + LinkPreviewLayout.topMargin,
+            width: item.layout.size.width, height: item.layout.size.height)
+        linkPreviewFrames[location] = cardFrame
+        return LinkPreviewEntry(location: location, layout: item.layout, appearance: linkPreviews.appearance, frame: cardFrame)
+    }
+
+    /// point(ビュー座標)が折りたたまれた候補のカードの上なら、書かれた URL を開くリンク(「編集」は URL の末尾)。
+    /// カードの外、またはその候補に触る編集の後(次のパース待ち)なら nil。
+    func linkPreviewHit(atPoint point: CGPoint) -> LinkHit? {
+        for (location, frame) in linkPreviewFrames where frame.contains(point) {
+            guard let target = linkPreviews.linkTarget(forLinkPreviewAt: location),
+                  target.editCaret <= (host?.editorText as NSString?)?.length ?? 0 else { continue }
+            return LinkHit(target: .url(destination: target.destination), editCaret: NSRange(location: target.editCaret, length: 0), isRendered: true)
+        }
+        return nil
+    }
+
     /// パース確定後に隠すマーカーを最新プランへ同期し、変わった段落を再生成させる。
     private func updateLivePreview() {
         refreshLivePreviewFocus()
@@ -555,6 +652,7 @@ final class MarkdownEditorEngine: NSObject {
         if frontMatter.isEnabled { applyFrontMatterChanges() }
         if tables.isEnabled { applyTableChanges() }
         if codeBlocks.isEnabled { applyCodeBlockChanges() }
+        if linkPreviews.isEnabled { applyLinkPreviewChanges() }
         if livePreview.isEnabled { applyLivePreviewChanges() }
     }
 
@@ -575,6 +673,10 @@ final class MarkdownEditorEngine: NSObject {
         if codeBlocks.isEnabled, let host {
             codeBlocks.selectionDidChange(host.editorSelectedRanges)
             if canRegenerateNow { applyCodeBlockChanges() }
+        }
+        if linkPreviews.isEnabled, let host {
+            linkPreviews.selectionDidChange(host.editorSelectedRanges)
+            if canRegenerateNow { applyLinkPreviewChanges() }
         }
         guard livePreview.isEnabled else { return }
         // 再生成の最中に来た選択変更でもフォーカスは追従させ、再生成だけ次の機会(次の選択変更か flush、追跡の終わり)に回す。
@@ -612,6 +714,13 @@ final class MarkdownEditorEngine: NSObject {
             if canRegenerateNow { applyCodeBlockChanges() }
         } else {
             codeBlocks.editorFocusDidChange(focused)
+        }
+        if linkPreviews.isEnabled, linkPreviews.isEditorFocused != focused, let host {
+            linkPreviews.selectionDidChange(host.editorSelectedRanges)
+            linkPreviews.editorFocusDidChange(focused)
+            if canRegenerateNow { applyLinkPreviewChanges() }
+        } else {
+            linkPreviews.editorFocusDidChange(focused)
         }
         guard livePreview.isEditorFocused != focused else { return }
         // 先に選択範囲を最新にしてから切り替える(フォーカスの無い間の選択変更は段落を無効化しないので、
@@ -674,6 +783,7 @@ final class MarkdownEditorEngine: NSObject {
         applyFrontMatterChanges()
         applyTableChanges()
         applyCodeBlockChanges()
+        applyLinkPreviewChanges()
     }
 
     private func updateBlockDecorations() {
@@ -892,6 +1002,8 @@ final class MarkdownEditorEngine: NSObject {
             imagePreviewController.options = newValue
             imagePreviewController.resetLoads()
             updateImagePreviews()
+            // カードの画像(`og:image`)も同じ「リモート画像を読む」設定に従う(ADR 0046)
+            linkPreviewStore.allowsRemoteImages = newValue.allowsRemoteImages
         }
     }
 
@@ -902,6 +1014,7 @@ final class MarkdownEditorEngine: NSObject {
             imagePreviewController.loader = newValue
             imagePreviewController.resetLoads()
             updateImagePreviews()
+            linkPreviewStore.imageLoader = newValue
         }
     }
 
@@ -937,6 +1050,10 @@ final class MarkdownEditorEngine: NSObject {
             if codeBlocks.isEnabled, let host {
                 codeBlocks.containerWidthDidChange(frontMatterTableWidth(host))
                 applyCodeBlockChanges()
+            }
+            if linkPreviews.isEnabled, let host {
+                linkPreviews.containerWidthDidChange(host.imageContainerWidth)
+                applyLinkPreviewChanges()
             }
         }
     }
@@ -1016,6 +1133,8 @@ final class MarkdownEditorEngine: NSObject {
     /// セルの中のリンク、本文の Wiki Link / Markdown Link(裸の URL を含む)の順に見る。`characterIndex` は point に最も
     /// 近い文字(本文の判定に使う)。無ければ nil。
     func linkHit(atPoint point: CGPoint, characterIndex: Int) -> LinkHit? {
+        // Link Preview のカード(ADR 0046): カード全体が書かれた URL のリンク
+        if let hit = linkPreviewHit(atPoint: point) { return hit }
         if frontMatter.isCollapsed, let tableFrame = frontMatterTableFrame, tableFrame.contains(point) {
             guard let url = frontMatter.linkURL(atTablePoint: CGPoint(x: point.x - tableFrame.minX, y: point.y - tableFrame.minY)),
                   let caret = frontMatterCaretRange(atPoint: point)
@@ -1053,7 +1172,9 @@ final class MarkdownEditorEngine: NSObject {
         guard characterIndex <= text.length else { return false }
         let paragraph = text.paragraphRange(for: NSRange(location: characterIndex, length: 0))
         if livePreview.isFocused(paragraph: paragraph) { return false }
-        if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) { return false }
+        if tables.isExempt(paragraph: paragraph) || codeBlocks.isExempt(paragraph: paragraph) || linkPreviews.isExempt(paragraph: paragraph) {
+            return false
+        }
         return true
     }
 
@@ -1154,6 +1275,7 @@ extension MarkdownEditorEngine: NSTextStorageDelegate {
         frontMatter.noteEdit(editedRange: editedRange, changeInLength: delta)
         tables.noteEdit(editedRange: editedRange, changeInLength: delta)
         codeBlocks.noteEdit(editedRange: editedRange, changeInLength: delta)
+        linkPreviews.noteEdit(editedRange: editedRange, changeInLength: delta)
         // 編集で表 / 箱が動くので、前回のビューポートレイアウトの矩形では当たり判定しない(次のレイアウトが置き直す)
         viewportLayoutWillBegin()
         scheduleHighlight()

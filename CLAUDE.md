@@ -136,6 +136,28 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     right half of a glyph rounds to the end of its composed character sequence, never inside a surrogate pair) or
     copies `copyText` to the pasteboard (`NSPasteboard.general` / `UIPasteboard.general`) without expanding and shows
     the checkmark (`noteCodeBlockCopied`, redraw only). No syntax highlighting inside the box (deferred).
+  - Link previews (Laperm ADR 0046): `HighlightMapper.visitParagraph` adds a `LinkPreviewCandidate` to
+    `HighlightPlan.linkPreviews` for every top-level paragraph (parent is the Document) that is one line whose only
+    non-whitespace content is one bare `http(s)://` URL found by `appendBareURLs` (`range` = the whole line without its
+    newline, `urlRange`, `destination`; `[]()`, `<URL>`, a URL in a sentence, list items, quotes, tables and a trailing `.`
+    are not candidates; `shifted` / `isTouched` are the table rule). `LinkPreviewController` =
+    `BlockPreviewController<LinkPreviewSource>`: the source's `makeLayout` is nil until the injected `LinkPreviewProvider`
+    (`linkPreview(for:) async -> LinkPreview?`, `Sendable`; `MarkdownEditorView.linkPreviewProvider(_:)` /
+    `MarkdownTextView.linkPreviewProvider`, nil = feature off) has answered, so a loading or unavailable URL stays plain
+    text. `LinkPreviewStore` (engine-owned) keeps one request per written URL (first 100 candidates of a document,
+    `update(destinations:)` cancels the ones that left, `provider` / option changes reset), loads the `og:image` through
+    the engine's `ImageLoader` on first layout (file URLs always, http(s) only with `allowsRemoteImages`) and calls
+    `onChange` → `MarkdownEditorEngine.linkPreviewsDidLoad` → `BlockPreviewController.invalidateLayouts()` (drops every
+    cached layout and re-presents: collapse, re-reserve or redraw). `LinkPreviewOptions.isEnabled` false = no candidates
+    and no requests. `LinkPreviewLayout` (title 1 line bold, description ≤ 2 lines, site name or host 1 line, 88 pt
+    aspect-fill square image on the right when loaded, width = min(container, 560), `codeBlockBackground`, `link` colour,
+    body colour at 70 % / 50 %, drawn with `.truncatesLastVisibleLine`) and `BlockPreviewOverlayView<LinkPreviewEntry>`
+    placed at the text's left edge by `linkPreviewEntry(for:)`. The whole card is a rendered link:
+    `linkPreviewHit(atPoint:)` runs first in `linkHit` with the written destination, `isRendered`, edit caret at the URL's
+    end — so clicks / taps open through `onOpenLink` (`opensRenderedLinksOnClick`), the menu offers Open / Copy / Edit, and
+    `shouldInterceptTap` claims the touch on iOS. Expanding = the caret touching the line (arrow keys from a neighbour,
+    Edit) or an edit touching it (Backspace at the next line's start). Tests: `LinkPreviewTests.swift` (controller, store,
+    layout, text view) with a `StubLinkPreviewProvider` that can hold answers; `UIKit/LinkPreviewTests.UIKit.swift`.
   - Header view (shared API, platform hosting): `.headerView(height:_:)` on `MarkdownEditorView` (or
     `MarkdownTextView.headerView` / `headerHeight`) puts a SwiftUI view above the text *inside the scrolled
     content* (Laperm shows the note title there, Obsidian-style). The text view hosts it (`NSHostingView` /
