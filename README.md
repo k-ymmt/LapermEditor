@@ -82,6 +82,12 @@ note title, for example); it is aligned with the text's margins and the text sta
 the header's width with its ideal height, and the text follows when that height changes (a title that
 wraps onto a second line, for example).
 
+`.attachmentStore(store)` lets the host save pasted or dropped images (and images handed to
+`MarkdownEditorProxy.embedImages`): the `AttachmentStore` returns the saved file's path relative to the
+document, and the editor inserts `![](path)` (one per line, one undo). Without a store, images are not
+accepted. `.onDropItems(ofTypes:) { data in ... }` turns drops of the host's own pasteboard types into text
+at the drop point.
+
 On iOS, `.keyboardAccessory { ... }` puts a SwiftUI view above the keyboard, and
 `.adjustsContentInsetForKeyboard(false)` hands keyboard avoidance back to SwiftUI (drop the
 `.ignoresSafeArea(.keyboard)` in that case).

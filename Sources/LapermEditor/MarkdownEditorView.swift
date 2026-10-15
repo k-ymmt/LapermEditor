@@ -23,6 +23,8 @@ public struct MarkdownEditorView {
     private var livePreviewEnabled = false
     private var editingOptions = EditingOptions()
     private var proxy: MarkdownEditorProxy?
+    private var attachmentStore: (any AttachmentStore)?
+    private var droppedItemHandler: DroppedItemHandler?
     private var header: AnyView?
     /// ヘッダの高さ。nil なら中身の理想の高さに追従する(`headerView(_:)`)。
     private var headerHeight: CGFloat?
@@ -164,6 +166,22 @@ public struct MarkdownEditorView {
         return copy
     }
 
+    /// Embed(Laperm ADR 0045)の保存先。設定すると、画像のペースト / ドロップ(と `MarkdownEditorProxy.embedImages`)が画像を
+    /// ここに保存し、返った相対パスの `![](…)` を挿入する。テキストビューは weak に持つので、利用側(@State 等)が所有すること。
+    public func attachmentStore(_ store: (any AttachmentStore)?) -> MarkdownEditorView {
+        var copy = self
+        copy.attachmentStore = store
+        return copy
+    }
+
+    /// 利用側独自のペーストボードの型(`typeIdentifiers`)のドロップを受け、その型のデータ(項目ごとに 1 つ)から作った文字列を
+    /// 落とした位置に挿入する(nil なら何も挿入しない)。
+    public func onDropItems(ofTypes typeIdentifiers: [String], _ text: @escaping @MainActor @Sendable ([Data]) -> String?) -> MarkdownEditorView {
+        var copy = self
+        copy.droppedItemHandler = DroppedItemHandler(typeIdentifiers: typeIdentifiers, text: text)
+        return copy
+    }
+
     /// 本文の上に置くヘッダ(Note のタイトル欄など)。スクロールの内容に含まれ、本文と一緒にスクロールする。
     /// 本文と同じ左右位置(`editorMargins` の余白 + 行のパディング)に幅いっぱいで置かれ、高さは `height` に固定、
     /// 本文はその分だけ下から始まる。親の SwiftUI 環境(Environment)は引き継がない。
@@ -245,6 +263,8 @@ public struct MarkdownEditorView {
         textView.onFoldingChange = onFoldingChange.map { callback in
             { locations in DispatchQueue.main.async { callback(locations) } }
         }
+        if textView.attachmentStore !== attachmentStore { textView.attachmentStore = attachmentStore }
+        textView.droppedItemHandler = droppedItemHandler
         proxy?.textView = textView
     }
 

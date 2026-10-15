@@ -158,6 +158,21 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     arrive from inside the header's own layout pass, where a `needsLayout` set on AppKit is dropped, and on AppKit
     re-lays out the viewport on the next run loop (line numbers, images and the Front Matter table were collected
     against the old `textContainerOrigin`).
+  - Embed (Laperm ADR 0045, `AttachmentStore.swift`): the host saves images, the editor inserts the reference.
+    `MarkdownTextView.attachmentStore` (weak; `.attachmentStore(_:)` on the SwiftUI view) is an `AttachmentStore`
+    (`store(_ source: ImageAttachmentSource) async -> String?`: data + the original file name when there is one + the UTType
+    identifier in, the path relative to the document's folder out, nil = not saved, nothing inserted). While it is set, an image
+    paste (`paste(_:)` before the URL linkify), an image drop (`performDragOperation` on AppKit, `UITextDropDelegate` with
+    `dropPerformer = .delegate` on UIKit) and `embedImages(_:at:)` / `MarkdownEditorProxy.embedImages` run `ImageEmbedder`: every
+    source goes through the store, the returned paths become `MarkdownLinkSyntax.imageEmbeds` (`![](path)`, `<…>` around a path
+    with whitespace / parentheses / `<` `>`, one image per line) and are inserted with one `perform(EditCommand)` at the
+    caret (paste; the selection at completion) or the drop location (clamped to the document) — one undo removes them all
+    and never touches the saved files. `ImageSourceReader` picks what to embed: image data first (PNG kept, other raw
+    clipboard data converted to PNG with no name), then image file URLs (name and format kept), text never; an
+    `NSItemProvider` with a `suggestedName` is a user's file (Photos / Files drags) and keeps its format. On AppKit
+    `readablePasteboardTypes` adds PNG / TIFF / file URLs while a store is set (drag registration follows), on UIKit
+    `canPerformAction(paste:)` answers true for an image-only pasteboard. `droppedItemHandler` (`.onDropItems(ofTypes:_:)`) is the
+    second drop hook: the host's own pasteboard types (Laperm's sidebar rows) become text at the drop point.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
     macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`

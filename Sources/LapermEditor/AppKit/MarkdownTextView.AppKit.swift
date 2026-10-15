@@ -80,6 +80,34 @@ public final class MarkdownTextView: NSTextView {
     /// 編集支援機能の設定(デフォルト全 ON)
     public var editingOptions = EditingOptions()
 
+    /// Embed(Laperm ADR 0045)の保存先。設定されていれば、画像のペースト / ドロップとホストの `embedImages` が画像を
+    /// ここに保存し、返った相対パスの `![](…)` をキャレット(ドロップなら落とした位置)に挿入する。nil(既定)なら画像の
+    /// ペースト / ドロップは NSTextView のまま(ファイルの URL はパスの文字列、画像データは無視)。weak 保持なので利用側が持つ。
+    public weak var attachmentStore: (any AttachmentStore)? {
+        didSet { updateDragTypeRegistration() }
+    }
+
+    /// ホスト独自のペーストボードの型のドロップを文字列にして挿入する(Laperm のサイドバーの行、ADR 0045)。
+    public var droppedItemHandler: DroppedItemHandler? {
+        didSet { updateDragTypeRegistration() }
+    }
+
+    /// 受け付けるペーストボードの型: NSTextView のものに、`attachmentStore` があれば画像(PNG、TIFF、ファイルの URL)、
+    /// `droppedItemHandler` があればその型を足す(ドラッグの登録もこれで決まる)。
+    public override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        var types = super.readablePasteboardTypes
+        if attachmentStore != nil {
+            for type in [NSPasteboard.PasteboardType.png, .tiff, .fileURL] where !types.contains(type) { types.append(type) }
+        }
+        if let handler = droppedItemHandler {
+            for identifier in handler.typeIdentifiers {
+                let type = NSPasteboard.PasteboardType(identifier)
+                if !types.contains(type) { types.append(type) }
+            }
+        }
+        return types
+    }
+
     /// リンク操作の設定(デフォルト: Cmd+クリックで開く)
     public var linkOptions = LinkOptions()
 
@@ -705,11 +733,68 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func paste(_ sender: Any?) {
+        // 画像データ → 画像ファイルの URL → テキストの順(ADR 0045): 画像があれば Embed し、テキストは見ない
+        if attachmentStore != nil, !hasMarkedText(), ImageSourceReader.hasImages(NSPasteboard.general) {
+            embedImages(from: NSPasteboard.general, at: nil)
+            return
+        }
         if let pasted = NSPasteboard.general.string(forType: .string),
             applyLinkifiedPaste(pasted) {
             return
         }
         super.paste(sender)
+    }
+
+    // MARK: - Embed(Laperm ADR 0045)
+
+    /// 画像を `attachmentStore` に保存させ、`![](…)` を挿入する(ホストの Command「Insert Image…」など)。`location` が nil なら
+    /// 保存が終わった時点のキャレットに。保存先が無ければ何もせず nil。返した Task は挿入できたかを答える(テスト用)。
+    @discardableResult
+    public func embedImages(_ sources: [ImageAttachmentSource], at location: Int? = nil) -> Task<Bool, Never>? {
+        guard let store = attachmentStore else { return nil }
+        return Task { @MainActor in
+            await ImageEmbedder.embed(
+                sources, store: store, at: location,
+                textLength: { (self.string as NSString).length },
+                selection: { self.selectedRange() },
+                perform: { self.perform($0) })
+        }
+    }
+
+    /// ペーストボードの画像を Embed する(ペースト、ドロップ)。
+    @discardableResult
+    func embedImages(from pasteboard: NSPasteboard, at location: Int?) -> Task<Bool, Never>? {
+        guard attachmentStore != nil else { return nil }
+        return Task { @MainActor in
+            let sources = await ImageSourceReader.imageSources(from: pasteboard)
+            guard let task = embedImages(sources, at: location) else { return false }
+            return await task.value
+        }
+    }
+
+    /// ドロップされた文字列を `location` に挿入する(ホスト独自の項目の参照)。
+    @discardableResult
+    func insertDroppedText(_ text: String, at location: Int) -> Bool {
+        let range = NSRange(location: min(location, (string as NSString).length), length: 0)
+        return perform(EditCommand(replacementRange: range, replacementString: text,
+                                   selectedRange: NSRange(location: range.location + (text as NSString).length, length: 0)))
+    }
+
+    public override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let pasteboard = sender.draggingPasteboard
+        let location = characterIndexForInsertion(at: convert(sender.draggingLocation, from: nil))
+        if let handler = droppedItemHandler {
+            let items = ImageSourceReader.droppedItemData(from: pasteboard, for: handler)
+            if !items.isEmpty {
+                if let text = handler.text(items) { insertDroppedText(text, at: location) }
+                return true
+            }
+        }
+        if attachmentStore != nil, ImageSourceReader.hasImages(pasteboard) {
+            embedImages(from: pasteboard, at: location)
+            return true
+        }
+        return super.performDragOperation(sender)
     }
 
     /// ペースト文字列がリンク化条件を満たせば適用して true。

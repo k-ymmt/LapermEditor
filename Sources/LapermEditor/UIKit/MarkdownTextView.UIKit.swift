@@ -35,6 +35,15 @@ public final class MarkdownTextView: UITextView {
     private let linkLongPressDelegate = LinkLongPressGestureDelegate()
     private let linkMenuDelegate = LinkEditMenuDelegate()
     private lazy var linkMenuInteraction = UIEditMenuInteraction(delegate: linkMenuDelegate)
+    private let dropDelegate = EditorTextDropDelegate()
+
+    /// Embed(Laperm ADR 0045)の保存先。設定されていれば、画像のペースト / ドロップ(iPad)とホストの `embedImages` が画像を
+    /// ここに保存し、返った相対パスの `![](…)` をキャレット(ドロップなら落とした位置)に挿入する。nil(既定)なら画像の
+    /// ペースト / ドロップは UITextView のまま(受け付けない)。weak 保持なので利用側が持つ。
+    public weak var attachmentStore: (any AttachmentStore)?
+
+    /// ホスト独自のペーストボードの型のドロップを文字列にして挿入する(Laperm のサイドバーの行、ADR 0045)。
+    public var droppedItemHandler: DroppedItemHandler?
 
     /// テスト用: 共有エンジンのコンポーネントへの近道
     var markdownHighlighter: Highlighter { engine.highlighter }
@@ -326,6 +335,8 @@ public final class MarkdownTextView: UITextView {
         // 注意: delegate はビュー自身にしない。UIScrollView は panGestureRecognizer の delegate を
         // 自分自身にしているため、ビューを UIGestureRecognizerDelegate に準拠させると
         // shouldReceive(touch:) がパンにも適用されてスクロールできなくなる(実機検証で確認)。
+        dropDelegate.owner = self
+        textDropDelegate = dropDelegate
         tapDelegate.owner = self
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleEditorTap(_:)))
         tap.delegate = tapDelegate
@@ -1173,10 +1184,81 @@ public final class MarkdownTextView: UITextView {
     }
 
     public override func paste(_ sender: Any?) {
+        // 画像データ → 画像ファイルの URL → テキストの順(ADR 0045): 画像があれば Embed し、テキストは見ない
+        if attachmentStore != nil, markedTextRange == nil, Self.pasteboardHasImages(UIPasteboard.general) {
+            embedImages(from: UIPasteboard.general.itemProviders, at: nil)
+            return
+        }
         if let pasted = UIPasteboard.general.string, applyLinkifiedPaste(pasted) {
             return
         }
         super.paste(sender)
+    }
+
+    /// 画像しか載っていないペーストボードでも Paste を出す(UITextView は文字列のあるときだけ出す)。
+    public override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if action == #selector(paste(_:)), attachmentStore != nil, Self.pasteboardHasImages(UIPasteboard.general) { return true }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
+    static func pasteboardHasImages(_ pasteboard: UIPasteboard) -> Bool {
+        pasteboard.hasImages || ImageSourceReader.hasImages(pasteboard.itemProviders)
+    }
+
+    // MARK: - Embed(Laperm ADR 0045)
+
+    /// 画像を `attachmentStore` に保存させ、`![](…)` を挿入する(ホストの Command「Insert Image…」、写真ピッカー、カメラ)。
+    /// `location` が nil なら保存が終わった時点のキャレットに。保存先が無ければ何もせず nil。返した Task は挿入できたかを答える。
+    @discardableResult
+    public func embedImages(_ sources: [ImageAttachmentSource], at location: Int? = nil) -> Task<Bool, Never>? {
+        guard let store = attachmentStore else { return nil }
+        return Task { @MainActor in
+            await ImageEmbedder.embed(
+                sources, store: store, at: location,
+                textLength: { (self.text as NSString).length },
+                selection: { self.selectedRange },
+                perform: { self.perform($0) })
+        }
+    }
+
+    /// 項目(ペーストボード、ドロップ)の画像を Embed する。
+    @discardableResult
+    func embedImages(from providers: [NSItemProvider], at location: Int?) -> Task<Bool, Never>? {
+        guard attachmentStore != nil else { return nil }
+        return Task { @MainActor in
+            let sources = await ImageSourceReader.imageSources(from: providers)
+            guard let task = embedImages(sources, at: location) else { return false }
+            return await task.value
+        }
+    }
+
+    /// ドロップされた文字列を `location` に挿入する(ホスト独自の項目の参照)。
+    @discardableResult
+    func insertDroppedText(_ text: String, at location: Int) -> Bool {
+        let range = NSRange(location: min(location, (self.text as NSString).length), length: 0)
+        return perform(EditCommand(replacementRange: range, replacementString: text,
+                                   selectedRange: NSRange(location: range.location + (text as NSString).length, length: 0)))
+    }
+
+    /// このドロップをエディタ自身(`UITextDropDelegate` 経由)が引き受けるか: ホスト独自の項目か、保存先のある画像。
+    func handlesDrop(_ session: any UIDropSession) -> Bool {
+        if let handler = droppedItemHandler, session.hasItemsConforming(toTypeIdentifiers: handler.typeIdentifiers) { return true }
+        return attachmentStore != nil && ImageSourceReader.hasImages(session.items.map(\.itemProvider))
+    }
+
+    /// `handlesDrop` が true のドロップを行う: 落とした位置に、独自の項目の文字列か画像の Embed を挿入する。
+    func performCustomDrop(_ drop: any UITextDropRequest) {
+        let location = offset(from: beginningOfDocument, to: drop.dropPosition)
+        let providers = drop.dropSession.items.map(\.itemProvider)
+        if let handler = droppedItemHandler, drop.dropSession.hasItemsConforming(toTypeIdentifiers: handler.typeIdentifiers) {
+            Task { @MainActor in
+                let items = await ImageSourceReader.droppedItemData(from: providers, for: handler)
+                guard !items.isEmpty, let text = handler.text(items) else { return }
+                insertDroppedText(text, at: location)
+            }
+            return
+        }
+        embedImages(from: providers, at: location)
     }
 
     /// ペースト文字列がリンク化条件を満たせば適用して true。
@@ -1337,6 +1419,27 @@ private final class LinkEditMenuDelegate: NSObject, UIEditMenuInteractionDelegat
         animator: any UIEditMenuInteractionAnimating
     ) {
         owner?.pendingLinkHit = nil
+    }
+}
+
+/// ドロップの受け口(iPad、Laperm ADR 0045)。独自の項目と(保存先があれば)画像のドロップはビューでなく delegate が行い
+/// (`dropPerformer = .delegate`)、落とした位置に挿入する。それ以外は UITextView の既定(同じビューの中は移動、他からは複写)。
+@MainActor
+final class EditorTextDropDelegate: NSObject, UITextDropDelegate {
+    weak var owner: MarkdownTextView?
+
+    func textDroppableView(_ textDroppableView: any UIView & UITextDroppable, proposalForDrop drop: any UITextDropRequest) -> UITextDropProposal {
+        if owner?.handlesDrop(drop.dropSession) == true {
+            let proposal = UITextDropProposal(operation: .copy)
+            proposal.dropPerformer = .delegate
+            return proposal
+        }
+        return UITextDropProposal(operation: drop.dropSession.localDragSession != nil ? .move : .copy)
+    }
+
+    func textDroppableView(_ textDroppableView: any UIView & UITextDroppable, willPerformDrop drop: any UITextDropRequest) {
+        guard owner?.handlesDrop(drop.dropSession) == true else { return }
+        owner?.performCustomDrop(drop)
     }
 }
 #endif

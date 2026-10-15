@@ -29,6 +29,13 @@ public final class MarkdownEditorProxy {
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
     public func refreshWikiLinkResolution() { textView?.refreshWikiLinkResolution() }
 
+    /// 画像を Embed する(Laperm ADR 0045: ホストの Command「Insert Image…」、写真ピッカー、カメラ): `attachmentStore` に保存させ、
+    /// 返った相対パスの `![](…)` をキャレットに挿入する。保存先が無い・ビュー未接続なら nil。
+    @discardableResult
+    public func embedImages(_ sources: [ImageAttachmentSource]) -> Task<Bool, Never>? {
+        textView?.embedImages(sources)
+    }
+
     /// 選択範囲(なければカーソル位置の単語)のボールド / イタリックを切り替える。適用できたら true。
     @discardableResult
     public func toggleEmphasis(_ style: EmphasisStyle) -> Bool {
