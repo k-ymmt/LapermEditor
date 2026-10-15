@@ -1423,7 +1423,7 @@ private final class LinkEditMenuDelegate: NSObject, UIEditMenuInteractionDelegat
 }
 
 /// ドロップの受け口(iPad、Laperm ADR 0045)。独自の項目と(保存先があれば)画像のドロップはビューでなく delegate が行い
-/// (`dropPerformer = .delegate`)、落とした位置に挿入する。それ以外は UITextView の既定(同じビューの中は移動、他からは複写)。
+/// (`dropPerformer = .delegate`)、落とした位置に挿入する。それ以外は UITextView の提案のまま。
 @MainActor
 final class EditorTextDropDelegate: NSObject, UITextDropDelegate {
     weak var owner: MarkdownTextView?
@@ -1434,7 +1434,8 @@ final class EditorTextDropDelegate: NSObject, UITextDropDelegate {
             proposal.dropPerformer = .delegate
             return proposal
         }
-        return UITextDropProposal(operation: drop.dropSession.localDragSession != nil ? .move : .copy)
+        // 引き受けないドロップは UIKit の提案のまま(`localDragSession` は「同じアプリ」で「同じビュー」ではない。codex review)
+        return drop.suggestedProposal
     }
 
     func textDroppableView(_ textDroppableView: any UIView & UITextDroppable, willPerformDrop drop: any UITextDropRequest) {

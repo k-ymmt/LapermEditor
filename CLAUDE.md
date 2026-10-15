@@ -161,15 +161,20 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
   - Embed (Laperm ADR 0045, `AttachmentStore.swift`): the host saves images, the editor inserts the reference.
     `MarkdownTextView.attachmentStore` (weak; `.attachmentStore(_:)` on the SwiftUI view) is an `AttachmentStore`
     (`store(_ source: ImageAttachmentSource) async -> String?`: data + the original file name when there is one + the UTType
-    identifier in, the path relative to the document's folder out, nil = not saved, nothing inserted). While it is set, an image
+    identifier in, the path relative to the document's folder out, nil = not saved, nothing inserted; `canInsert()` — default
+    true — is asked after every source is stored and a false means the host moved to another document: nothing is inserted). While it is set, an image
     paste (`paste(_:)` before the URL linkify), an image drop (`performDragOperation` on AppKit, `UITextDropDelegate` with
     `dropPerformer = .delegate` on UIKit) and `embedImages(_:at:)` / `MarkdownEditorProxy.embedImages` run `ImageEmbedder`: every
     source goes through the store, the returned paths become `MarkdownLinkSyntax.imageEmbeds` (`![](path)`, `<…>` around a path
     with whitespace / parentheses / `<` `>`, one image per line) and are inserted with one `perform(EditCommand)` at the
-    caret (paste; the selection at completion) or the drop location (clamped to the document) — one undo removes them all
+    caret (paste; the start of the selection at completion, never replacing text selected meanwhile) or the drop location
+    (clamped to the document) — one undo removes them all
     and never touches the saved files. `ImageSourceReader` picks what to embed: image data first (PNG kept, other raw
     clipboard data converted to PNG with no name), then image file URLs (name and format kept), text never; an
-    `NSItemProvider` with a `suggestedName` is a user's file (Photos / Files drags) and keeps its format. On AppKit
+    `NSItemProvider` with a `suggestedName` is a user's file (Photos / Files drags) and keeps the format its name says
+    (`imageType(forNamed:among:)`), and a file-URL-only provider counts as an image only when its suggested name has an image
+    extension (a PDF URL stays a normal paste). `MarkdownLinkSyntax` writes `&` as `&amp;` (entity references are decoded once,
+    `\&` is not an escape in a destination) and wraps a path with a backslash in `<…>` with the backslash escaped. On AppKit
     `readablePasteboardTypes` adds PNG / TIFF / file URLs while a store is set (drag registration follows), on UIKit
     `canPerformAction(paste:)` answers true for an image-only pasteboard. `droppedItemHandler` (`.onDropItems(ofTypes:_:)`) is the
     second drop hook: the host's own pasteboard types (Laperm's sidebar rows) become text at the drop point.

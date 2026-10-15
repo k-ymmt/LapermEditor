@@ -8,12 +8,14 @@ public enum MarkdownLinkSyntax {
     /// `[…](…)` / `![…](…)` の括弧の中に書く destination。そのまま書けるパスはそのまま、そうでなければ `<…>` で囲む
     /// (囲いの中の `<` `>` はバックスラッシュで逃がす)。
     public static func destination(_ path: String) -> String {
+        // `&copy;` は文字参照として読まれるので `&amp;` で書く(復号は 1 回だけ。`\&` は destination のエスケープにならない。codex review)
+        let path = path.replacingOccurrences(of: "&", with: "&amp;")
         guard needsAngleBrackets(path) else { return path }
         var escaped = ""
         escaped.reserveCapacity(path.utf8.count + 2)
         for scalar in path.unicodeScalars {
             switch scalar {
-            case "<", ">", "\\": escaped.append("\\")
+            case "<", ">", "\\": escaped.append("\\")  // `\!` は次の文字のエスケープになる
             default: break
             }
             escaped.unicodeScalars.append(scalar)
@@ -21,12 +23,13 @@ public enum MarkdownLinkSyntax {
         return "<\(escaped)>"
     }
 
-    /// 空白・制御文字・括弧・`<` `>` を含む、または空のパスは `<…>` で囲まないと destination として読めない。
+    /// 空白・制御文字・括弧・`<` `>`・`\` を含む、または空のパスは `<…>` で囲まないと destination として書いたとおりに
+    /// 読めない。改行を含むパスは囲んでも読めない(ホストが保存前に拒む)。
     static func needsAngleBrackets(_ path: String) -> Bool {
         guard !path.isEmpty else { return true }
         return path.unicodeScalars.contains { scalar in
             switch scalar {
-            case "(", ")", "<", ">": return true
+            case "(", ")", "<", ">", "\\": return true
             default: return scalar.properties.isWhitespace || scalar.value < 0x20 || scalar.value == 0x7F
             }
         }
@@ -47,7 +50,7 @@ public enum MarkdownLinkSyntax {
         paths.map { image(path: $0) }.joined(separator: "\n")
     }
 
-    /// `[` `]` の中の文字列: 括弧とバックスラッシュを逃がし、改行は空白にする。
+    /// `[` `]` の中の文字列: 括弧とバックスラッシュを逃がし、`&` は `&amp;`、改行は空白にする。
     static func escapedLabel(_ text: String) -> String {
         var escaped = ""
         escaped.reserveCapacity(text.utf8.count)
@@ -56,6 +59,8 @@ public enum MarkdownLinkSyntax {
             case "[", "]", "\\":
                 escaped.append("\\")
                 escaped.unicodeScalars.append(scalar)
+            case "&":
+                escaped.append("&amp;")
             case "\n", "\r":
                 escaped.append(" ")
             default:

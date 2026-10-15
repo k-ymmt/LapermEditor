@@ -73,6 +73,27 @@ private let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
     let fromFile = await ImageSourceReader.imageSources(from: [file])
     #expect(fromFile.map(\.preferredName) == ["Diagram 1.png"])
     #expect(fromFile.first?.data == (try Data(contentsOf: url)))
+
+    // 名前付きで HEIC と PNG の両方を持つ provider: 名前の形式(JPEG)のバイト列を選ぶ(PNG を `.jpeg` の名前で保存しない)
+    let both = NSItemProvider()
+    both.suggestedName = "IMG_0002.jpeg"
+    both.registerDataRepresentation(forTypeIdentifier: UTType.png.identifier, visibility: .all) { completion in
+        completion(makePNGData(width: 2, height: 2), nil)
+        return nil
+    }
+    both.registerDataRepresentation(forTypeIdentifier: UTType.jpeg.identifier, visibility: .all) { completion in
+        completion(jpeg, nil)
+        return nil
+    }
+    let chosen = await ImageSourceReader.imageSources(from: [both])
+    #expect(chosen.first?.typeIdentifier == UTType.jpeg.identifier)
+    #expect(chosen.first?.data == jpeg)
+    #expect(chosen.first?.preferredName == "IMG_0002.jpeg")
+
+    // 画像でないファイルの URL(PDF)だけ: 画像の経路に入れない(通常のペーストに任せる)
+    let pdf = NSItemProvider(item: URL(filePath: "/tmp/x.pdf") as NSURL, typeIdentifier: UTType.fileURL.identifier)
+    pdf.suggestedName = "x.pdf"
+    #expect(!ImageSourceReader.hasImages([pdf]))
 }
 
 @Test func droppedItemDataIsCollectedPerItem() async {

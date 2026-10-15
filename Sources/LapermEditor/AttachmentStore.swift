@@ -36,6 +36,13 @@ public struct ImageAttachmentSource: Sendable {
 @MainActor
 public protocol AttachmentStore: AnyObject {
     func store(_ source: ImageAttachmentSource) async -> String?
+    /// 保存が終わった今、この文書に挿入してよいか。ホストが別の文書に切り替えていたら false(保存したファイルは残り、何も
+    /// 挿入しない: 古いビューへの挿入が新しい文書の本文を上書きしないように。codex review)。既定は true。
+    func canInsert() -> Bool
+}
+
+extension AttachmentStore {
+    public func canInsert() -> Bool { true }
 }
 
 /// ホスト独自のペーストボードの型(Laperm のサイドバーの行)のドロップを文字列にする(ADR 0045: Attachment の行をエディタへ
@@ -55,8 +62,9 @@ public struct DroppedItemHandler: Sendable {
 @MainActor
 enum ImageEmbedder {
     /// `sources` を順にホストに保存させ、返ったパスの `![](…)` を 1 つの編集(1 回の Undo)で挿入する。`location` が nil なら
-    /// 保存が終わった時点の選択範囲に(ペースト)、あればその位置に(ドロップ。待っている間に文書が短くなっていれば末尾に寄せる)。
-    /// 何か挿入できたら true。
+    /// 保存が終わった時点のキャレット(選択範囲の先頭。待っている間に選んだ文字列は置き換えない)に(ペースト)、あればその
+    /// 位置に(ドロップ。待っている間に文書が短くなっていれば末尾に寄せる)。保存の後にホストが `canInsert` で拒めば(別の
+    /// 文書に替わった)何も挿入しない。何か挿入できたら true。
     static func embed(
         _ sources: [ImageAttachmentSource],
         store: any AttachmentStore,
@@ -69,9 +77,9 @@ enum ImageEmbedder {
         for source in sources {
             if let path = await store.store(source) { paths.append(path) }
         }
-        guard !paths.isEmpty else { return false }
+        guard !paths.isEmpty, store.canInsert() else { return false }
         let text = MarkdownLinkSyntax.imageEmbeds(paths: paths)
-        let range = location.map { NSRange(location: min($0, textLength()), length: 0) } ?? selection()
+        let range = NSRange(location: min(location ?? selection().location, textLength()), length: 0)
         let caret = NSRange(location: range.location + (text as NSString).length, length: 0)
         return perform(EditCommand(replacementRange: range, replacementString: text, selectedRange: caret))
     }
@@ -117,12 +125,26 @@ public enum ImageSourceReader {
 
     // MARK: NSItemProvider(iOS のペースト / ドロップ、macOS のサイドバーへのドロップ)
 
-    /// `providers` のどれかが画像(データか画像ファイルの URL)を持つか。
+    /// `providers` のどれかが画像(画像データか、名前が画像の拡張子のファイルの URL)を持つか。URL だけで名前の分からない項目は
+    /// 画像とみなさない(PDF の URL を画像の経路に入れて、何も貼られないことがないように。codex review)。
     public static func hasImages(_ providers: [NSItemProvider]) -> Bool {
         providers.contains { provider in
             provider.registeredTypeIdentifiers.contains(where: isImageType)
-                || provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                || (provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                    && provider.suggestedName.map(isImageFileName) == true)
         }
+    }
+
+    /// 名前付きの項目(利用者のファイル)が使う型: 名前の拡張子の型が `types` にあればそれ(HEIC と PNG を併せ持つ provider で
+    /// `IMG_0001.HEIC` に PNG のバイト列を入れない。codex review)、無ければ最初の画像の型(拡張子はその型から)。
+    static func imageType(forNamed name: String, among types: [String]) -> String? {
+        let ext = (name as NSString).pathExtension
+        if !ext.isEmpty, let byName = UTType(filenameExtension: ext), byName.conforms(to: .image),
+           let match = types.first(where: { UTType($0)?.conforms(to: byName) == true })
+        {
+            return match
+        }
+        return types.first(where: isImageType)
     }
 
     /// `providers` から画像を取り出す(項目ごとに 1 枚。画像でない項目は飛ばす)。ファイルの URL は読める間に読む。
@@ -136,13 +158,16 @@ public enum ImageSourceReader {
 
     static func imageSource(from provider: NSItemProvider) async -> ImageAttachmentSource? {
         let types = provider.registeredTypeIdentifiers
-        // 画像データ(PNG 優先)。名前が付いていれば利用者のファイル: 形式も名前もそのまま。
+        // 名前が付いていれば利用者のファイル(Photos / Files のドラッグ): 名前の形式を選び、名前もそのまま。
+        if let name = provider.suggestedName, !name.isEmpty, let type = imageType(forNamed: name, among: types),
+           let data = await loadData(from: provider, type: type)
+        {
+            let ext = (name as NSString).pathExtension
+            let fileName = ext.isEmpty ? (UTType(type)?.preferredFilenameExtension.map { "\(name).\($0)" } ?? name) : name
+            return ImageAttachmentSource(data: data, preferredName: fileName, typeIdentifier: type)
+        }
+        // 名前の無い画像データ(クリップボードの生データ): PNG 優先、他は PNG に変換
         if let type = preferredImageType(among: types), let data = await loadData(from: provider, type: type) {
-            if let name = provider.suggestedName, !name.isEmpty {
-                let ext = (name as NSString).pathExtension
-                let fileName = ext.isEmpty ? (UTType(type)?.preferredFilenameExtension.map { "\(name).\($0)" } ?? name) : name
-                return ImageAttachmentSource(data: data, preferredName: fileName, typeIdentifier: type)
-            }
             guard let png = await Task.detached(priority: .userInitiated, operation: { pngData(from: data, typeIdentifier: type) }).value
             else { return nil }
             return ImageAttachmentSource(data: png, preferredName: nil, typeIdentifier: pngIdentifier)

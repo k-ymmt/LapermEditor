@@ -14,11 +14,17 @@ final class RecordingAttachmentStore: AttachmentStore {
     var pathFor: (ImageAttachmentSource) -> String? = { source in
         "../Attachments/\(source.preferredName ?? "Pasted image.png")"
     }
+    /// 保存の途中で待たせる(テストがその間に状態を変える)。
+    var beforeReturning: (() async -> Void)?
+    var allowsInsertion = true
 
     func store(_ source: ImageAttachmentSource) async -> String? {
         stored.append(source)
+        await beforeReturning?()
         return pathFor(source)
     }
+
+    func canInsert() -> Bool { allowsInsertion }
 }
 
 private let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A])
@@ -61,12 +67,30 @@ private let pngSignature = Data([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
     #expect(await failed.value == false)
     #expect(textView.string == "0123![](../Attachments/a.png)456789")
 
-    // 待っている間に文書が短くなった: 末尾に寄せる
+    // 保存を待っている間に文書が短くなった: 末尾に寄せる
     store.pathFor = { _ in "c.png" }
-    textView.string = "ab"
-    let clamped = try #require(textView.embedImages([ImageAttachmentSource(data: Data(), preferredName: "c.png", typeIdentifier: UTType.png.identifier)], at: 100))
+    textView.string = "0123456789"
+    store.beforeReturning = { textView.string = "ab" }
+    let clamped = try #require(textView.embedImages([ImageAttachmentSource(data: Data(), preferredName: "c.png", typeIdentifier: UTType.png.identifier)], at: 8))
     #expect(await clamped.value)
     #expect(textView.string == "ab![](c.png)")
+
+    // 保存を待っている間に文字列を選んだ: 置き換えずに選択の先頭に入れる
+    store.beforeReturning = { textView.setSelectedRange(NSRange(location: 0, length: 2)) }
+    textView.string = "ab"
+    textView.setSelectedRange(NSRange(location: 2, length: 0))
+    let selected = try #require(textView.embedImages([ImageAttachmentSource(data: Data(), preferredName: "c.png", typeIdentifier: UTType.png.identifier)]))
+    #expect(await selected.value)
+    #expect(textView.string == "![](c.png)ab")
+
+    // 保存の後にホストが拒んだ(別の文書に替わった): 何も挿入しない
+    store.beforeReturning = nil
+    store.allowsInsertion = false
+    textView.string = "ab"
+    let refused = try #require(textView.embedImages([ImageAttachmentSource(data: Data(), preferredName: "c.png", typeIdentifier: UTType.png.identifier)]))
+    #expect(await refused.value == false)
+    #expect(textView.string == "ab")
+    store.allowsInsertion = true
 
     textView.attachmentStore = nil
     #expect(textView.embedImages([ImageAttachmentSource(data: Data(), preferredName: "d.png", typeIdentifier: UTType.png.identifier)]) == nil,
