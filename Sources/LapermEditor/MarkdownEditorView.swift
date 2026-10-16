@@ -15,6 +15,9 @@ public struct MarkdownEditorView {
     private var linkOptions = LinkOptions()
     private var linkPreviewProvider: (any LinkPreviewProvider)?
     private var linkPreviewOptions = LinkPreviewOptions()
+    private var completionProvider: (any CompletionProvider)?
+    private var completionOptions = CompletionOptions()
+    private var completionList: CompletionListState?
     private var onOpenLink: ((URL) -> Bool)?
     private var onOpenWikiLink: ((WikiLinkReference) -> Bool)?
     private var wikiLinkResolver: ((WikiLinkReference) -> WikiLinkResolution)?
@@ -102,6 +105,28 @@ public struct MarkdownEditorView {
     public func linkOptions(_ options: LinkOptions) -> MarkdownEditorView {
         var copy = self
         copy.linkOptions = options
+        return copy
+    }
+
+    /// Completion(Laperm ADR 0047)の候補の供給元。注入しなければ Completion は起きない。テキストビューは強く持つ。
+    public func completionProvider(_ provider: (any CompletionProvider)?) -> MarkdownEditorView {
+        var copy = self
+        copy.completionProvider = provider
+        return copy
+    }
+
+    /// Completion の設定(有効 / 無効)。無効なら検出も候補の取得もしない。
+    public func completionOptions(_ options: CompletionOptions) -> MarkdownEditorView {
+        var copy = self
+        copy.completionOptions = options
+        return copy
+    }
+
+    /// Completion List の状態の公開先。iOS ではキーボードアクセサリの段(`keyboardAccessory`)がこれを読んで候補を並べ、
+    /// `choose(_:)` で確定する。ホストが所有する(@State など)。
+    public func completionList(_ state: CompletionListState?) -> MarkdownEditorView {
+        var copy = self
+        copy.completionList = state
         return copy
     }
 
@@ -281,6 +306,8 @@ public struct MarkdownEditorView {
         }
         if textView.attachmentStore !== attachmentStore { textView.attachmentStore = attachmentStore }
         textView.droppedItemHandler = droppedItemHandler
+        if textView.completionProvider !== completionProvider { textView.completionProvider = completionProvider }
+        if textView.completionList !== completionList { textView.completionList = completionList }
         proxy?.textView = textView
     }
 
@@ -300,6 +327,7 @@ public struct MarkdownEditorView {
         textView.linkOptions = linkOptions
         textView.linkPreviewOptions = linkPreviewOptions
         if textView.linkPreviewProvider !== linkPreviewProvider { textView.linkPreviewProvider = linkPreviewProvider }
+        textView.completionOptions = completionOptions
         textView.isFoldingEnabled = foldingEnabled
         textView.isLivePreviewEnabled = livePreviewEnabled
         textView.editingOptions = editingOptions

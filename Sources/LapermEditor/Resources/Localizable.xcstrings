@@ -48,6 +48,22 @@
           }
         }
       }
+    },
+    "Completions" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Completions"
+          }
+        },
+        "ja" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "補完の候補"
+          }
+        }
+      }
     }
   },
   "version" : "1.0"

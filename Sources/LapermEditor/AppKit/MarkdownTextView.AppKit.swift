@@ -182,6 +182,122 @@ public final class MarkdownTextView: NSTextView {
         set { engine.linkPreviewOptions = newValue }
     }
 
+    // MARK: - Completion(Laperm ADR 0047)
+
+    /// Completion の状態(きっかけ、一覧、キー操作)。見せ方(パネル)はこのビューが持つ。
+    let completion = CompletionController()
+    /// Completion List のパネル(一覧が開いたときに作る)。
+    private var completionPanel: CompletionPanel?
+    /// パネルを出している間の監視(スクロール、ウィンドウの移動・リサイズ・非 key 化で閉じる)。
+    private var completionObservers: [any NSObjectProtocol] = []
+    /// 打鍵による編集(文字の挿入・削除、IME の未確定文字、ペア補完)の最中。この間のキャレットの移動と本文の変化は
+    /// 一覧を閉じず、終わってから `noteTyping` で判定し直す。
+    private var isTypingEdit = false
+
+    /// Completion の候補の供給元。nil(既定)なら Completion は起きない。
+    public var completionProvider: (any CompletionProvider)? {
+        get { completion.provider }
+        set { completion.provider = newValue }
+    }
+
+    /// Completion の設定。無効にすると開いている一覧も閉じる。
+    public var completionOptions: CompletionOptions {
+        get { completion.options }
+        set { completion.options = newValue }
+    }
+
+    /// Completion List の状態の公開先(ホストが作る)。タップ / クリックでの確定(`choose`)もここから届く。
+    public var completionList: CompletionListState? {
+        get { completion.listState }
+        set {
+            completion.listState?.onChoose = nil
+            completion.listState = newValue
+            newValue?.onChoose = { [weak self] item in self?.commitCompletion(item) }
+        }
+    }
+
+    /// 一覧の打鍵以外の確定(パネルのクリック、iOS の段のタップ)。IME の変換中なら未確定の文字を確定させてから、候補で置き換える。
+    @discardableResult
+    func commitCompletion(_ item: CompletionItem? = nil) -> Bool {
+        guard completion.session != nil else { return false }
+        if hasMarkedText() {
+            inputContext?.discardMarkedText()
+            unmarkText()
+        }
+        guard let command = completion.commitCommand(for: item, in: string as NSString) else { return false }
+        return perform(command)
+    }
+
+    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。
+    private func noteTypingForCompletion() {
+        completion.noteTyping(text: string as NSString, caret: selectedRange(), plan: engine.highlighter.currentPlan)
+    }
+
+    /// 一覧の変化をパネルに映す: 開いていれば `[[` の直後(打ちかけの文字の左端)の下に出し、閉じていれば消す。
+    private func updateCompletionPanel() {
+        guard let session = completion.session, let window, window.isVisible else {
+            completionPanel?.dismiss()
+            stopObservingForCompletion()
+            return
+        }
+        let panel = completionPanel ?? {
+            let panel = CompletionPanel()
+            panel.onSelect = { [weak self] row in
+                guard let self, let item = self.completion.session?.items[row] else { return }
+                self.commitCompletion(item)
+            }
+            completionPanel = panel
+            return panel
+        }()
+        let anchor = NSRange(location: min(session.query.range.location, (string as NSString).length), length: 0)
+        let anchorRect = firstRect(forCharacterRange: anchor, actualRange: nil)
+        panel.present(items: session.items, selectedIndex: session.selectedIndex, anchorRect: anchorRect, parent: window)
+        startObservingForCompletion()
+    }
+
+    /// 一覧が開いているときのキー: ↑↓ で選択、Return / Tab で確定、Esc で閉じる(消費する)。← → などキャレットを動かすキーと
+    /// 修飾キー付きは閉じて流す。IME の変換中はキーを IME に任せる(変換を確定した後にもう 1 回)。
+    func handlesCompletionKey(_ event: NSEvent) -> Bool {
+        guard completion.session != nil, !hasMarkedText(), let input = KeyInput(event: event),
+              let action = completion.keyAction(for: input)
+        else { return false }
+        switch action {
+        case .moveUp: completion.moveSelection(by: -1)
+        case .moveDown: completion.moveSelection(by: 1)
+        case .commit: commitCompletion()
+        case .dismiss: completion.dismiss()
+        case .closeAndPassThrough:
+            completion.close()
+            return false
+        }
+        return true
+    }
+
+    private func startObservingForCompletion() {
+        guard completionObservers.isEmpty else { return }
+        let center = NotificationCenter.default
+        let close: @Sendable (Notification) -> Void = { [weak self] _ in
+            MainActor.assumeIsolated { self?.completion.close() }
+        }
+        if let clipView = enclosingScrollView?.contentView {
+            completionObservers.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: clipView, queue: .main, using: close))
+        }
+        if let window {
+            for name in [NSWindow.didResignKeyNotification, NSWindow.didMoveNotification, NSWindow.didResizeNotification, NSWindow.willCloseNotification] {
+                completionObservers.append(center.addObserver(forName: name, object: window, queue: .main, using: close))
+            }
+        }
+    }
+
+    private func stopObservingForCompletion() {
+        for observer in completionObservers { NotificationCenter.default.removeObserver(observer) }
+        completionObservers = []
+    }
+
+    /// テスト用: パネルが見えているか。
+    var debugCompletionPanelIsVisible: Bool { completionPanel?.isVisible ?? false }
+    var debugCompletionPanel: NSPanel? { completionPanel }
+
     // MARK: - アウトライン / 折りたたみ
 
     /// 現在のアウトライン(パース確定時に更新される)
@@ -340,7 +456,13 @@ public final class MarkdownTextView: NSTextView {
         addSubview(codeBlockPreviewOverlay)
         linkPreviewOverlay.autoresizingMask = [.width, .height]
         addSubview(linkPreviewOverlay)
+        completion.onSessionChange = { [weak self] in self?.updateCompletionPanel() }
         syncEditorFocus()
+    }
+
+    isolated deinit {
+        stopObservingForCompletion()
+        completionPanel?.dismiss()
     }
 
     // MARK: - フォーカス(Live Preview)
@@ -355,7 +477,10 @@ public final class MarkdownTextView: NSTextView {
 
     public override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
-        if resigned { engine.editorFocusDidChange(false) }
+        if resigned {
+            engine.editorFocusDidChange(false)
+            completion.close()
+        }
         return resigned
     }
 
@@ -456,6 +581,7 @@ public final class MarkdownTextView: NSTextView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         syncEditorFocus()
+        if window == nil { completion.close() }
         // NSTrackingArea に .mouseMoved を指定していても、ウィンドウ側が
         // mouseMoved イベントを受け取る設定になっていないと配送されないことがある
         // (特に SwiftUI がホストするウィンドウ)。Cmd+ホバーの下線表示のために明示的に有効化する。
@@ -558,6 +684,7 @@ public final class MarkdownTextView: NSTextView {
 
     public override func keyDown(with event: NSEvent) {
         if interceptsKeyDown(event) { return }
+        if handlesCompletionKey(event) { return }
         super.keyDown(with: event)
     }
 
@@ -577,6 +704,9 @@ public final class MarkdownTextView: NSTextView {
         _ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool
     ) {
         super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        if !isTypingEdit {
+            completion.caretDidMove(text: string as NSString, caret: selectedRange(), plan: engine.highlighter.currentPlan)
+        }
         updateInsertionPointOverlay()
         engine.autoExpandFolds(atSelectedRanges: selectedRanges.map(\.rangeValue))
         engine.selectionDidChangeForLivePreview()
@@ -591,8 +721,23 @@ public final class MarkdownTextView: NSTextView {
     /// IME 変換の終了。変換中に見送ったハイライト適用(highlightNow は marked text 中は
     /// 何もしない)を、確定で文字が変化しなかった場合でも確実に再開する。
     public override func unmarkText() {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         super.unmarkText()
         engine.scheduleHighlight()
+    }
+
+    /// IME の未確定文字の変化も打鍵: 一覧は未確定の文字で絞り込まれる(Laperm ADR 0047)。
+    public override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
     }
 
     /// `margins` からテキストコンテナの左右 inset を決める(上下は触らない)。中央寄せはビュー幅に
@@ -732,6 +877,11 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         // IME 変換中・属性付き文字列・置換指定付きの挿入(IME 確定等)は対象外
         if editingOptions.completesPairs, !hasMarkedText(),
             replacementRange.location == NSNotFound,
@@ -745,6 +895,11 @@ public final class MarkdownTextView: NSTextView {
     }
 
     public override func deleteBackward(_ sender: Any?) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         // 空ペアの間で Backspace したら両側をまとめて削除(ペア補完の対になる操作)
         if editingOptions.completesPairs, !hasMarkedText(),
             let command = EditingAssistant.deleteBackward(
@@ -1132,6 +1287,8 @@ extension MarkdownTextView: MarkdownEditorHost {
     func editorTextDidChange() {
         // NSTextView は didChangeText でも解除するが、textStorage 直接編集の経路も同じ扱いにする
         clearLinkHover()
+        // 打鍵以外の本文の変化(ペースト、Undo、プログラムからの置換)で一覧は閉じる
+        if !isTypingEdit { completion.textDidChangeOutsideTyping() }
     }
 
     func editorNeedsViewportRelayout() {

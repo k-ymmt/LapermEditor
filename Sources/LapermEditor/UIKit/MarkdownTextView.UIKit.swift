@@ -238,6 +238,69 @@ public final class MarkdownTextView: UITextView {
         set { engine.linkPreviewOptions = newValue }
     }
 
+    // MARK: - Completion(Laperm ADR 0047)
+
+    /// Completion の状態(きっかけ、一覧、キー操作)。見せ方は `completionList`(キーボードアクセサリの段)がホスト側で読む。
+    let completion = CompletionController()
+    /// 打鍵による編集(文字の挿入・削除、IME の未確定文字、ペア補完)の最中。この間のキャレットの移動と本文の変化は
+    /// 一覧を閉じず、終わってから `noteTyping` で判定し直す。
+    private var isTypingEdit = false
+
+    /// Completion の候補の供給元。nil(既定)なら Completion は起きない。
+    public var completionProvider: (any CompletionProvider)? {
+        get { completion.provider }
+        set { completion.provider = newValue }
+    }
+
+    /// Completion の設定。無効にすると開いている一覧も閉じる。
+    public var completionOptions: CompletionOptions {
+        get { completion.options }
+        set { completion.options = newValue }
+    }
+
+    /// Completion List の状態の公開先(ホストが作り、キーボードアクセサリの段が読む)。タップでの確定(`choose`)もここから届く。
+    public var completionList: CompletionListState? {
+        get { completion.listState }
+        set {
+            completion.listState?.onChoose = nil
+            completion.listState = newValue
+            newValue?.onChoose = { [weak self] item in self?.commitCompletion(item) }
+        }
+    }
+
+    /// 一覧の確定(段のタップ、ハードウェアキーボードの Return / Tab)。IME の変換中なら未確定の文字を確定させてから、候補で置き換える。
+    @discardableResult
+    func commitCompletion(_ item: CompletionItem? = nil) -> Bool {
+        guard completion.session != nil else { return false }
+        if markedTextRange != nil { unmarkText() }
+        guard let command = completion.commitCommand(for: item, in: text as NSString) else { return false }
+        return perform(command)
+    }
+
+    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。
+    private func noteTypingForCompletion() {
+        completion.noteTyping(text: text as NSString, caret: selectedRange, plan: engine.highlighter.currentPlan)
+    }
+
+    @objc private func completionMoveUp(_ sender: Any?) { completion.moveSelection(by: -1) }
+    @objc private func completionMoveDown(_ sender: Any?) { completion.moveSelection(by: 1) }
+    @objc private func completionCommit(_ sender: Any?) { commitCompletion() }
+    @objc private func completionDismiss(_ sender: Any?) { completion.dismiss() }
+
+    /// ハードウェアキーボード(iPad)で一覧が開いているときのキー: ↑↓ / Return / Tab / Esc(macOS と同じ)。IME の変換中は IME に任せる。
+    private var completionKeyCommands: [UIKeyCommand] {
+        guard completion.session != nil, markedTextRange == nil else { return [] }
+        let commands = [
+            UIKeyCommand(input: UIKeyCommand.inputUpArrow, modifierFlags: [], action: #selector(completionMoveUp(_:))),
+            UIKeyCommand(input: UIKeyCommand.inputDownArrow, modifierFlags: [], action: #selector(completionMoveDown(_:))),
+            UIKeyCommand(input: "\r", modifierFlags: [], action: #selector(completionCommit(_:))),
+            UIKeyCommand(input: "\t", modifierFlags: [], action: #selector(completionCommit(_:))),
+            UIKeyCommand(input: UIKeyCommand.inputEscape, modifierFlags: [], action: #selector(completionDismiss(_:))),
+        ]
+        for command in commands { command.wantsPriorityOverSystemBehavior = true }
+        return commands
+    }
+
     // MARK: - アウトライン / 折りたたみ
 
     /// 現在のアウトライン(パース確定時に更新される)
@@ -399,6 +462,7 @@ public final class MarkdownTextView: UITextView {
     public override func resignFirstResponder() -> Bool {
         let resigned = super.resignFirstResponder()
         engine.editorFocusDidChange(isFirstResponder)
+        if resigned { completion.close() }
         return resigned
     }
 
@@ -661,13 +725,31 @@ public final class MarkdownTextView: UITextView {
     private func selectionDidChange() {
         engine.autoExpandFolds(atSelectedRanges: [selectedRange])
         engine.selectionDidChangeForLivePreview()
+        if !isTypingEdit {
+            completion.caretDidMove(text: text as NSString, caret: selectedRange, plan: engine.highlighter.currentPlan)
+        }
     }
 
     /// IME 変換の終了。変換中に見送ったハイライト適用(highlightNow は marked text 中は
     /// 何もしない)を、確定で文字が変化しなかった場合でも確実に再開する。
     public override func unmarkText() {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         super.unmarkText()
         engine.scheduleHighlight()
+    }
+
+    /// IME の未確定文字の変化も打鍵: 一覧は未確定の文字で絞り込まれる(Laperm ADR 0047)。
+    public override func setMarkedText(_ markedText: String?, selectedRange: NSRange) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
+        super.setMarkedText(markedText, selectedRange: selectedRange)
     }
 
     // MARK: - レイアウト
@@ -1156,6 +1238,11 @@ public final class MarkdownTextView: UITextView {
     // MARK: - 編集支援
 
     public override func insertText(_ insertString: String) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         // IME 変換中(marked text)は変換セッションを優先し、編集支援を挟まない
         if markedTextRange == nil {
             if insertString == "\n", editingOptions.continuesLists,
@@ -1181,6 +1268,11 @@ public final class MarkdownTextView: UITextView {
     }
 
     public override func deleteBackward() {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
         // 空ペアの間で Backspace したら両側をまとめて削除(ペア補完の対になる操作)
         if editingOptions.completesPairs, markedTextRange == nil,
            let command = EditingAssistant.deleteBackward(
@@ -1198,6 +1290,7 @@ public final class MarkdownTextView: UITextView {
             input: "\t", modifierFlags: .shift, action: #selector(handleBacktab(_:)))
         backtab.wantsPriorityOverSystemBehavior = true
         commands.append(backtab)
+        commands.append(contentsOf: completionKeyCommands)
         return commands
     }
 
@@ -1361,6 +1454,8 @@ extension MarkdownTextView: MarkdownEditorHost {
         // textViewDidChange はユーザー操作由来の変更にしか届かないため、
         // プログラムからの編集(perform / textStorage 直接編集)もここで拾う
         clearLinkHover()
+        // 打鍵以外の本文の変化(ペースト、Undo、プログラムからの置換)で一覧は閉じる
+        if !isTypingEdit { completion.textDidChangeOutsideTyping() }
     }
 
     func editorNeedsViewportRelayout() {
