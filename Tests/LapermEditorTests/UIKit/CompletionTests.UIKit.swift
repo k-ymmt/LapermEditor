@@ -122,4 +122,34 @@ private func makeTextView(_ markdown: String = "") -> (MarkdownTextView, StubPro
     #expect(!state.isActive)
     window.isHidden = true
 }
+
+@MainActor @Test func markedTextWithASelectedSegmentStillFilters() {
+    let (textView, provider, state) = makeTextView()
+    textView.insertText("[")
+    textView.insertText("[")
+    textView.setMarkedText("We", selectedRange: NSRange(location: 0, length: 2))
+    #expect(provider.queries.last?.text == "We")
+    #expect(state.items.map(\.title) == ["Welcome"])
+}
+
+@MainActor @Test func oneListStateServesSeveralTextViews() {
+    let (a, _, state) = makeTextView()
+    let b = makeLaidOutTextView("")
+    b.completionProvider = a.completionProvider
+    b.completionList = state
+    a.insertText("[")
+    a.insertText("[")
+    #expect(state.items.count == 2)
+    b.selectedRange = NSRange(location: 0, length: 0)
+    #expect(state.isActive)
+    b.insertText("[")
+    b.insertText("[")
+    b.insertText("W")
+    b.insertText("e")
+    #expect(state.items.map(\.title) == ["Welcome"])
+    state.choose(state.items[0])
+    #expect(b.text == "[[Welcome]]")
+    #expect(a.text == "[[]]")
+    #expect(!state.isActive)
+}
 #endif

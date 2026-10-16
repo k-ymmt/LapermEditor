@@ -26,22 +26,55 @@ public struct CompletionOptions: Equatable, Sendable {
 /// Completion List の状態の公開(iOS のキーボードアクセサリの段がこれを読む。Laperm ADR 0047)。ホストが 1 つ作って
 /// `MarkdownEditorView.completionList(_:)` で渡し、編集部品が中身を書く。`items` が空なら Completion 中ではない。
 /// タップでの確定は `choose(_:)`(IME の変換中でも受け、未確定の文字ごと候補に置き換える)。
+///
+/// 同じ状態を複数のテキストビューが使ってよい(iPhone のタブごとのエディタ): 一覧を開いているビュー(持ち主)だけが中身を書き、
+/// `choose` はその持ち主に届く。持ち主でないビューが閉じても中身は消えない。
 @MainActor @Observable
 public final class CompletionListState {
     public private(set) var items: [CompletionItem] = []
     /// キー操作で選ばれている行(`items` が空なら意味を持たない)。
     public private(set) var selectedIndex = 0
-    @ObservationIgnored var onChoose: ((CompletionItem) -> Void)?
+    /// ビュー(持ち主の候補)ごとの確定の処理。
+    @ObservationIgnored private var commits: [ObjectIdentifier: (CompletionItem) -> Void] = [:]
+    /// 今の一覧を開いているビュー。
+    @ObservationIgnored private var activeOwner: ObjectIdentifier?
 
     public init() {}
 
     public var isActive: Bool { !items.isEmpty }
 
     public func choose(_ item: CompletionItem) {
-        onChoose?(item)
+        guard let activeOwner, let commit = commits[activeOwner] else { return }
+        commit(item)
     }
 
-    func update(items: [CompletionItem], selectedIndex: Int) {
+    func register(owner: AnyObject, commit: @escaping (CompletionItem) -> Void) {
+        commits[ObjectIdentifier(owner)] = commit
+    }
+
+    /// 持ち主をやめる(ビューの付け替え・破棄)。一覧を開いていたなら空にする。
+    func unregister(owner: AnyObject) {
+        let id = ObjectIdentifier(owner)
+        commits[id] = nil
+        if activeOwner == id {
+            activeOwner = nil
+            update(items: [], selectedIndex: 0)
+        }
+    }
+
+    /// 一覧の中身を書く。空(閉じた)は持ち主からだけ受け、空でなければそのビューが持ち主になる。
+    func publish(owner: AnyObject, items: [CompletionItem], selectedIndex: Int) {
+        let id = ObjectIdentifier(owner)
+        if items.isEmpty {
+            guard activeOwner == id else { return }
+            activeOwner = nil
+        } else {
+            activeOwner = id
+        }
+        update(items: items, selectedIndex: selectedIndex)
+    }
+
+    private func update(items: [CompletionItem], selectedIndex: Int) {
         if self.items != items { self.items = items }
         if self.selectedIndex != selectedIndex { self.selectedIndex = selectedIndex }
     }
@@ -66,19 +99,28 @@ final class CompletionController {
         var selectedItem: CompletionItem { items[selectedIndex] }
     }
 
+    /// 差し替えると(nil でなくても)開いている一覧と Esc の記憶を捨てる: 前の供給元の候補を確定させない。
     var provider: (any CompletionProvider)? {
-        didSet { if provider == nil { close() } }
+        didSet {
+            guard provider !== oldValue else { return }
+            dismissedAnchor = nil
+            close()
+        }
     }
     var options = CompletionOptions() {
         didSet { if !options.isEnabled { close() } }
     }
-    /// ホストが渡した一覧の状態(iOS の段)。
+    /// ホストが渡した一覧の状態(iOS の段)。ビューの確定の処理(`commit`)を持ち主として登録する。
     var listState: CompletionListState? {
         didSet {
-            if oldValue !== listState { oldValue?.update(items: [], selectedIndex: 0) }
+            guard oldValue !== listState else { return }
+            oldValue?.unregister(owner: self)
+            listState?.register(owner: self) { [weak self] item in self?.commit?(item) }
             publish()
         }
     }
+    /// 一覧の確定(パネルのクリック、段のタップ、キー)をビューの編集に変える。ビューが設定する。
+    var commit: ((CompletionItem) -> Void)?
     private(set) var session: Session? {
         didSet {
             guard session != oldValue else { return }
@@ -91,9 +133,12 @@ final class CompletionController {
     var onSessionChange: (() -> Void)?
 
     /// 打鍵の後(文字の挿入・削除、IME の未確定文字の変化、ペア補完)。きっかけがあれば候補を取り、一覧を開く / 更新する。
-    func noteTyping(text: NSString, caret: NSRange, plan: HighlightPlan) {
+    /// IME の変換中は `markedRange` を渡す: 変換中の選択(変換する文節)は選択ではなく、キャレットは未確定文字の末尾として扱う。
+    /// `planIsCurrent` は計画が今の本文を表しているか(再パース済み。古ければ検出が文字でも読む)。
+    func noteTyping(text: NSString, caret: NSRange, markedRange: NSRange? = nil, plan: HighlightPlan, planIsCurrent: Bool = false) {
+        let caret = markedRange.map { NSRange(location: NSMaxRange($0), length: 0) } ?? caret
         guard options.isEnabled, let provider, caret.length == 0,
-              let query = CompletionTrigger.detect(text: text, caret: caret.location, plan: plan)
+              let query = CompletionTrigger.detect(text: text, caret: caret.location, plan: plan, planIsCurrent: planIsCurrent)
         else {
             dismissedAnchor = nil
             close()
@@ -158,22 +203,27 @@ final class CompletionController {
         return CompletionTrigger.command(for: session.query, item: chosen, in: text)
     }
 
-    /// 一覧が開いているときのキー。修飾キー付き(⌘ など)は一覧を閉じて流す。文字のキーは nil(打鍵として届く)。
+    /// 一覧が開いているときのキー。移動と確定は修飾キー無しだけ(Shift+Tab はアウトデント、Shift+↑↓ は選択のまま)。
+    /// 修飾キー付きとキャレットを動かすキーは一覧を閉じて流す。文字・削除のキーは nil(打鍵として届き、`noteTyping` が判定する)。
     func keyAction(for input: KeyInput) -> CompletionKeyAction? {
         guard session != nil else { return nil }
-        let plain = input.modifiers.subtracting(.shift).isEmpty
+        let plain = input.modifiers.isEmpty
         switch input.key {
         case .up where plain: return .moveUp
         case .down where plain: return .moveDown
         case .return where plain, .tab where plain: return .commit
-        case .escape: return .dismiss
-        case .left, .right, .home, .end, .pageUp, .pageDown, .up, .down, .return, .tab: return .closeAndPassThrough
-        case .character where !plain && !input.modifiers.subtracting([.shift, .option]).isEmpty: return .closeAndPassThrough
+        case .escape where plain: return .dismiss
+        case .left, .right, .home, .end, .pageUp, .pageDown, .up, .down, .return, .tab, .escape: return .closeAndPassThrough
+        case .character where !input.modifiers.subtracting([.shift, .option]).isEmpty: return .closeAndPassThrough
         case .character, .backspace, .forwardDelete: return nil
         }
     }
 
     private func publish() {
-        listState?.update(items: session?.items ?? [], selectedIndex: session?.selectedIndex ?? 0)
+        listState?.publish(owner: self, items: session?.items ?? [], selectedIndex: session?.selectedIndex ?? 0)
+    }
+
+    isolated deinit {
+        listState?.unregister(owner: self)
     }
 }

@@ -187,7 +187,10 @@ final class MarkdownEditorEngine: NSObject {
     }
 
     /// 保留中の編集を即時処理する(通常は didProcessEditing からの遅延実行で呼ばれる)。
-    func highlightNow() {
+    /// 戻り値は、終わったときの計画(`highlighter.currentPlan`)が今の本文を表しているか(同期で適用した、または保留が無く
+    /// バックグラウンドのパースも走っていない)。IME の変換中とバックグラウンドへ回したときは false(計画は編集分をずらしただけ)。
+    @discardableResult
+    func highlightNow() -> Bool {
         highlightScheduled = false
         // 日本語変換中(IME マークテキスト表示中)はフラッシュを見送る。
         // 変換中の下線付きテキストはまだ確定しておらず、ここで textStorage に
@@ -196,19 +199,20 @@ final class MarkdownEditorEngine: NSObject {
         // 変換中ずっと highlightNow を回し続けるビジーループになる(メインキュー 100%)。
         // 確定・取消は文字編集(didProcessEditing)か unmarkText を必ず伴い、
         // そこで scheduleHighlight が呼ばれるので保留分は取りこぼさない。
-        guard host?.editorHasMarkedText != true else { return }
+        guard host?.editorHasMarkedText != true else { return false }
         guard let contentStorage = host?.editorContentStorage,
-              let layoutManager = host?.editorLayoutManager else { return }
+              let layoutManager = host?.editorLayoutManager else { return false }
         let outcome = highlighter.flushPendingHighlight(
             contentStorage: contentStorage, layoutManager: layoutManager)
         // バックグラウンドパースへ回した場合、currentPlan はまだ編集分をシフトしただけの
         // 旧計画なので、ここで再同期しても装飾・アウトラインは古いまま(見出しが一瞬欠ける等)
         // で、パース完了時の onBackgroundFlushApplied で改めて同期される。二重の作業を省く。
-        guard outcome != .deferredToBackground else { return }
+        guard outcome != .deferredToBackground else { return false }
         resyncAfterHighlight()
         if outcome == .applied { notifyHighlightPlanChange() }
         // 変換中に見送った色の付け直しがあれば、ここ(確定・取消の後の flush)で消化する。
         if pendingWikiLinkRefresh { refreshWikiLinkResolution() }
+        return outcome == .applied || highlighter.activeBackgroundParse == nil
     }
 
     func scheduleHighlight() {

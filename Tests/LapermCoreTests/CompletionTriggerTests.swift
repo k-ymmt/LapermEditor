@@ -4,9 +4,9 @@ import Testing
 
 // Completion(Laperm ADR 0047)のきっかけの検出と確定の編集。
 
-private func detect(_ markdown: String, caret: Int? = nil, parsed: Bool = true) -> CompletionQuery? {
+private func detect(_ markdown: String, caret: Int? = nil, parsed: Bool = true, planIsCurrent: Bool = false) -> CompletionQuery? {
     let plan = parsed ? MarkdownParser().highlightPlan(for: markdown) : HighlightPlan()
-    return CompletionTrigger.detect(text: markdown as NSString, caret: caret ?? (markdown as NSString).length, plan: plan)
+    return CompletionTrigger.detect(text: markdown as NSString, caret: caret ?? (markdown as NSString).length, plan: plan, planIsCurrent: planIsCurrent)
 }
 
 private func range(of needle: String, in markdown: String) -> NSRange {
@@ -34,6 +34,29 @@ private func range(of needle: String, in markdown: String) -> NSRange {
     let query = detect(text, caret: 4)
     #expect(query?.kind == .noteTitle)
     #expect(query?.text == "Wi")
+    #expect(query?.range == NSRange(location: 2, length: 2))
+}
+
+@Test func theRangeCoversTheRestOfTheWordAfterTheCaret() {
+    // `[[Wiki]]` の `i` を消した `[[Wki]]`: 絞り込みは `W`、置き換えは `Wki` 全体(`|` や `#` の手前まで)
+    let text = "[[Wki]]"
+    let query = detect(text, caret: 3)
+    #expect(query?.text == "W")
+    #expect(query?.range == NSRange(location: 2, length: 3))
+    let command = CompletionTrigger.command(for: query!, item: CompletionItem(title: "Wiki", insertionText: "Wiki"), in: text as NSString)!
+    #expect((text as NSString).replacingCharacters(in: command.replacementRange, with: command.replacementString) == "[[Wiki]]")
+    #expect(command.selectedRange == NSRange(location: 8, length: 0))
+    let aliased = "[[Wki|shown]] x"
+    #expect(detect(aliased, caret: 3)?.range == NSRange(location: 2, length: 3))
+    let headed = "[[Wki#Sec]]"
+    #expect(detect(headed, caret: 3)?.range == NSRange(location: 2, length: 3))
+    #expect(detect(headed, caret: 7)?.range == NSRange(location: 6, length: 3))
+    #expect(detect(headed, caret: 7)?.text == "S")
+    // Tag も語の続きまで
+    let tag = "---\ntags: [swift, b]\n---\n"
+    let swift = (tag as NSString).range(of: "swift")
+    #expect(detect(tag, caret: swift.location + 2)?.text == "sw")
+    #expect(detect(tag, caret: swift.location + 2)?.range == swift)
 }
 
 @Test func hashSwitchesToTheHeadingsOfTheNamedNote() {
@@ -76,9 +99,67 @@ private func range(of needle: String, in markdown: String) -> NSRange {
     #expect(detect("a `code` [[Wi")?.kind == .noteTitle)
 }
 
+@Test func fencesAreMatchedByCharacterAndLengthAndInsideQuotes() {
+    // 4 つで開いたフェンスの中の 3 つの行は閉じない(CommonMark): 閉じた後は普通に出る
+    #expect(detect("````\n```\n````\n[[Wi", parsed: false)?.kind == .noteTitle)
+    #expect(detect("````\n```\n[[Wi", parsed: false) == nil)
+    // 記号が違えば閉じない
+    #expect(detect("```\n~~~\n[[Wi", parsed: false) == nil)
+    // 閉じの行に記号以外があれば閉じない
+    #expect(detect("```\n``` x\n[[Wi", parsed: false) == nil)
+    // 引用の中のフェンス
+    #expect(detect("> ```\n> [[Wi", parsed: false) == nil)
+    #expect(detect("> ```\n> code\n> ```\n> [[Wi", parsed: false)?.kind == .noteTitle)
+}
+
+@Test func backtickRunsAreMatchedByLength() {
+    // 2 つで開いたコードスパンは 1 つでは閉じない
+    #expect(detect("a ``code `[[Wi", parsed: false) == nil)
+    #expect(detect("a ``x`` [[Wi", parsed: false)?.kind == .noteTitle)
+    #expect(detect("a `x` `y` [[Wi", parsed: false)?.kind == .noteTitle)
+    #expect(detect("a \\` [[Wi", parsed: false)?.kind == .noteTitle)
+}
+
+@Test func balancedParenthesesInsideALinkDestination() {
+    #expect(detect("[x](https://x/(a)/[[Wi") == nil)
+    #expect(detect("[x](https://x/(a)) [[Wi")?.kind == .noteTitle)
+    #expect(detect("[x](https://x/\\)/[[Wi") == nil)
+    #expect(detect("f(a) [[Wi")?.kind == .noteTitle)
+}
+
+@Test func aCurrentPlanIsTrustedOverTheTextualScan() {
+    // 計画が今の本文なら文字は読まない(空の計画 + current = コードブロック無し)
+    #expect(detect("```\n[[Wi", parsed: false, planIsCurrent: true)?.kind == .noteTitle)
+    #expect(detect("```\n[[Wi", parsed: true, planIsCurrent: true) == nil)
+    #expect(detect("a `[[Wi", parsed: false, planIsCurrent: true)?.kind == .noteTitle)
+    // Front Matter も計画のもの
+    let fm = "---\ntags: [sw]\n---\n"
+    #expect(detect(fm, caret: 13, parsed: false, planIsCurrent: true) == nil)
+    #expect(detect(fm, caret: 13, parsed: true, planIsCurrent: true)?.kind == .tag)
+}
+
 @Test func indentedCodeBlockFromThePlanDoesNotTrigger() {
     let text = "para\n\n    code [[Wi"
     #expect(detect(text) == nil)
+}
+
+@Test func yamlCommentsQuotesAndNestingInTagValues() {
+    // 空白の後ろの `#` は YAML のコメント
+    let comment = "---\ntags: #sw\n---\n"
+    #expect(detect(comment, caret: range(of: "sw", in: comment).location + 2) == nil)
+    let itemComment = "---\ntags:\n  - #sw\n---\n"
+    #expect(detect(itemComment, caret: range(of: "sw", in: itemComment).location + 2) == nil)
+    let listComment = "---\ntags: [a, #sw]\n---\n"
+    #expect(detect(listComment, caret: range(of: "sw", in: listComment).location + 2) == nil)
+    // `[` や引用符の直後の `#` は値
+    let quotedHash = "---\ntags: [\"#sw\"]\n---\n"
+    #expect(detect(quotedHash, caret: range(of: "sw", in: quotedHash).location + 2)?.text == "sw")
+    // 引用符の中のカンマは区切りでない(語に空白があるので出ない)
+    let quotedComma = "---\ntags: [\"a, sw\"]\n---\n"
+    #expect(detect(quotedComma, caret: range(of: "sw", in: quotedComma).location + 2) == nil)
+    // 入れ子のリストは Tag ではない
+    let nested = "---\ntags: [a, [b, sw]]\n---\n"
+    #expect(detect(nested, caret: range(of: "sw", in: nested).location + 2) == nil)
 }
 
 @Test func frontMatterTagValuesTrigger() {
@@ -151,12 +232,22 @@ private func range(of needle: String, in markdown: String) -> NSRange {
     #expect((applied as NSString).substring(to: command.selectedRange.location) == "See [[Sub/Wiki]]")
 }
 
-@Test func confirmingInsideAnAliasedLinkKeepsTheAlias() {
-    let text = "[[Wi|shown]]"
+@Test func confirmingInsideAnAliasedLinkKeepsTheAliasAndMovesPastTheClosing() {
+    let text = "[[Wi|shown]] x"
     let query = detect(text, caret: 4)!
     let command = CompletionTrigger.command(for: query, item: CompletionItem(title: "Wiki", insertionText: "Wiki"), in: text as NSString)!
     #expect(command.replacementString == "Wiki")
-    #expect(command.selectedRange == NSRange(location: 6, length: 0))
+    let applied = (text as NSString).replacingCharacters(in: command.replacementRange, with: command.replacementString)
+    #expect(applied == "[[Wiki|shown]] x")
+    #expect(command.selectedRange == NSRange(location: 14, length: 0))
+    // 見出しが続くときも同じ
+    let headed = "[[Wi#Sec]]"
+    let headedCommand = CompletionTrigger.command(for: detect(headed, caret: 4)!, item: CompletionItem(title: "Wiki", insertionText: "Wiki"), in: headed as NSString)!
+    #expect(headedCommand.selectedRange == NSRange(location: 12, length: 0))
+    // `]]` が無い `[[Wi|shown` は足す
+    let open = "[[Wi|shown"
+    let openCommand = CompletionTrigger.command(for: detect(open, caret: 4)!, item: CompletionItem(title: "Wiki", insertionText: "Wiki"), in: open as NSString)!
+    #expect(openCommand.replacementString == "Wiki]]")
 }
 
 @Test func confirmingAHeadingCompletesTheLink() {

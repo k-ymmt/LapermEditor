@@ -202,8 +202,10 @@ private func type(_ text: String, into textView: MarkdownTextView) {
 
 @MainActor @Test func noListInsideInlineCodeOrWhenDisabled() {
     let provider = StubCompletionProvider()
-    let textView = makeTextView("`", provider: provider)
-    type("[[W", into: textView)
+    let textView = makeTextView(provider: provider)
+    // ペア補完で `` `` `` ができ、その中の `[[W` はインラインコード(確定した計画が言う)
+    type("`[[W", into: textView)
+    #expect(textView.string == "`[[W]]`")
     #expect(textView.completion.session == nil)
     #expect(provider.queries.isEmpty)
 
@@ -312,5 +314,99 @@ private func type(_ text: String, into textView: MarkdownTextView) {
     // 右端は画面の中に収める
     let right = NSRect(x: 950, y: 400, width: 1, height: 20)
     #expect(CompletionPanel.frame(size: panelSize, anchorRect: right, visibleFrame: screen).maxX == screen.maxX)
+}
+
+@MainActor @Test func markedTextWithAConversionSegmentStillFilters() {
+    let provider = StubCompletionProvider()
+    let textView = makeTextView(provider: provider)
+    type("[[", into: textView)
+    // 日本語 IME は変換中の文節を選択として見せる: 選択の長さではなく未確定文字の末尾で判定する
+    textView.setMarkedText("We", selectedRange: NSRange(location: 0, length: 2), replacementRange: NSRange(location: NSNotFound, length: 0))
+    #expect(textView.selectedRange().length == 2)
+    #expect(provider.queries.last?.text == "We")
+    #expect(textView.completion.session?.items.map(\.title) == ["Welcome"])
+}
+
+@MainActor @Test func shiftedKeysAreNotCompletionKeys() {
+    let textView = makeTextView()
+    type("[[W", into: textView)
+    // Shift+Tab は確定ではなく閉じて流す(アウトデント)、本文は変わらない
+    textView.keyDown(with: keyEvent("\u{19}", modifiers: .shift))
+    #expect(textView.completion.session == nil)
+    #expect(textView.string == "[[W]]")
+    type("e", into: textView)
+    #expect(textView.completion.session != nil)
+    // Shift+↓ は選択の拡張
+    textView.keyDown(with: keyEvent("\u{F701}", modifiers: .shift))
+    #expect(textView.completion.session == nil)
+}
+
+@MainActor @Test func replacingTheProviderClosesTheList() {
+    let textView = makeTextView()
+    type("[[W", into: textView)
+    #expect(textView.completion.session != nil)
+    textView.completionProvider = StubCompletionProvider()
+    #expect(textView.completion.session == nil)
+    // 同じ供給元を設定し直しても閉じない
+    type("e", into: textView)
+    let same = textView.completionProvider
+    textView.completionProvider = same
+    #expect(textView.completion.session != nil)
+}
+
+@MainActor @Test func wordAndForwardDeletionRefreshTheList() {
+    let textView = makeTextView()
+    type("[[Wi", into: textView)
+    #expect(textView.completion.session?.items.map(\.title) == ["Wiki"])
+    textView.deleteWordBackward(nil)
+    #expect(textView.string == "[[]]")
+    #expect(textView.completion.session?.items.count == 3)
+    type("W", into: textView)
+    textView.setSelectedRange(NSRange(location: 2, length: 0))
+    #expect(textView.completion.session == nil)
+    textView.deleteForward(nil)
+    #expect(textView.string == "[[]]")
+    #expect(textView.completion.session?.items.count == 3)
+}
+
+@MainActor @Test func oneListStateServesSeveralTextViews() {
+    let state = CompletionListState()
+    let a = makeTextView()
+    let b = makeTextView()
+    a.completionList = state
+    b.completionList = state
+    type("[[W", into: a)
+    #expect(state.items.map(\.title) == ["Wiki", "Welcome"])
+    // 持ち主でない b が閉じても a の一覧は消えない
+    b.setSelectedRange(NSRange(location: 0, length: 0))
+    #expect(state.isActive)
+    // b が開けば持ち主が替わり、choose は b に届く
+    type("[[M", into: b)
+    #expect(state.items.map(\.title) == ["Memo"])
+    state.choose(state.items[0])
+    #expect(b.string == "[[Sub/Memo]]")
+    #expect(a.string == "[[W]]")
+    #expect(!state.isActive)
+    // 持ち主のビューから状態を外すと空になる(持ち主でないビューから外しても消えない)
+    type("e", into: a)
+    #expect(state.isActive)
+    b.completionList = nil
+    #expect(state.isActive)
+    a.completionList = nil
+    #expect(!state.isActive)
+}
+
+@MainActor @Test func undoAfterAConfirmationRestoresTheTypedText() {
+    let textView = makeTextView()
+    let undo = UndoManagerProvider()
+    textView.delegate = undo
+    type("[[W", into: textView)
+    // 打鍵の undo グループはランループの区切りで閉じる
+    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+    textView.keyDown(with: keyEvent("\r"))
+    #expect(textView.string == "[[Wiki]]")
+    undo.manager.undo()
+    #expect(textView.string == "[[W]]", "undo restores the typed text: \(textView.string)")
+    #expect(textView.completion.session == nil)
 }
 #endif

@@ -209,11 +209,7 @@ public final class MarkdownTextView: NSTextView {
     /// Completion List の状態の公開先(ホストが作る)。タップ / クリックでの確定(`choose`)もここから届く。
     public var completionList: CompletionListState? {
         get { completion.listState }
-        set {
-            completion.listState?.onChoose = nil
-            completion.listState = newValue
-            newValue?.onChoose = { [weak self] item in self?.commitCompletion(item) }
-        }
+        set { completion.listState = newValue }
     }
 
     /// 一覧の打鍵以外の確定(パネルのクリック、iOS の段のタップ)。IME の変換中なら未確定の文字を確定させてから、候補で置き換える。
@@ -228,9 +224,15 @@ public final class MarkdownTextView: NSTextView {
         return perform(command)
     }
 
-    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。
+    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。先に保留のハイライトを流して計画を今の本文に合わせる(次のランループで
+    /// どのみち走る仕事。変換中と大きな文書では合わず、検出が文字でも読む)。
     private func noteTypingForCompletion() {
-        completion.noteTyping(text: string as NSString, caret: selectedRange(), plan: engine.highlighter.currentPlan)
+        guard completion.options.isEnabled, completion.provider != nil else { return }
+        let planIsCurrent = engine.highlightNow()
+        let marked = hasMarkedText() ? markedRange() : nil
+        completion.noteTyping(
+            text: string as NSString, caret: selectedRange(), markedRange: marked.flatMap { $0.location == NSNotFound ? nil : $0 },
+            plan: engine.highlighter.currentPlan, planIsCurrent: planIsCurrent)
     }
 
     /// 一覧の変化をパネルに映す: 開いていれば `[[` の直後(打ちかけの文字の左端)の下に出し、閉じていれば消す。
@@ -249,8 +251,11 @@ public final class MarkdownTextView: NSTextView {
             completionPanel = panel
             return panel
         }()
-        let anchor = NSRange(location: min(session.query.range.location, (string as NSString).length), length: 0)
-        let anchorRect = firstRect(forCharacterRange: anchor, actualRange: nil)
+        // 打ちかけの文字の左端(`[[` の直後)に揃える。折り返しでキャレットが別の行へ移ったら、キャレットの行に付いていく
+        let start = NSRange(location: min(session.query.range.location, (string as NSString).length), length: 0)
+        var anchorRect = firstRect(forCharacterRange: start, actualRange: nil)
+        let caretRect = firstRect(forCharacterRange: NSRange(location: selectedRange().location, length: 0), actualRange: nil)
+        if abs(caretRect.minY - anchorRect.minY) > 0.5 { anchorRect = caretRect }
         panel.present(items: session.items, selectedIndex: session.selectedIndex, anchorRect: anchorRect, parent: window)
         startObservingForCompletion()
     }
@@ -457,6 +462,7 @@ public final class MarkdownTextView: NSTextView {
         linkPreviewOverlay.autoresizingMask = [.width, .height]
         addSubview(linkPreviewOverlay)
         completion.onSessionChange = { [weak self] in self?.updateCompletionPanel() }
+        completion.commit = { [weak self] item in self?.commitCompletion(item) }
         syncEditorFocus()
     }
 
@@ -892,6 +898,34 @@ public final class MarkdownTextView: NSTextView {
             return
         }
         super.insertText(insertString, replacementRange: replacementRange)
+    }
+
+    /// 語の削除と前方削除も打鍵(一覧は閉じずに絞り直す)。
+    public override func deleteForward(_ sender: Any?) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
+        super.deleteForward(sender)
+    }
+
+    public override func deleteWordBackward(_ sender: Any?) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
+        super.deleteWordBackward(sender)
+    }
+
+    public override func deleteWordForward(_ sender: Any?) {
+        isTypingEdit = true
+        defer {
+            isTypingEdit = false
+            noteTypingForCompletion()
+        }
+        super.deleteWordForward(sender)
     }
 
     public override func deleteBackward(_ sender: Any?) {

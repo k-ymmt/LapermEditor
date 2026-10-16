@@ -48,28 +48,31 @@ public struct CompletionItem: Hashable, Sendable, Identifiable {
 
 /// きっかけの検出と確定の編集(純粋関数、Laperm ADR 0047)。
 ///
-/// 検出は行の文字の走査で行い、計画(`HighlightPlan`)は出さない場所の判定の補助に使う。計画は編集と交差するスパンを捨てた
-/// 状態で届く(再パース前)ので、コードフェンスとインラインコードは文字でも数える。
+/// 検出は行の文字の走査で行う。計画(`HighlightPlan`)は出さない場所の判定に使うが、打鍵の直後の計画は編集と交差するスパン
+/// (打っている最中のコードブロック・インラインコード・Front Matter)を捨てた状態なので、`planIsCurrent` が false のときは
+/// コードフェンス・バッククォート・Front Matter を文字でも読む(true なら計画を信じて文字の走査を省く)。
 public enum CompletionTrigger {
     /// Front Matter の Tag のキー(大文字小文字は区別しない)。
     public static let tagKeys: Set<String> = ["tags", "tag"]
 
-    /// キャレット(選択は無い)の位置で Completion が始まるか。始まらなければ nil。
-    public static func detect(text: NSString, caret: Int, plan: HighlightPlan) -> CompletionQuery? {
+    /// キャレット(選択は無い。IME の変換中は未確定文字の末尾)の位置で Completion が始まるか。始まらなければ nil。
+    /// `range` は打ちかけの語の全体(キャレットの後ろに語の続きがあればそれも: `[[Wki]]` の `W` の後ろで確定すれば `ki` ごと置き換わる)、
+    /// `text` はキャレットまでの部分(絞り込みに使う)。
+    public static func detect(text: NSString, caret: Int, plan: HighlightPlan, planIsCurrent: Bool = false) -> CompletionQuery? {
         guard caret >= 0, caret <= text.length else { return nil }
         let line = lineContentRange(containing: caret, in: text)
-        if let frontMatter = FrontMatterParser.parse(text) {
+        if let frontMatter = planIsCurrent ? plan.frontMatter : FrontMatterParser.parse(text) {
             // Front Matter の中は Tag の値の位置だけ(他の Property、フェンスの行では出さない)
             guard line.location > NSMaxRange(frontMatter.openingFenceRange), NSMaxRange(line) < frontMatter.closingFenceRange.location
-            else { return wikiLinkQuery(text: text, caret: caret, line: line, plan: plan) }
+            else { return wikiLinkQuery(text: text, caret: caret, line: line, plan: plan, planIsCurrent: planIsCurrent) }
             return tagQuery(text: text, caret: caret, line: line, frontMatter: frontMatter)
         }
-        return wikiLinkQuery(text: text, caret: caret, line: line, plan: plan)
+        return wikiLinkQuery(text: text, caret: caret, line: line, plan: plan, planIsCurrent: planIsCurrent)
     }
 
-    /// 確定: 打ちかけの文字を候補で置き換える。Wiki Link は `]]` まで整え(既にある `]]` は二重にしない)、キャレットは `]]` の後ろ。
-    /// 直後に `|`(Alias)や `#`(見出し)が続く整ったリンクの中なら `]]` は足さず、キャレットは入れた文字の後ろ。
-    /// Tag は語だけを置き換える(閉じ括弧やカンマには触れない)。レンジが文書の外なら nil。
+    /// 確定: 打ちかけの語を候補で置き換える。Wiki Link は `]]` まで整え(既にある `]]` は二重にしない)、キャレットは `]]` の後ろ
+    /// (整ったリンクの中で `|alias` / `#heading` が続いていても、その `]]` の後ろ)。Tag は語だけを置き換える(閉じ括弧やカンマには
+    /// 触れない)。レンジが文書の外なら nil。
     public static func command(for query: CompletionQuery, item: CompletionItem, in text: NSString) -> EditCommand? {
         guard query.range.location != NSNotFound, NSMaxRange(query.range) <= text.length else { return nil }
         var replacement = item.insertionText
@@ -80,11 +83,12 @@ public enum CompletionTrigger {
         case .noteTitle, .heading:
             let line = lineContentRange(containing: NSMaxRange(query.range), in: text)
             let afterRange = NSRange(location: NSMaxRange(query.range), length: max(0, NSMaxRange(line) - NSMaxRange(query.range)))
-            let after = text.substring(with: afterRange)
+            let after = text.substring(with: afterRange) as NSString
             if after.hasPrefix("]]") {
                 caret += 2
-            } else if after.hasPrefix("|") || after.hasPrefix("#"), after.contains("]]") {
-                // 整ったリンクの中: Alias / 見出しはそのまま
+            } else if after.hasPrefix("|") || after.hasPrefix("#"), case let closing = after.range(of: "]]"), closing.location != NSNotFound {
+                // 整ったリンクの中: Alias / 見出しはそのまま、キャレットはその `]]` の後ろ
+                caret += NSMaxRange(closing)
             } else {
                 replacement += "]]"
                 caret += 2
@@ -97,7 +101,7 @@ public enum CompletionTrigger {
 
     // MARK: - Wiki Link(`[[` / `[[Note#`)
 
-    private static func wikiLinkQuery(text: NSString, caret: Int, line: NSRange, plan: HighlightPlan) -> CompletionQuery? {
+    private static func wikiLinkQuery(text: NSString, caret: Int, line: NSRange, plan: HighlightPlan, planIsCurrent: Bool) -> CompletionQuery? {
         // 行の中でキャレットより前の、閉じていない最後の `[[`。間に `[` `]` `|` があれば Wiki Link の打ちかけではない
         var start: Int?
         var i = caret - 1
@@ -115,22 +119,32 @@ public enum CompletionTrigger {
         // エスケープ(`\[[`)と埋め込み(`![[`)は Wiki Link ではない
         if isEscaped(at: start, in: text, lineStart: line.location) { return nil }
         if start > line.location, text.character(at: start - 1) == ASCII.exclamation { return nil }
-        guard !isInsideInlineCode(before: start, in: text, lineStart: line.location, plan: plan),
+        guard !isInsideInlineCode(before: start, in: text, lineStart: line.location, plan: plan, planIsCurrent: planIsCurrent),
               !isInsideMarkdownLinkDestination(before: start, in: text, lineStart: line.location),
-              !isInsideCodeBlock(caret: caret, line: line, in: text, plan: plan)
+              !isInsideCodeBlock(caret: caret, line: line, in: text, plan: plan, planIsCurrent: planIsCurrent)
         else { return nil }
-        let innerRange = NSRange(location: start + 2, length: caret - start - 2)
-        let inner = text.substring(with: innerRange)
-        if let hash = inner.firstIndex(of: "#") {
-            let note = inner[..<hash].trimmingCharacters(in: .whitespaces)
-            let typed = String(inner[inner.index(after: hash)...])
-            let hashOffset = (String(inner[..<hash]) as NSString).length
+        let typedRange = NSRange(location: start + 2, length: caret - start - 2)
+        let typed = text.substring(with: typedRange)
+        if let hash = typed.firstIndex(of: "#") {
+            let note = typed[..<hash].trimmingCharacters(in: .whitespaces)
+            let afterHash = String(typed[typed.index(after: hash)...])
+            let headingStart = typedRange.location + (String(typed[..<hash]) as NSString).length + 1
+            // 語の続き: `]` か `|` まで
+            let end = tokenEnd(from: caret, line: line, in: text, stopping: [ASCII.rightBracket, ASCII.pipe])
             return CompletionQuery(
-                kind: .heading(note: note), text: typed,
-                range: NSRange(location: innerRange.location + hashOffset + 1, length: innerRange.length - hashOffset - 1),
-                anchor: start)
+                kind: .heading(note: note), text: afterHash,
+                range: NSRange(location: headingStart, length: end - headingStart), anchor: start)
         }
-        return CompletionQuery(kind: .noteTitle, text: inner, range: innerRange, anchor: start)
+        // 語の続き: `]`、`|`、`#` まで
+        let end = tokenEnd(from: caret, line: line, in: text, stopping: [ASCII.rightBracket, ASCII.pipe, ASCII.hash])
+        return CompletionQuery(kind: .noteTitle, text: typed, range: NSRange(location: typedRange.location, length: end - typedRange.location), anchor: start)
+    }
+
+    /// キャレットから行末へ、`stopping` のどれかの直前まで。
+    private static func tokenEnd(from caret: Int, line: NSRange, in text: NSString, stopping: Set<unichar>) -> Int {
+        var end = caret
+        while end < NSMaxRange(line), !stopping.contains(text.character(at: end)) { end += 1 }
+        return end
     }
 
     /// `location` の直前のバックスラッシュが奇数個なら CommonMark のエスケープ。
@@ -144,60 +158,117 @@ public enum CompletionTrigger {
         return count % 2 == 1
     }
 
-    /// 行頭から `location` までのエスケープされていないバッククォートが奇数個(開いたまま)なら、インラインコードの中。
-    /// 計画の `.inlineCode` のスパン(再パースが済んでいる部分)も見る。
-    private static func isInsideInlineCode(before location: Int, in text: NSString, lineStart: Int, plan: HighlightPlan) -> Bool {
+    /// インラインコードの中か。計画の `.inlineCode` のスパン(確定した計画)と、計画が古いときは行頭から `location` までの
+    /// バッククォートの連続を対応付けて(CommonMark: 同じ長さの連続で閉じる)開いたままなら中。改行をまたぐコードスパンは見ない。
+    private static func isInsideInlineCode(before location: Int, in text: NSString, lineStart: Int, plan: HighlightPlan, planIsCurrent: Bool) -> Bool {
         if plan.spans.contains(where: { $0.kind == .inlineCode && NSLocationInRange(location, $0.range) }) { return true }
-        var count = 0
+        if planIsCurrent { return false }
+        var open: Int?
         var i = lineStart
         while i < location {
-            if text.character(at: i) == ASCII.backtick, !isEscaped(at: i, in: text, lineStart: lineStart) { count += 1 }
-            i += 1
+            guard text.character(at: i) == ASCII.backtick else {
+                i += 1
+                continue
+            }
+            var run = 0
+            while i < location, text.character(at: i) == ASCII.backtick {
+                run += 1
+                i += 1
+            }
+            if isEscaped(at: i - run, in: text, lineStart: lineStart), run == 1 { continue }
+            if let opened = open {
+                if opened == run { open = nil }
+            } else {
+                open = run
+            }
         }
-        return count % 2 == 1
+        return open != nil
     }
 
-    /// 行頭から `location` までで最後の `](` の後ろに `)` が無ければ、Markdown Link の URL の中。
+    /// 行頭から `location` までで最後の `](` の後ろの括弧が閉じていなければ、Markdown Link の URL の中(URL の中の対応した括弧は
+    /// CommonMark で有効なので深さを数える。エスケープされた括弧は数えない)。
     private static func isInsideMarkdownLinkDestination(before location: Int, in text: NSString, lineStart: Int) -> Bool {
+        var depth = 0
         var i = location - 1
         while i > lineStart {
             let c = text.character(at: i)
-            if c == ASCII.rightParen { return false }
-            if c == ASCII.leftParen, text.character(at: i - 1) == ASCII.rightBracket { return true }
+            if (c == ASCII.rightParen || c == ASCII.leftParen), isEscaped(at: i, in: text, lineStart: lineStart) {
+                i -= 1
+                continue
+            }
+            if c == ASCII.rightParen { depth += 1 }
+            if c == ASCII.leftParen {
+                if depth == 0 { return text.character(at: i - 1) == ASCII.rightBracket }
+                depth -= 1
+            }
             i -= 1
         }
         return false
     }
 
-    /// コードブロックの中か: 計画のコードブロック(インデント型も)と、文書の先頭から行の前までのフェンスの行(```` ``` ````、`~~~`、
-    /// 3 つまでの空白のインデント)の数が奇数(開いたまま)。
-    private static func isInsideCodeBlock(caret: Int, line: NSRange, in text: NSString, plan: HighlightPlan) -> Bool {
+    /// コードブロックの中か: 計画のコードブロック(インデント型も、引用の中も)。計画が古いときは文書の先頭から行の前までの
+    /// フェンスを追う(開きは 3 つ以上の同じ記号、閉じは同じ記号で開き以上の長さ、どちらも 3 つまでの空白と引用の `>` の後ろ。
+    /// 打っている最中のインデント型のコードブロックは計画が捨てているので見つからない: 再パースが済めば出なくなる)。
+    private static func isInsideCodeBlock(caret: Int, line: NSRange, in text: NSString, plan: HighlightPlan, planIsCurrent: Bool) -> Bool {
         if plan.codeBlocks.contains(where: { caret > $0.range.location && caret <= NSMaxRange($0.range) }) { return true }
-        var fences = 0
+        if planIsCurrent { return false }
+        var open: (character: unichar, length: Int)?
         var location = 0
         while location < line.location {
             var end = 0
             var contentsEnd = 0
             text.getLineStart(nil, end: &end, contentsEnd: &contentsEnd, for: NSRange(location: location, length: 0))
-            if isFenceLine(NSRange(location: location, length: contentsEnd - location), in: text) { fences += 1 }
+            if let fence = fence(in: NSRange(location: location, length: contentsEnd - location), in: text) {
+                if let opened = open {
+                    if fence.character == opened.character, fence.length >= opened.length, fence.isClosing { open = nil }
+                } else {
+                    open = (fence.character, fence.length)
+                }
+            }
             guard end > location else { break }
             location = end
         }
-        return fences % 2 == 1
+        return open != nil
     }
 
-    private static func isFenceLine(_ line: NSRange, in text: NSString) -> Bool {
+    /// 行がフェンス(```` ``` ```` / `~~~` 以上、3 つまでの空白と引用の `>` の後ろ)なら記号と長さ。`isClosing` は記号の後ろが空白だけ。
+    private static func fence(in line: NSRange, in text: NSString) -> (character: unichar, length: Int, isClosing: Bool)? {
         var i = line.location
         let end = NSMaxRange(line)
-        var indent = 0
-        while i < end, text.character(at: i) == ASCII.space, indent < 3 {
-            indent += 1
+        // 引用の `>`(とその後ろの 1 つの空白)を剥がす
+        while true {
+            var j = i
+            var indent = 0
+            while j < end, text.character(at: j) == ASCII.space, indent < 3 {
+                indent += 1
+                j += 1
+            }
+            guard j < end, text.character(at: j) == ASCII.greaterThan else {
+                i = j
+                break
+            }
+            i = j + 1
+            if i < end, text.character(at: i) == ASCII.space { i += 1 }
+        }
+        guard i < end else { return nil }
+        let c = text.character(at: i)
+        guard c == ASCII.backtick || c == ASCII.tilde else { return nil }
+        var length = 0
+        while i < end, text.character(at: i) == c {
+            length += 1
             i += 1
         }
-        guard i + 2 < end else { return false }
-        let c = text.character(at: i)
-        guard c == ASCII.backtick || c == ASCII.tilde else { return false }
-        return text.character(at: i + 1) == c && text.character(at: i + 2) == c
+        guard length >= 3 else { return nil }
+        var isClosing = true
+        while i < end {
+            let rest = text.character(at: i)
+            if rest != ASCII.space && rest != ASCII.tab {
+                isClosing = false
+                break
+            }
+            i += 1
+        }
+        return (c, length, isClosing)
     }
 
     // MARK: - Tag(Front Matter の `tags` の値)
@@ -207,14 +278,21 @@ public enum CompletionTrigger {
         let caretInLine = caret - line.location
         let segmentStart: Int
         if let valueStart = tagKeyValueStart(in: lineText) {
-            // `tags: a, b` / `tags: [a, b]`: キャレットより前の最後の区切り(`,` か `[`)の後ろ。`]` を越えていたら値の外
+            // `tags: a, b` / `tags: [a, b]`: キャレットより前の最後の区切り(引用符の外の `,` か `[`)の後ろ。`]` を越えていたら値の外、
+            // 入れ子の `[` は Tag のリストではない
             guard caretInLine >= valueStart else { return nil }
             var start = valueStart
             var i = valueStart
             var sawOpening = false
+            var quote: unichar?
             while i < caretInLine {
                 let c = lineText.character(at: i)
-                if c == ASCII.leftBracket, !sawOpening {
+                if let open = quote {
+                    if c == open { quote = nil }
+                } else if c == 0x22 || c == 0x27 {  // `"` / `'`
+                    quote = c
+                } else if c == ASCII.leftBracket {
+                    if sawOpening { return nil }
                     sawOpening = true
                     start = i + 1
                 } else if c == ASCII.rightBracket {
@@ -231,21 +309,37 @@ public enum CompletionTrigger {
         } else {
             return nil
         }
-        // 語: 先頭の空白、引用符 1 つ、`#` 1 つを除いた残り。Tag の文字だけから成り、空でないときだけ
+        // 語: 先頭の空白、引用符 1 つ、`#` 1 つを除いた残り。空白の後ろの `#` は YAML のコメント(`tags: #sw`、`- #sw`)で値ではない。
+        // Tag の文字だけから成り、空でないときだけ
         var wordStart = segmentStart
+        var skippedSpace = false
         while wordStart < caretInLine, lineText.character(at: wordStart) == ASCII.space || lineText.character(at: wordStart) == ASCII.tab {
             wordStart += 1
+            skippedSpace = true
         }
         if wordStart < caretInLine {
             let c = lineText.character(at: wordStart)
-            if c == 0x22 || c == 0x27 { wordStart += 1 }  // `"` / `'`
+            if c == 0x22 || c == 0x27 {
+                wordStart += 1
+                skippedSpace = false
+            }
         }
-        if wordStart < caretInLine, lineText.character(at: wordStart) == ASCII.hash { wordStart += 1 }
+        if wordStart < caretInLine, lineText.character(at: wordStart) == ASCII.hash {
+            if skippedSpace { return nil }
+            wordStart += 1
+        }
         guard wordStart < caretInLine else { return nil }
-        let word = lineText.substring(with: NSRange(location: wordStart, length: caretInLine - wordStart))
-        guard word.unicodeScalars.allSatisfy(isTagScalar) else { return nil }
-        let range = NSRange(location: line.location + wordStart, length: caretInLine - wordStart)
-        return CompletionQuery(kind: .tag, text: word, range: range, anchor: range.location)
+        let typed = lineText.substring(with: NSRange(location: wordStart, length: caretInLine - wordStart))
+        guard typed.unicodeScalars.allSatisfy(isTagScalar) else { return nil }
+        // 語の続き(キャレットの後ろの Tag の文字)も置き換える
+        var wordEnd = caretInLine
+        while wordEnd < lineText.length {
+            let c = lineText.character(at: wordEnd)
+            guard !UTF16.isSurrogate(c), let scalar = Unicode.Scalar(c), isTagScalar(scalar) else { break }
+            wordEnd += 1
+        }
+        let range = NSRange(location: line.location + wordStart, length: wordEnd - wordStart)
+        return CompletionQuery(kind: .tag, text: typed, range: range, anchor: range.location)
     }
 
     /// `tags:` / `tag:`(インデント無し、大文字小文字は区別しない)の行なら、コロンの直後の位置。

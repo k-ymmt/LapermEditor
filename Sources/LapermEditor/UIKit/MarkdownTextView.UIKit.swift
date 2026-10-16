@@ -261,11 +261,7 @@ public final class MarkdownTextView: UITextView {
     /// Completion List の状態の公開先(ホストが作り、キーボードアクセサリの段が読む)。タップでの確定(`choose`)もここから届く。
     public var completionList: CompletionListState? {
         get { completion.listState }
-        set {
-            completion.listState?.onChoose = nil
-            completion.listState = newValue
-            newValue?.onChoose = { [weak self] item in self?.commitCompletion(item) }
-        }
+        set { completion.listState = newValue }
     }
 
     /// 一覧の確定(段のタップ、ハードウェアキーボードの Return / Tab)。IME の変換中なら未確定の文字を確定させてから、候補で置き換える。
@@ -277,9 +273,16 @@ public final class MarkdownTextView: UITextView {
         return perform(command)
     }
 
-    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。
+    /// 打鍵の後の判定(一覧を開く / 更新する / 閉じる)。先に保留のハイライトを流して計画を今の本文に合わせる(次のランループで
+    /// どのみち走る仕事。変換中と大きな文書では合わず、検出が文字でも読む)。
     private func noteTypingForCompletion() {
-        completion.noteTyping(text: text as NSString, caret: selectedRange, plan: engine.highlighter.currentPlan)
+        guard completion.options.isEnabled, completion.provider != nil else { return }
+        let planIsCurrent = engine.highlightNow()
+        let marked = markedTextRange.map { range in
+            NSRange(location: offset(from: beginningOfDocument, to: range.start), length: offset(from: range.start, to: range.end))
+        }
+        completion.noteTyping(
+            text: text as NSString, caret: selectedRange, markedRange: marked, plan: engine.highlighter.currentPlan, planIsCurrent: planIsCurrent)
     }
 
     @objc private func completionMoveUp(_ sender: Any?) { completion.moveSelection(by: -1) }
@@ -447,6 +450,7 @@ public final class MarkdownTextView: UITextView {
             self, selector: #selector(keyboardWillHide(_:)),
             name: UIResponder.keyboardWillHideNotification, object: nil)
         engine.editorFocusDidChange(isFirstResponder)
+        completion.commit = { [weak self] item in self?.commitCompletion(item) }
     }
 
     // MARK: - フォーカス(Live Preview)

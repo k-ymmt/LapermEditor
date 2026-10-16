@@ -91,7 +91,9 @@ final class CompletionPanel: NSPanel {
         self.items = items
         tableView.reloadData()
         let size = Self.size(for: items)
-        let frame = Self.frame(size: size, anchorRect: anchorRect, visibleFrame: (parent.screen ?? NSScreen.main)?.visibleFrame)
+        // キャレットのある画面に収める(ウィンドウが 2 つの画面にまたがるとき `parent.screen` は大部分がある方)
+        let screen = NSScreen.screens.first { $0.frame.contains(anchorRect.origin) } ?? parent.screen ?? NSScreen.main
+        let frame = Self.frame(size: size, anchorRect: anchorRect, visibleFrame: screen?.visibleFrame)
         setFrame(frame, display: false)
         select(selectedIndex)
         if self.parent !== parent {
