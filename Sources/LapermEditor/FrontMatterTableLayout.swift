@@ -39,6 +39,9 @@ struct FrontMatterTableLayout: Equatable {
 
     static let horizontalPadding: CGFloat = 12
     static let rowVerticalPadding: CGFloat = 6
+    /// 枠の上辺から最初の行の文字まで、最後の行の文字から枠の下辺までの余白。行の上下の `rowVerticalPadding` を含み、
+    /// 差の分だけ最初の行の上と最後の行の下に足す(行の間は `rowVerticalPadding * 2` のまま)。
+    static let tableVerticalPadding: CGFloat = 12
     static let columnGap: CGFloat = 16
     static let minimumKeyColumnWidth: CGFloat = 48
     static let maximumKeyColumnFraction: CGFloat = 0.4
@@ -97,8 +100,9 @@ struct FrontMatterTableLayout: Equatable {
         let valueWidth = max(1, width - horizontalPadding - valueX)
         let valueLineHeight = lineHeight(of: appearance.valueFont)
 
+        let outerExtra = max(0, tableVerticalPadding - rowVerticalPadding)
         var rows: [Row] = []
-        var y: CGFloat = 0
+        var y: CGFloat = outerExtra
         for (property, keyText) in zip(frontMatter.properties, keyTexts) {
             var value: NSAttributedString?
             var chips: [Chip] = []
@@ -153,14 +157,14 @@ struct FrontMatterTableLayout: Equatable {
                 lineRange: property.lineRange))
             y += rowHeight
         }
-        return FrontMatterTableLayout(rows: rows, size: CGSize(width: width, height: y))
+        return FrontMatterTableLayout(rows: rows, size: CGSize(width: width, height: y + outerExtra))
     }
 
-    /// 表座標の点を含む行。行の間(パディング)なら最も近い行。表の外なら nil。
+    /// 表座標の点を含む行。枠の上下の余白なら近い方の行。表の外なら nil。
     func row(at point: CGPoint) -> Row? {
         guard !rows.isEmpty, CGRect(origin: .zero, size: size).insetBy(dx: -4, dy: -4).contains(point) else { return nil }
         if let hit = rows.first(where: { $0.frame.minY <= point.y && point.y < $0.frame.maxY }) { return hit }
-        return point.y < 0 ? rows.first : rows.last
+        return point.y < rows[0].frame.minY ? rows.first : rows.last
     }
 
     /// 表座標の点に重なっている値の中の URL(ADR 0031)。文字列の値はその文字の上、リストの値はチップの上。無ければ nil。

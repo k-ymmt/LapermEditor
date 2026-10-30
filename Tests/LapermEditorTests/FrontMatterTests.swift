@@ -260,7 +260,13 @@ private let sample = "---\ntitle: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
     #expect(layout.rows[3].value?.string == "")
     // 行は隙間なく縦に並び、値の列はキーの列の右
     #expect(layout.rows[1].frame.minY == layout.rows[0].frame.maxY)
-    #expect(layout.size.height == layout.rows.last!.frame.maxY)
+    // 枠の上辺から最初の行の文字まで、最後の行の下端から枠の下辺までは tableVerticalPadding(12pt)
+    #expect(FrontMatterTableLayout.tableVerticalPadding == 12)
+    let outerExtra = FrontMatterTableLayout.tableVerticalPadding - FrontMatterTableLayout.rowVerticalPadding
+    #expect(layout.rows[0].frame.minY == outerExtra)
+    #expect(layout.rows[0].keyFrame.minY == FrontMatterTableLayout.tableVerticalPadding)
+    #expect(layout.rows[0].valueFrame.minY == FrontMatterTableLayout.tableVerticalPadding)
+    #expect(layout.size.height == layout.rows.last!.frame.maxY + outerExtra)
     #expect(layout.rows[0].valueFrame.minX > layout.rows[0].keyFrame.maxX)
     #expect(layout.rows[1].chips[1].frame.minX > layout.rows[1].chips[0].frame.maxX)
     #expect(layout.rows.allSatisfy { $0.frame.height >= FrontMatterTableLayout.lineHeight(of: MarkdownTheme.default.bodyFont) })
@@ -271,6 +277,9 @@ private let sample = "---\ntitle: Foo\ntags:\n  - a\n  - b\n---\n# H\nbody"
     #expect(layout.row(at: CGPoint(x: 5, y: layout.rows[2].frame.minY + 1))?.lineRange == fm.properties[2].lineRange)
     #expect(layout.row(at: CGPoint(x: 5, y: -20)) == nil)
     #expect(layout.row(at: CGPoint(x: 5, y: -2))?.lineRange == fm.properties[0].lineRange)
+    // 枠の上下の余白(行の外)は近い方の行
+    #expect(layout.row(at: CGPoint(x: 5, y: 1))?.lineRange == fm.properties[0].lineRange)
+    #expect(layout.row(at: CGPoint(x: 5, y: layout.size.height - 1))?.lineRange == fm.properties[3].lineRange)
 }
 
 @MainActor @Test func layoutRowsGrowWithALargeKeyFontAndKeysFallBackToTheBodyColor() throws {
