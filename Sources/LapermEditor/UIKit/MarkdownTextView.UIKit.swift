@@ -361,6 +361,12 @@ public final class MarkdownTextView: UITextView {
         scrollRangeToVisible(clamped)
     }
 
+    /// Find ナビゲータを出す(Laperm ADR 0052)。`replace` なら置換欄も(置換はシステムが `isEditable` を見て受け付ける)。
+    /// キーボードを出していなくても開ける(ナビゲータが自分の入力欄を持つ)。ウィンドウに載っていなければ何も起きない。
+    public func showFind(replace: Bool) {
+        findInteraction?.presentFindNavigator(showingReplace: replace)
+    }
+
     static func clamp(_ range: NSRange, toLength length: Int) -> NSRange {
         let location = max(0, min(range.location, length))
         let end = max(location, min(NSMaxRange(range), length))
@@ -400,6 +406,9 @@ public final class MarkdownTextView: UITextView {
         textColor = engine.theme.bodyColor
         backgroundColor = engine.theme.backgroundColor
         alwaysBounceVertical = true
+        // Find(Laperm ADR 0052): システムの Find ナビゲータ(ハードウェアキーボードの ⌘F もこれが受ける)。探す対象は
+        // ストレージの生の Markdown。一致へ移る選択は `selectedTextRange` を通るので、折畳中の本文の一致はそこで展開される。
+        isFindInteractionEnabled = true
 
         engine.host = self
         if let contentStorage = textContentStorage, let layoutManager = textLayoutManager {

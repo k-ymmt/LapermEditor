@@ -445,6 +445,10 @@ public final class MarkdownTextView: NSTextView {
         font = engine.theme.bodyFont
         drawsBackground = true
         backgroundColor = engine.theme.backgroundColor
+        // Find(Laperm ADR 0052): システムの Find バー(NSTextFinder)をスクロールビューの上端に出す。探す対象はストレージの
+        // 生の Markdown。一致へ移る選択は `setSelectedRanges` を通るので、折畳中の本文の一致はそこで展開される。
+        usesFindBar = true
+        isIncrementalSearchingEnabled = true
 
         engine.host = self
         if let contentStorage = textContentStorage, let layoutManager = textLayoutManager {
@@ -502,6 +506,16 @@ public final class MarkdownTextView: NSTextView {
         }
         focusesWhenInWindow = false
         window.makeFirstResponder(self)
+    }
+
+    /// Find バーを出す(Laperm ADR 0052)。`replace` なら置換欄も。本文を first responder にしてから、システムの
+    /// Edit > Find > Find… / Find and Replace… と同じ `performFindPanelAction` を送る(NSTextView は sender の `tag` を見る)。
+    /// スクロールビューに入っていない(Find バーの置き場が無い)ときは何も起きない。
+    public func showFind(replace: Bool) {
+        focus()
+        let item = NSMenuItem()
+        item.tag = (replace ? NSTextFinder.Action.showReplaceInterface : .showFindInterface).rawValue
+        performFindPanelAction(item)
     }
 
     /// ウィンドウの first responder と突き合わせる(become / resign を経ない付け外しにも追従する)。

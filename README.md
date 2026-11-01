@@ -12,6 +12,7 @@ A TextKit 2–based Markdown editor library for macOS and iOS, written in Swift 
 - Outline (heading) folding and outline change callbacks
 - Inline image preview for image references
 - Link detection with click / Cmd+tap opening and hover underlines
+- Find and replace inside the note with the system UI: the macOS find bar (`usesFindBar`, incremental) and the iOS find navigator (`isFindInteractionEnabled`); `showFind(replace:)` on the text view and the proxy opens it. Matches are found in the raw Markdown (hidden syntax markers included) and in folded sections, which unfold when a match inside them is selected
 - Editing assistance (list continuation, indentation, task toggling)
 - Block decorations: code blocks as one full-width rounded box with vertical padding (`MarkdownTheme.codeBlockVerticalPadding`; a code block that starts at the very first paragraph gets no top padding because TextKit ignores `paragraphSpacingBefore` there), blockquote bars drawn in a display-only paragraph indent (`MarkdownTheme.blockquoteIndent`, default 16 pt) so the bar keeps one x across every line and stays clear of the text, thematic-break rules, table backgrounds
 - Customizable `MarkdownTheme`, including `lineSpacing` (extra points between lines, applied as the paragraph style's `lineSpacing`; TextKit 2 puts it above every line except the document's first, and block decorations keep it outside the box)

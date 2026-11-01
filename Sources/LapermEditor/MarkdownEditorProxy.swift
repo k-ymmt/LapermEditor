@@ -29,6 +29,10 @@ public final class MarkdownEditorProxy {
     /// Wiki Link の解決結果だけが変わった(Note の増減)ときに色を付け直す。再パースはしない。
     public func refreshWikiLinkResolution() { textView?.refreshWikiLinkResolution() }
 
+    /// Find(Laperm ADR 0052): macOS はシステムの Find バー、iOS は Find ナビゲータを出す。`replace` なら置換欄も。
+    /// ビュー未接続なら何もしない。
+    public func showFind(replace: Bool) { textView?.showFind(replace: replace) }
+
     /// 画像を Embed する(Laperm ADR 0045: ホストの Command「Insert Image…」、写真ピッカー、カメラ): `attachmentStore` に保存させ、
     /// 返った相対パスの `![](…)` をキャレットに挿入する。保存先が無い・ビュー未接続なら nil。
     @discardableResult
