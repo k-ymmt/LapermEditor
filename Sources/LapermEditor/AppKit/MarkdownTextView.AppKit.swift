@@ -490,6 +490,20 @@ public final class MarkdownTextView: NSTextView {
         return resigned
     }
 
+    /// `focus()` がウィンドウに載る前に呼ばれた: 載ったときに first responder になる。
+    private var focusesWhenInWindow = false
+
+    /// 本文にキーボードフォーカスを移す。まだウィンドウに載っていなければ、載ったときに移す(SwiftUI はビューを作ってから
+    /// ウィンドウに載せるので、作った直後のビューへの要求が黙って捨てられないように)。要求は 1 回きり。
+    public func focus() {
+        guard let window else {
+            focusesWhenInWindow = true
+            return
+        }
+        focusesWhenInWindow = false
+        window.makeFirstResponder(self)
+    }
+
     /// ウィンドウの first responder と突き合わせる(become / resign を経ない付け外しにも追従する)。
     private func syncEditorFocus() {
         engine.editorFocusDidChange(window?.firstResponder === self)
@@ -588,6 +602,14 @@ public final class MarkdownTextView: NSTextView {
         super.viewDidMoveToWindow()
         syncEditorFocus()
         if window == nil { completion.close() }
+        if focusesWhenInWindow, let window {
+            focusesWhenInWindow = false
+            // ビューの挿入(SwiftUI の更新)の最中には first responder を替えない: 次のターンで、まだそのウィンドウにあれば
+            DispatchQueue.main.async { [weak self, weak window] in
+                guard let self, let window, self.window === window else { return }
+                window.makeFirstResponder(self)
+            }
+        }
         // NSTrackingArea に .mouseMoved を指定していても、ウィンドウ側が
         // mouseMoved イベントを受け取る設定になっていないと配送されないことがある
         // (特に SwiftUI がホストするウィンドウ)。Cmd+ホバーの下線表示のために明示的に有効化する。

@@ -52,6 +52,11 @@ public final class MarkdownEditorProxy {
     public func undo() { undoManager?.undo() }
     public func redo() { undoManager?.redo() }
 
+    #if os(macOS)
+    /// 本文にキーボードフォーカスを移す。ビューがまだウィンドウに載っていなければ、載ったときに移す。ビュー未接続なら何もしない。
+    public func focus() { textView?.focus() }
+    #endif
+
     #if canImport(UIKit)
     /// キーボードを閉じる(ファーストレスポンダを外す)。
     public func dismissKeyboard() {

@@ -205,7 +205,10 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     `canPerformAction(paste:)` answers true for an image-only pasteboard. `droppedItemHandler` (`.onDropItems(ofTypes:_:)`) is the
     second drop hook: the host's own pasteboard types (Laperm's sidebar rows) become text at the drop point.
   - `Sources/LapermEditor/AppKit/`: `MarkdownTextView: NSTextView`, ruler gutter, overlays, and the
-    macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs.
+    macOS-only `TextInputInterceptor` (Vim) / `InsertionPointStyle` APIs. `focus()` / `MarkdownEditorProxy.focus()`
+    (macOS) makes the text view first responder, or, while it is not in a window yet, once it is: SwiftUI creates the
+    view before it inserts it, and a host's notification (the first highlight) can arrive in between. The deferred
+    request runs on the next main-queue turn after `viewDidMoveToWindow` (not inside the insertion) and only once.
   - `EditorMargins` (shared): horizontal margins as a pure `horizontalInsets(viewWidth:gutterWidth:fontSize:)`
     rule (minimum per side + maximum text width in ems, centered, rounded up to whole points so the
     minimum holds and the maximum is not exceeded; non-finite values count as no margin). The AppKit
