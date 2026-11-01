@@ -70,6 +70,11 @@ private func visibleTextFields(in view: NSView?) -> [NSTextField] {
     _ = window
 }
 
+/// システムの Find が畳まれた本文の一致を見つけて展開することは、このプロセスでは確かめられない: NSTextFinder はテストの
+/// ウィンドウ(キーになれない)では探さない(Find ペーストボード + nextMatch、バーを出してから、欄に入れて action、自前の
+/// NSTextFinder は NSTextView が Swift から NSTextFinderClient に見えず不可: 2026-11-02 に 8 通り試した)。Laperm の macOS
+/// XCUITest(testFindBarFindsAndReplacesInsideTheOpenNote)が実アプリで畳んだ本文の一致へ移って展開することを見る。
+
 @MainActor @Test func proxyShowFindForwardsToTheTextViewAndIgnoresAMissingOne() {
     let proxy = MarkdownEditorProxy()
     proxy.showFind(replace: false)  // 未接続: 何も起きない
