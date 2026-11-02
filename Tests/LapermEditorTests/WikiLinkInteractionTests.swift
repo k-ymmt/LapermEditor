@@ -341,3 +341,38 @@ private func makeStack(_ text: String) -> (NSTextContentStorage, NSTextLayoutMan
     #expect(model.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed)
 }
 #endif
+
+// 埋め込み `![[image.png]]`(Laperm ADR 0054): 解決が `.attachment(URL)` ならその画像をプレビューし、クリックの対象ではない。
+
+@MainActor @Test func embedPreviewsTheImageTheHostResolvesTo() throws {
+    let textView = MarkdownTextView()
+    textView.frame = NSRect(x: 0, y: 0, width: 400, height: 300)
+    let png = try writeTempPNG(name: "embedded.png")
+    var existing: [String: URL] = [:]
+    textView.wikiLinkResolver = { reference in
+        guard let url = existing[reference.target] else { return .unresolved }
+        return .attachment(url)
+    }
+    textView.string = "![[embedded.png]] and ![a](a.png)"
+    textView.highlightAll()
+    // 未解決: `![alt](url)` だけがプレビューの対象、埋め込みは Unresolved の色
+    #expect(textView.imagePreviewController.references.map(\.destination) == ["a.png"])
+    #expect(renderingColor(at: 5, in: textView) == textView.theme.effectiveUnresolvedLinkColor)
+    existing["embedded.png"] = png
+    textView.refreshWikiLinkResolution()
+    #expect(textView.imagePreviewController.references.map(\.destination) == [png.absoluteString, "a.png"])
+    #expect(renderingColor(at: 5, in: textView) == textView.theme.style(for: .wikiLink)?.foregroundColor)
+    // 解決が消えればプレビューも消える
+    existing = [:]
+    textView.refreshWikiLinkResolution()
+    #expect(textView.imagePreviewController.references.map(\.destination) == ["a.png"])
+}
+
+@MainActor @Test func embedIsNotAClickableLink() {
+    let textView = makeTextView("![[image.png]] and [[Note]]")
+    textView.wikiLinkResolver = { _ in .resolved }
+    #expect(textView.engine.wikiLinkReference(at: 5) == nil)
+    #expect(textView.engine.wikiLinkReference(at: 21)?.target == "Note")
+    textView.refreshLinkHover(atPoint: midpoint(of: NSRange(location: 3, length: 9), in: textView), commandHeld: true)
+    #expect(textView.debugHoveredLinkRange == nil)
+}

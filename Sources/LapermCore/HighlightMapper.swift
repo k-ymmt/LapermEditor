@@ -730,9 +730,11 @@ enum HighlightMapper {
         // MARK: Wiki Link 検出
 
         /// CommonMark は `[[Note]]` に意味を与えず(対応する `[Note]:` 定義が無ければ)Text ノードのまま届くので、
-        /// ここで自前検出する。`[[` から最初の `]]` までで、中に `[` `]` 改行を含まないもの。直前が `!` の埋め込み
-        /// (`![[…]]`)とブロック参照(`[[Note#^id]]`)は今回は扱わず、Source と同じ見た目のまま(Laperm ADR 0021)。
-        /// 見つけた Wiki Link のレンジを出現順に返す(埋め込みなど拾わなかったものも隙間の走査から外すために返す)。
+        /// ここで自前検出する。`[[` から最初の `]]` までで、中に `[` `]` 改行を含まないもの。ブロック参照(`[[Note#^id]]`)は
+        /// 扱わず、Source と同じ見た目のまま(Laperm ADR 0021)。直前が `!` の埋め込み(`![[…]]`)は、素の画像の埋め込み
+        /// (`|` も `#` も無く、画像の拡張子の名前)だけを `![alt](url)` と同じ扱い(Wiki Link の参照 + 画像の参照、`![[` と `]]` を
+        /// 隠す)にし、それ以外の埋め込みは Source の見た目のまま(Laperm ADR 0054)。
+        /// 見つけた Wiki Link のレンジを出現順に返す(拾わなかった埋め込みも隙間の走査から外すために返す)。
         private mutating func appendWikiLinks(in range: NSRange) -> [NSRange] {
             let end = NSMaxRange(range)
             var consumed: [NSRange] = []
@@ -762,9 +764,34 @@ enum HighlightMapper {
                 }
                 let linkRange = NSRange(location: i, length: closing + 2 - i)
                 let inner = text.substring(with: NSRange(location: i + 2, length: closing - i - 2))
-                let isEmbed = i > 0 && text.character(at: i - 1) == ASCII.exclamation
+                // `\![[x]]` は `!` がリテラルで、`[[x]]` は普通の Wiki Link
+                let isEmbed = i > 0 && text.character(at: i - 1) == ASCII.exclamation && !isEscaped(at: i - 1)
                 // テーブルのセルの中では `\|` が `|`(GFM)。意味は復元し、レンジは原文のまま。
-                if !isEmbed, let reference = WikiLinkReference.parse(inner: inner, range: linkRange, unescapesPipes: tableDepth > 0) {
+                if isEmbed {
+                    if i - 1 >= range.location,
+                       let reference = WikiLinkReference.parse(inner: inner, range: linkRange, unescapesPipes: tableDepth > 0),
+                       reference.alias == nil, reference.heading == nil, WikiLinkReference.isImageName(reference.target) {
+                        let embedRange = NSRange(location: i - 1, length: linkRange.length + 1)
+                        var embed = reference
+                        embed.range = embedRange
+                        embed.isEmbed = true
+                        inlineSpans.append(HighlightSpan(range: embedRange, kind: .wikiLink))
+                        appendConcealableMarker(NSRange(location: i - 1, length: 3))
+                        appendConcealableMarker(NSRange(location: closing, length: 2))
+                        wikiLinkReferences.append(embed)
+                        imageReferences.append(ImageReference(
+                            altText: "",
+                            destination: reference.target,
+                            range: embedRange,
+                            paragraphRange: text.paragraphRange(for: embedRange),
+                            isInsideTable: tableDepth > 0,
+                            wikiTarget: reference.target
+                        ))
+                        consumed.append(embedRange)
+                        i = closing + 2
+                        continue
+                    }
+                } else if let reference = WikiLinkReference.parse(inner: inner, range: linkRange, unescapesPipes: tableDepth > 0) {
                     inlineSpans.append(HighlightSpan(range: linkRange, kind: .wikiLink))
                     appendConcealableMarker(NSRange(location: i, length: 2))
                     if let pipe = firstPipe(in: NSRange(location: i + 2, length: closing - i - 2)) {

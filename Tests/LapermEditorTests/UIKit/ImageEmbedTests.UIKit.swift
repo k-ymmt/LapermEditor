@@ -12,9 +12,9 @@ final class RecordingAttachmentStore: AttachmentStore {
     var stored: [ImageAttachmentSource] = []
     var pathFor: (ImageAttachmentSource) -> String? = { source in "Attachments/\(source.preferredName ?? "Pasted image.png")" }
 
-    func store(_ source: ImageAttachmentSource) async -> String? {
+    func embed(_ source: ImageAttachmentSource) async -> String? {
         stored.append(source)
-        return pathFor(source)
+        return pathFor(source).map { MarkdownLinkSyntax.image(path: $0) }
     }
 }
 

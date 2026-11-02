@@ -96,8 +96,7 @@ private func markers(in markdown: String) -> [String] {
     #expect(result.map(\.target) == ["A", "B", "C"])
 }
 
-@Test func ignoresEmbedBlockReferenceAndEmpty() {
-    #expect(wikiLinks(in: "![[image.png]]").isEmpty)
+@Test func ignoresBlockReferenceAndEmpty() {
     #expect(wikiLinks(in: "[[Note#^abc123]]").isEmpty)
     #expect(wikiLinks(in: "[[]]").isEmpty)
     #expect(wikiLinks(in: "[[ ]]").isEmpty)
@@ -106,7 +105,45 @@ private func markers(in markdown: String) -> [String] {
 
 @Test func embedDoesNotSwallowFollowingWikiLink() {
     let result = wikiLinks(in: "![[img.png]] then [[Note]]")
-    #expect(result.map(\.target) == ["Note"])
+    #expect(result.map(\.target) == ["img.png", "Note"])
+    #expect(result.map(\.isEmbed) == [true, false])
+}
+
+// Wiki 記法の埋め込み(Laperm ADR 0054): 素の画像の埋め込みだけが Wiki Link + 画像の参照になり、`![[` と `]]` を隠す。
+
+@Test func plainImageEmbedIsAWikiLinkAndAnImageReference() {
+    let md = "See ![[Attachments/My Image.PNG]] now."
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let embedRange = (md as NSString).range(of: "![[Attachments/My Image.PNG]]")
+    #expect(plan.wikiLinks == [WikiLinkReference(target: "Attachments/My Image.PNG", range: embedRange, isEmbed: true)])
+    #expect(plan.spans.contains(HighlightSpan(range: embedRange, kind: .wikiLink)))
+    #expect(plan.images.count == 1)
+    #expect(plan.images[0].wikiTarget == "Attachments/My Image.PNG")
+    #expect(plan.images[0].destination == "Attachments/My Image.PNG")
+    #expect(plan.images[0].altText == "")
+    #expect(plan.images[0].range == embedRange)
+    #expect(plan.images[0].paragraphRange == NSRange(location: 0, length: (md as NSString).length))
+    #expect(markers(in: md) == ["![[", "]]"])
+}
+
+@Test func otherEmbedsStayUnparsed() {
+    // サイズ指定、見出し、画像でない名前、Note: 今までどおり Source の見た目(参照も画像もマーカーも無い)
+    for md in ["![[image.png|300]]", "![[image.png#x]]", "![[paper.pdf]]", "![[Note]]", "![[]]"] {
+        let plan = MarkdownParser().highlightPlan(for: md)
+        #expect(plan.wikiLinks.isEmpty, "\(md)")
+        #expect(plan.images.isEmpty, "\(md)")
+        #expect(plan.concealableMarkers.isEmpty, "\(md)")
+    }
+    // エスケープした `!` は埋め込みではない(`[[image.png]]` の Wiki Link)
+    let escaped = wikiLinks(in: "\\![[image.png]]")
+    #expect(escaped.map(\.isEmbed) == [false])
+}
+
+@Test func embedInsideATableIsNotPreviewed() {
+    let md = "| a |\n| - |\n| ![[x.png]] |\n"
+    let plan = MarkdownParser().highlightPlan(for: md)
+    #expect(plan.images.map(\.isInsideTable) == [true])
+    #expect(plan.wikiLinks.map(\.isEmbed) == [true])
 }
 
 @Test func doesNotSpanLinesOrNestedBrackets() {

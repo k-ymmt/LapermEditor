@@ -1,23 +1,37 @@
 import Foundation
 
-/// Wiki Link(`[[Note]]` / `[[Note|Alias]]` / `[[Note#見出し]]`)1 箇所ぶんの参照情報。
-/// 解決(どの Note か)はエディタの外(ホスト)の仕事で、ここには記法に書かれた文字列だけを持つ。
+/// Wiki Link(`[[Note]]` / `[[Note|Alias]]` / `[[Note#見出し]]`)、または Wiki 記法の埋め込み(`![[image.png]]`、Laperm ADR 0054)
+/// 1 箇所ぶんの参照情報。解決(どの Note / Attachment か)はエディタの外(ホスト)の仕事で、ここには記法に書かれた文字列だけを持つ。
 public struct WikiLinkReference: Hashable, Sendable {
     /// 指す Note のタイトル、または `/` を含む Vault ルートからのパス(前後の空白を除く)。
-    /// `[[#見出し]]` のように空なら「同じ Note」を指す。
+    /// `[[#見出し]]` のように空なら「同じ Note」を指す。埋め込みでは Attachment の名前(拡張子付き)かパス。
     public var target: String
     /// `#` の後ろの見出し(無ければ nil)。前後の空白は除く。
     public var heading: String?
     /// `|` の後ろの表示文字(無ければ nil)。前後の空白は除く。解決には関わらない。
     public var alias: String?
-    /// 記法全体(`[[` から `]]` まで)の UTF-16 レンジ
+    /// 記法全体(`[[` から `]]` まで。埋め込みなら `![[` から)の UTF-16 レンジ
     public var range: NSRange
+    /// `![[…]]`(Wiki 記法の埋め込み)。拾うのは素の画像の埋め込み(`|` も `#` も無い、画像の拡張子の名前)だけで、ホストが
+    /// `.attachment(URL)` に解決すれば `![](…)` と同じ画像のプレビューになる(ADR 0054)。
+    public var isEmbed: Bool
 
-    public init(target: String, heading: String? = nil, alias: String? = nil, range: NSRange) {
+    public init(target: String, heading: String? = nil, alias: String? = nil, range: NSRange, isEmbed: Bool = false) {
         self.target = target
         self.heading = heading
         self.alias = alias
         self.range = range
+        self.isEmbed = isEmbed
+    }
+
+    /// 画像とみなす拡張子(小文字比較)。Laperm の `Attachment.imageFileExtensions`(VaultKit)と同じ一覧を保つこと。
+    public static let imageFileExtensions: Set<String> = [
+        "png", "jpg", "jpeg", "gif", "heic", "heif", "webp", "tif", "tiff", "bmp", "svg", "avif", "jp2", "ico",
+    ]
+
+    /// `name`(ファイル名かパス)が画像の拡張子で終わるか。
+    public static func isImageName(_ name: String) -> Bool {
+        imageFileExtensions.contains((name as NSString).pathExtension.lowercased())
     }
 
     /// Live Preview でフォーカスの無い行に見える文字(Alias があれば Alias、無ければ `Note` / `Note#見出し`)。

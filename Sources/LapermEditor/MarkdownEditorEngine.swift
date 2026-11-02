@@ -254,6 +254,8 @@ final class MarkdownEditorEngine: NSObject {
         pendingWikiLinkRefresh = false
         highlighter.reapplyWikiLinkResolution(contentStorage: contentStorage, layoutManager: layoutManager)
         updateTables()
+        // 埋め込み `![[image.png]]` の画像は解決結果(Attachment の URL)で決まる(ADR 0054): 増減に合わせて読み直す
+        updateImagePreviews()
     }
 
     // MARK: - Live Preview
@@ -1033,13 +1035,28 @@ final class MarkdownEditorEngine: NSObject {
     /// バックグラウンドパース経路ではパース完了(onBackgroundFlushApplied)後に呼ばれる。
     func updateImagePreviews() {
         guard let host, let contentStorage = host.editorContentStorage else { return }
-        imagePreviewController.update(references: highlighter.currentPlan.images)
+        imagePreviewController.update(references: resolvedImageReferences(in: highlighter.currentPlan))
         let containerWidth = host.imageContainerWidth
         imagePreviewController.applySpacings(
             contentStorage: contentStorage, containerWidth: containerWidth,
             availableWidth: { [fragmentProvider] in
                 containerWidth - fragmentProvider.paragraphIndent(forParagraph: $0.paragraphRange)
             })
+    }
+
+    /// 計画の画像の参照のうち、埋め込み `![[image.png]]`(Laperm ADR 0054)はホストの Wiki Link の解決で Attachment の URL に
+    /// 置き換える(`.attachment(URL)` 以外に解決される / 解決関数が無いものは落とす: 無い画像は Unresolved の色の文字のまま)。
+    /// `![alt](url)` はそのまま。
+    func resolvedImageReferences(in plan: HighlightPlan) -> [ImageReference] {
+        plan.images.compactMap { image in
+            guard let target = image.wikiTarget else { return image }
+            guard let resolver = highlighter.wikiLinkResolver,
+                  case .attachment(let url) = resolver(WikiLinkReference(target: target, range: image.range, isEmbed: true))
+            else { return nil }
+            var resolved = image
+            resolved.destination = url.absoluteString
+            return resolved
+        }
     }
 
     /// コンテナ幅が変わったときに呼ぶ。loaded 画像のフィット高さが変わるため spacing を再計算する。
@@ -1119,9 +1136,10 @@ final class MarkdownEditorEngine: NSObject {
         highlighter.currentPlan.links.first { NSLocationInRange(offset, $0.range) }
     }
 
-    /// offset を含む Wiki Link 参照(パース確定済みの currentPlan から検索)
+    /// offset を含む Wiki Link 参照(パース確定済みの currentPlan から検索)。埋め込み `![[image.png]]` は開く対象ではない
+    /// (クリックはキャレットを置くだけ、ADR 0054)ので除く。
     func wikiLinkReference(at offset: Int) -> WikiLinkReference? {
-        highlighter.currentPlan.wikiLinks.first { NSLocationInRange(offset, $0.range) }
+        highlighter.currentPlan.wikiLinks.first { !$0.isEmbed && NSLocationInRange(offset, $0.range) }
     }
 
     /// point(ビュー座標)にオンスクリーンで実際に重なっている Wiki Link 参照を返す(`linkReference(atPoint:)` と同じ判定)。

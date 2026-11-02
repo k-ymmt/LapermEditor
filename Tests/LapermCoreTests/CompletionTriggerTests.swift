@@ -79,11 +79,33 @@ private func range(of needle: String, in markdown: String) -> NSRange {
     #expect(detect("[[Note]]", caret: 8) == nil)
 }
 
-@Test func escapedAndEmbedBracketsDoNotTrigger() {
+@Test func escapedBracketsDoNotTrigger() {
     #expect(detect("\\[[Wi") == nil)
-    #expect(detect("![[image") == nil)
     // 2 つのバックスラッシュはエスケープではない
     #expect(detect("\\\\[[Wi")?.kind == .noteTitle)
+}
+
+// `![[`(Laperm ADR 0054): Attachment の候補。きっかけは `!`、`#` は候補を閉じる。
+
+@Test func embedBracketsQueryAttachments() {
+    let query = detect("See ![[ima")
+    #expect(query?.kind == .attachment)
+    #expect(query?.text == "ima")
+    #expect(query?.range == NSRange(location: 7, length: 3))
+    #expect(query?.anchor == 4)
+    #expect(detect("![[")?.kind == .attachment)
+    #expect(detect("![[image.png#") == nil)
+    #expect(detect("\\![[Wi")?.kind == .noteTitle)
+}
+
+@Test func acceptingAnAttachmentClosesTheEmbed() throws {
+    let md = "![[ima"
+    let query = try #require(detect(md))
+    let item = CompletionItem(title: "image.png", detail: "Attachments", insertionText: "image.png", symbol: "photo")
+    let command = try #require(CompletionTrigger.command(for: query, item: item, in: md as NSString))
+    #expect(command.replacementString == "image.png]]")
+    #expect(command.replacementRange == NSRange(location: 3, length: 3))
+    #expect(command.selectedRange == NSRange(location: 14, length: 0))
 }
 
 @Test func codeAndLinkDestinationsDoNotTrigger() {

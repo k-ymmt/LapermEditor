@@ -30,12 +30,13 @@ public struct ImageAttachmentSource: Sendable {
 }
 
 /// ホスト(Laperm)が Embed の保存を引き受けるプロトコル(ADR 0045: 保存先のフォルダ、名前の衝突、協調した書き込みは Vault の
-/// 事情なのでホストが担い、挿入位置と Undo はエディタが担う)。`store` は保存したファイルの、文書(Note)のあるフォルダからの
-/// 相対パスを返す。エディタはそれを `![](<…>)` にしてキャレット(ドロップなら落とした位置)に挿入する。保存できなければ nil
-/// (何も挿入しない。知らせるのはホスト)。
+/// 事情なのでホストが担い、挿入位置と Undo はエディタが担う)。`embed` は保存したファイルを指す、挿入する Markdown
+/// (`![](<Attachments/x.png>)` か `![[x.png]]`: 記法の選択は Vault の設定なのでホストが担う、Laperm ADR 0054)を返す。
+/// エディタはそれをキャレット(ドロップなら落とした位置)に挿入する(複数なら改行で区切る)。保存できなければ nil
+/// (何も挿入しない。知らせるのはホスト)。`MarkdownLinkSyntax.image(path:)` が相対パスから Markdown の形を作る。
 @MainActor
 public protocol AttachmentStore: AnyObject {
-    func store(_ source: ImageAttachmentSource) async -> String?
+    func embed(_ source: ImageAttachmentSource) async -> String?
     /// 保存が終わった今、この文書に挿入してよいか。ホストが別の文書に切り替えていたら false(保存したファイルは残り、何も
     /// 挿入しない: 古いビューへの挿入が新しい文書の本文を上書きしないように。codex review)。既定は true。
     func canInsert() -> Bool
@@ -61,7 +62,7 @@ public struct DroppedItemHandler: Sendable {
 /// 保存 → 挿入の流れ(両プラットフォームの `MarkdownTextView` が共有する)。
 @MainActor
 enum ImageEmbedder {
-    /// `sources` を順にホストに保存させ、返ったパスの `![](…)` を 1 つの編集(1 回の Undo)で挿入する。`location` が nil なら
+    /// `sources` を順にホストに保存させ、返った Markdown(1 枚 1 行)を 1 つの編集(1 回の Undo)で挿入する。`location` が nil なら
     /// 保存が終わった時点のキャレット(選択範囲の先頭。待っている間に選んだ文字列は置き換えない)に(ペースト)、あればその
     /// 位置に(ドロップ。待っている間に文書が短くなっていれば末尾に寄せる)。保存の後にホストが `canInsert` で拒めば(別の
     /// 文書に替わった)何も挿入しない。何か挿入できたら true。
@@ -73,12 +74,12 @@ enum ImageEmbedder {
         selection: () -> NSRange,
         perform: (EditCommand) -> Bool
     ) async -> Bool {
-        var paths: [String] = []
+        var embeds: [String] = []
         for source in sources {
-            if let path = await store.store(source) { paths.append(path) }
+            if let markdown = await store.embed(source) { embeds.append(markdown) }
         }
-        guard !paths.isEmpty, store.canInsert() else { return false }
-        let text = MarkdownLinkSyntax.imageEmbeds(paths: paths)
+        guard !embeds.isEmpty, store.canInsert() else { return false }
+        let text = embeds.joined(separator: "\n")
         let range = NSRange(location: min(location ?? selection().location, textLength()), length: 0)
         let caret = NSRange(location: range.location + (text as NSString).length, length: 0)
         return perform(EditCommand(replacementRange: range, replacementString: text, selectedRange: caret))

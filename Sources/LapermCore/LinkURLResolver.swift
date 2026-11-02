@@ -15,6 +15,9 @@ public enum LinkURLResolver {
 /// - "/" 始まりの絶対パス → file URL
 /// - 相対パス → baseURL に対して解決(baseURL が nil なら解決不能)
 /// - 空文字列・未対応スキーム → nil
+/// パス(絶対・相対)はパーセント符号化を復号して解決する(`![](Attachments/My%20Image.png)` は `My Image.png`、CommonMark の
+/// 普通の書き方。Laperm ADR 0054)。復号した名前のファイルが無く、書かれたままの綴りのファイルがあればそちら(`%20` を名前に
+/// 含むファイル)。どちらも無ければ復号した方(無いものは無い)。
 enum URLDestinationResolver {
     static func resolve(
         destination: String, baseURL: URL?, allowedSchemes: Set<String>
@@ -28,9 +31,23 @@ enum URLDestinationResolver {
             return URL(string: destination)
         }
         if destination.hasPrefix("/") {
-            return URL(filePath: destination)
+            return preferringDecoded(destination) { URL(filePath: $0) }
         }
         guard let baseURL else { return nil }
-        return URL(filePath: destination, relativeTo: baseURL).absoluteURL
+        return preferringDecoded(destination) { URL(filePath: $0, relativeTo: baseURL).absoluteURL }
+    }
+
+    /// 復号した綴りの URL。復号で変わり、復号した方が無くて書かれたままの方がディスクにあれば、書かれたままの URL。
+    private static func preferringDecoded(_ destination: String, make: (String) -> URL) -> URL {
+        guard let decoded = destination.removingPercentEncoding, decoded != destination, !decoded.isEmpty else {
+            return make(destination)
+        }
+        let decodedURL = make(decoded)
+        let rawURL = make(destination)
+        let manager = FileManager.default
+        if !manager.fileExists(atPath: decodedURL.path(percentEncoded: false)), manager.fileExists(atPath: rawURL.path(percentEncoded: false)) {
+            return rawURL
+        }
+        return decodedURL
     }
 }

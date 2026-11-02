@@ -10,7 +10,7 @@ import UniformTypeIdentifiers
 @MainActor
 final class RecordingAttachmentStore: AttachmentStore {
     var stored: [ImageAttachmentSource] = []
-    /// 返すパス(nil を返すと「保存できなかった」)。
+    /// 返すパス(nil を返すと「保存できなかった」)。挿入する Markdown は Laperm と同じく `MarkdownLinkSyntax.image(path:)` で作る。
     var pathFor: (ImageAttachmentSource) -> String? = { source in
         "../Attachments/\(source.preferredName ?? "Pasted image.png")"
     }
@@ -18,10 +18,10 @@ final class RecordingAttachmentStore: AttachmentStore {
     var beforeReturning: (() async -> Void)?
     var allowsInsertion = true
 
-    func store(_ source: ImageAttachmentSource) async -> String? {
+    func embed(_ source: ImageAttachmentSource) async -> String? {
         stored.append(source)
         await beforeReturning?()
-        return pathFor(source)
+        return pathFor(source).map { MarkdownLinkSyntax.image(path: $0) }
     }
 
     func canInsert() -> Bool { allowsInsertion }

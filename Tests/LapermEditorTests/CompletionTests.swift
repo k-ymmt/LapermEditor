@@ -16,6 +16,7 @@ final class StubCompletionProvider: CompletionProvider {
     ]
     var headings: [CompletionItem] = [CompletionItem(title: "Second", detail: "H2", insertionText: "Second")]
     var tags: [CompletionItem] = [CompletionItem(title: "swift", insertionText: "swift")]
+    var attachments: [CompletionItem] = [CompletionItem(title: "image.png", detail: "Attachments", insertionText: "image.png", symbol: "photo")]
     private(set) var queries: [CompletionQuery] = []
 
     func completions(for query: CompletionQuery) -> [CompletionItem] {
@@ -26,6 +27,7 @@ final class StubCompletionProvider: CompletionProvider {
         case .noteTitle: source = notes
         case .heading: source = headings
         case .tag: source = tags
+        case .attachment: source = attachments
         }
         return source.filter { typed.isEmpty || $0.title.lowercased().hasPrefix(typed) }
     }

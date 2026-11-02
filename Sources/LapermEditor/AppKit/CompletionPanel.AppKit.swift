@@ -202,7 +202,7 @@ private final class CompletionRowView: NSTableRowView {
     override var interiorBackgroundStyle: NSView.BackgroundStyle { isSelected ? .emphasized : .normal }
 }
 
-/// 1 行: タイトルを主、副文字(フォルダのパス、`H2`)を右に。
+/// 1 行: タイトルを主、副文字(フォルダのパス、`H2`)を右に。記号(`CompletionItem.symbol`、Attachment の候補)があれば先頭に。
 @MainActor
 final class CompletionCellView: NSTableCellView {
     static let titleFont = NSFont.systemFont(ofSize: NSFont.systemFontSize)
@@ -210,9 +210,12 @@ final class CompletionCellView: NSTableCellView {
     /// 文字の左右の余白(パネルの左端はキャレットの左端からこの分だけ左)。
     static let horizontalInset: CGFloat = 12
     static let gap: CGFloat = 8
+    /// 記号の幅(文字の前に `gap` を置く)。
+    static let symbolWidth: CGFloat = 16
 
     private let titleField = NSTextField(labelWithString: "")
     private let detailField = NSTextField(labelWithString: "")
+    private let symbolView = NSImageView()
 
     var isHighlighted = false {
         didSet { updateColors() }
@@ -226,6 +229,10 @@ final class CompletionCellView: NSTableCellView {
         detailField.font = Self.detailFont
         detailField.lineBreakMode = .byTruncatingMiddle
         detailField.setAccessibilityIdentifier("CompletionDetail")
+        symbolView.imageScaling = .scaleProportionallyDown
+        symbolView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: NSFont.systemFontSize, weight: .regular)
+        symbolView.setAccessibilityIdentifier("CompletionSymbol")
+        addSubview(symbolView)
         addSubview(titleField)
         addSubview(detailField)
         textField = titleField
@@ -239,6 +246,8 @@ final class CompletionCellView: NSTableCellView {
         titleField.stringValue = item.title
         detailField.stringValue = item.detail ?? ""
         detailField.isHidden = (item.detail ?? "").isEmpty
+        symbolView.image = item.symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
+        symbolView.isHidden = symbolView.image == nil
         setAccessibilityLabel(item.detail.map { $0.isEmpty ? item.title : "\(item.title) — \($0)" } ?? item.title)
         needsLayout = true
     }
@@ -246,12 +255,17 @@ final class CompletionCellView: NSTableCellView {
     private func updateColors() {
         titleField.textColor = isHighlighted ? .alternateSelectedControlTextColor : .labelColor
         detailField.textColor = isHighlighted ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75) : .secondaryLabelColor
+        symbolView.contentTintColor = isHighlighted ? .alternateSelectedControlTextColor : .secondaryLabelColor
     }
 
     override func layout() {
         super.layout()
-        let inset = Self.horizontalInset
-        let available = max(0, bounds.width - 2 * inset)
+        var inset = Self.horizontalInset
+        if !symbolView.isHidden {
+            symbolView.frame = NSRect(x: inset, y: (bounds.height - Self.symbolWidth) / 2, width: Self.symbolWidth, height: Self.symbolWidth)
+            inset += Self.symbolWidth + Self.gap
+        }
+        let available = max(0, bounds.width - inset - Self.horizontalInset)
         let titleSize = titleField.intrinsicContentSize
         let detailSize = detailField.isHidden ? .zero : detailField.intrinsicContentSize
         // タイトルを優先し、副文字は残りに収める(長いパスは中を省く)
@@ -274,6 +288,7 @@ final class CompletionCellView: NSTableCellView {
     /// この行に要る幅(余白込み)。
     static func preferredWidth(for item: CompletionItem) -> CGFloat {
         var width = 2 * horizontalInset + (item.title as NSString).size(withAttributes: [.font: titleFont]).width
+        if item.symbol != nil { width += symbolWidth + gap }
         if let detail = item.detail, !detail.isEmpty {
             width += gap + (detail as NSString).size(withAttributes: [.font: detailFont]).width
         }

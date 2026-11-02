@@ -8,6 +8,8 @@ public enum CompletionKind: Hashable, Sendable {
     case heading(note: String)
     /// Front Matter の `tags` / `tag` の値: 既存の Tag。
     case tag
+    /// `![[` の後ろ: Attachment の名前(Laperm ADR 0054)。確定の編集は `.noteTitle` と同じ(`]]` まで整える)。
+    case attachment
 }
 
 /// 打ちかけの文字と種類。編集部品が打鍵のたびに検出し(`CompletionTrigger.detect`)、候補プロバイダに渡す。
@@ -36,11 +38,14 @@ public struct CompletionItem: Hashable, Sendable, Identifiable {
     public var detail: String?
     /// 確定で打ちかけの文字と置き換わる文字(解決で勝つ Note ならタイトル、負ける Note ならパス)。
     public var insertionText: String
+    /// 行の先頭に出す SF Symbol の名前(Attachment の候補の `paperclip` / `photo`、Laperm ADR 0054)。nil なら記号なし。
+    public var symbol: String?
 
-    public init(title: String, detail: String? = nil, insertionText: String) {
+    public init(title: String, detail: String? = nil, insertionText: String, symbol: String? = nil) {
         self.title = title
         self.detail = detail
         self.insertionText = insertionText
+        self.symbol = symbol
     }
 
     public var id: String { "\(insertionText)\u{1F}\(detail ?? "")" }
@@ -80,7 +85,7 @@ public enum CompletionTrigger {
         switch query.kind {
         case .tag:
             break
-        case .noteTitle, .heading:
+        case .noteTitle, .heading, .attachment:
             let line = lineContentRange(containing: NSMaxRange(query.range), in: text)
             let afterRange = NSRange(location: NSMaxRange(query.range), length: max(0, NSMaxRange(line) - NSMaxRange(query.range)))
             let after = text.substring(with: afterRange) as NSString
@@ -116,15 +121,24 @@ public enum CompletionTrigger {
             i -= 1
         }
         guard let start else { return nil }
-        // エスケープ(`\[[`)と埋め込み(`![[`)は Wiki Link ではない
+        // エスケープ(`\[[`)は Wiki Link ではない。埋め込み(`![[`)は Attachment の候補(ADR 0054)。
         if isEscaped(at: start, in: text, lineStart: line.location) { return nil }
-        if start > line.location, text.character(at: start - 1) == ASCII.exclamation { return nil }
+        let isEmbed = start > line.location && text.character(at: start - 1) == ASCII.exclamation
+            && !isEscaped(at: start - 1, in: text, lineStart: line.location)
         guard !isInsideInlineCode(before: start, in: text, lineStart: line.location, plan: plan, planIsCurrent: planIsCurrent),
               !isInsideMarkdownLinkDestination(before: start, in: text, lineStart: line.location),
               !isInsideCodeBlock(caret: caret, line: line, in: text, plan: plan, planIsCurrent: planIsCurrent)
         else { return nil }
         let typedRange = NSRange(location: start + 2, length: caret - start - 2)
         let typed = text.substring(with: typedRange)
+        if isEmbed {
+            // 埋め込みは名前だけ(`#` も `|` も候補を閉じる)。きっかけは `!` の位置。
+            if typed.contains("#") { return nil }
+            let end = tokenEnd(from: caret, line: line, in: text, stopping: [ASCII.rightBracket, ASCII.pipe, ASCII.hash])
+            return CompletionQuery(
+                kind: .attachment, text: typed, range: NSRange(location: typedRange.location, length: end - typedRange.location),
+                anchor: start - 1)
+        }
         if let hash = typed.firstIndex(of: "#") {
             let note = typed[..<hash].trimmingCharacters(in: .whitespaces)
             let afterHash = String(typed[typed.index(after: hash)...])
