@@ -340,7 +340,6 @@ private func makeStack(_ text: String) -> (NSTextContentStorage, NSTextLayoutMan
         unresolvedWikiLinks: plan.wikiLinks.map(\.range), theme: theme)!
     #expect(model.rows[0].cells[0].text.attribute(.foregroundColor, at: 0, effectiveRange: nil) as? NSColor == .systemRed)
 }
-#endif
 
 // 埋め込み `![[image.png]]`(Laperm ADR 0054): 解決が `.attachment(URL)` ならその画像をプレビューし、クリックの対象ではない。
 
@@ -376,3 +375,4 @@ private func makeStack(_ text: String) -> (NSTextContentStorage, NSTextLayoutMan
     textView.refreshLinkHover(atPoint: midpoint(of: NSRange(location: 3, length: 9), in: textView), commandHeld: true)
     #expect(textView.debugHoveredLinkRange == nil)
 }
+#endif
