@@ -228,6 +228,9 @@ TextKit2-based Markdown editor library for macOS (Swift 6, macOS 27+).
     apply `.ignoresSafeArea(.keyboard)` to the editor instead of letting it shrink;
     `adjustsContentInsetForKeyboard = false` (or the `.adjustsContentInsetForKeyboard(false)`
     modifier) opts out. A view added while the keyboard is up catches up from a per-screen cache.
+    The frame is converted from the coordinate space of the screen the notification names
+    (`notification.object`); the window's screen is read through `windowScene` (`window.screen` only for a
+    scene-less window, as in the tests), never `UIScreen.main`.
     When the new inset would hide the caret, the reveal scroll sets `contentOffset` inside the same
     keyboard animation block as the inset (never `scrollRangeToVisible`, whose own timer-driven
     animation lags the keyboard and re-lays out every frame); while that animation runs,

@@ -533,8 +533,12 @@ public final class MarkdownTextView: UITextView {
     /// ウィンドウにまだ付いていないビューは受け入れて、レイアウト時に画面を照合する。
     private func isKeyboardNotificationForThisScreen(_ screen: UIScreen?) -> Bool {
         guard let screen, let window else { return true }
-        return screen === window.screen
+        return screen === Self.screen(of: window)
     }
+
+    /// ウィンドウの画面。シーン経由で取る(画面が複数あるとき、`window.screen` よりシーンがつながる画面が確か)。
+    /// シーンの無いウィンドウ(テスト)は `window.screen`。
+    private static func screen(of window: UIWindow) -> UIScreen { window.windowScene?.screen ?? window.screen }
 
     private static func animationDuration(of notification: Notification) -> Double {
         notification.userInfo?[UIResponder.keyboardAnimationDurationUserInfoKey] as? Double ?? 0
@@ -551,12 +555,13 @@ public final class MarkdownTextView: UITextView {
         // ウィンドウから外れたら親からも外す(親の children に残ると、Note を切り替えるたびにホストが漏れる)。
         if window == nil { detachHeaderViewController(headerViewController) } else { attachHeaderViewControllerIfNeeded() }
         guard let window else { return }
+        let windowScreen = Self.screen(of: window)
         // キーボードが出たまま作られた / 付け替えられたビューは画面のキャッシュに追いつく。
         // キャッシュがなければ(キーボードが出ていない)、別画面で受けたフレームは捨てる。
-        if let cached = Self.keyboardFramesByScreen[ObjectIdentifier(window.screen)] {
+        if let cached = Self.keyboardFramesByScreen[ObjectIdentifier(windowScreen)] {
             keyboardFrameOnScreen = cached
-            keyboardScreen = window.screen
-        } else if let keyboardScreen, keyboardScreen !== window.screen {
+            keyboardScreen = windowScreen
+        } else if let keyboardScreen, keyboardScreen !== windowScreen {
             keyboardFrameOnScreen = nil
             self.keyboardScreen = nil
         }
@@ -566,11 +571,13 @@ public final class MarkdownTextView: UITextView {
     /// 直近のキーボードフレームから下余白を計算し直して適用する(ウィンドウ外なら何もしない)。
     private func updateKeyboardInset(animationDuration: Double = 0, curve: Int = 0) {
         guard adjustsContentInsetForKeyboard, let window else { return }
-        guard let keyboardFrameOnScreen, keyboardScreen == nil || keyboardScreen === window.screen else {
+        let windowScreen = Self.screen(of: window)
+        guard let keyboardFrameOnScreen, keyboardScreen == nil || keyboardScreen === windowScreen else {
             applyKeyboardInset(0, animationDuration: animationDuration, curve: curve)
             return
         }
-        let keyboardFrame = convert(keyboardFrameOnScreen, from: window.screen.coordinateSpace)
+        // 通知が告げた画面(`notification.object`)の座標系から変換する。画面の分からなかった通知はウィンドウの画面。
+        let keyboardFrame = convert(keyboardFrameOnScreen, from: (keyboardScreen ?? windowScreen).coordinateSpace)
         let inset = Self.keyboardBottomInset(
             bounds: bounds, keyboardFrame: keyboardFrame, safeAreaBottom: safeAreaBottomAlreadyInset)
         applyKeyboardInset(inset, animationDuration: animationDuration, curve: curve)
