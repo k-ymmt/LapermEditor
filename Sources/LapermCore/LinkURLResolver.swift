@@ -25,7 +25,9 @@ enum URLDestinationResolver {
         guard !destination.isEmpty else { return nil }
         // スキーム判定は URL(string:) に頼らず自前で行う(ImageURLResolver の
         // コメント参照: スキームなし相対パスでも URL(string:) は成功しうるため)。
-        if let colon = destination.firstIndex(of: ":") {
+        // RFC 3986 のスキーム(`ALPHA *( ALPHA / DIGIT / "+" / "-" / "." )`)の後ろの `:` だけがスキームの区切り。パスの中の `:`
+        // (`x.epub#epubcfi(/6/4!/4/2,/1:0,/1:15)`、Laperm ADR 0056)はスキームではない
+        if let colon = destination.firstIndex(of: ":"), isScheme(destination[..<colon]) {
             let scheme = destination[..<colon].lowercased()
             guard allowedSchemes.contains(scheme) else { return nil }
             return URL(string: destination)
@@ -35,6 +37,13 @@ enum URLDestinationResolver {
         }
         guard let baseURL else { return nil }
         return preferringDecoded(destination) { URL(filePath: $0, relativeTo: baseURL).absoluteURL }
+    }
+
+    static func isScheme(_ text: Substring) -> Bool {
+        guard let first = text.unicodeScalars.first, first.isASCII, first.properties.isAlphabetic else { return false }
+        return text.unicodeScalars.dropFirst().allSatisfy { scalar in
+            scalar.isASCII && (scalar.properties.isAlphabetic || ("0"..."9").contains(scalar) || scalar == "+" || scalar == "-" || scalar == ".")
+        }
     }
 
     /// 復号した綴りの URL。復号で変わり、復号した方が無くて書かれたままの方がディスクにあれば、書かれたままの URL。

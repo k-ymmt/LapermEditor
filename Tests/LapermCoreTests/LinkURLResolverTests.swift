@@ -24,3 +24,17 @@ func resolvesLinkDestination(destination: String, hasBase: Bool, expected: Strin
 @Test func imageResolverStillRejectsMailto() {
     #expect(ImageURLResolver.resolve(destination: "mailto:a@b.c", baseURL: nil) == nil)
 }
+
+/// パスの中の `:` はスキームの区切りではない(Laperm ADR 0056 の `#epubcfi(…/1:0…)` 付きのリンク)。スキームの形をした前置きだけが
+/// スキームとして読まれ、許可されていなければ今までどおり nil。
+@Test func aColonInsideThePathIsNotAScheme() {
+    let relative = LinkURLResolver.resolve(destination: "Books/x.epub#epubcfi(/6/4!/4/2,/1:0,/1:15)", baseURL: base)
+    #expect(relative?.isFileURL == true)
+    #expect(relative?.path(percentEncoded: false) == "/docs/Books/x.epub#epubcfi(/6/4!/4/2,/1:0,/1:15)")
+    let rooted = LinkURLResolver.resolve(destination: "/Books/x.epub#epubcfi(/6/2!/4/2/1:0)", baseURL: base)
+    #expect(rooted?.path(percentEncoded: false) == "/Books/x.epub#epubcfi(/6/2!/4/2/1:0)")
+    #expect(LinkURLResolver.resolve(destination: "Note 2:3.md", baseURL: base)?.path(percentEncoded: false) == "/docs/Note 2:3.md")
+    #expect(LinkURLResolver.resolve(destination: "javascript:alert(1)", baseURL: base) == nil)
+    #expect(LinkURLResolver.resolve(destination: "c++:x", baseURL: base) == nil)
+    #expect(ImageURLResolver.resolve(destination: "img/a:b.png", baseURL: base)?.isFileURL == true)
+}
