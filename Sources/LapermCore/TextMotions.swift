@@ -110,13 +110,27 @@ public enum TextMotions {
     /// 単語構成文字は英数字(Unicode 全般。CJK を含む)+ アンダースコア。
     /// それ以外の非空白は記号クラス。改行は空白クラス
     private static func characterClass(_ text: NSString, at offset: Int) -> CharacterClass {
-        let range = text.rangeOfComposedCharacterSequence(at: offset)
-        guard let scalar = text.substring(with: range).unicodeScalars.first else {
+        // 合成文字の最初のスカラーで決める。部分文字列は作らず、UTF-16 を直接復号する(単語移動は 1 文字ごとに呼ぶ)
+        let start = text.rangeOfComposedCharacterSequence(at: offset).location
+        guard let scalar = firstScalar(of: text, at: start) else {
             return .symbol
         }
         if CharacterSet.whitespacesAndNewlines.contains(scalar) { return .whitespace }
         if CharacterSet.alphanumerics.contains(scalar) || scalar == "_" { return .word }
         return .symbol
+    }
+
+    /// offset から始まる Unicode スカラー(サロゲートペアは組にして復号する)。文書外・孤立サロゲートは nil。
+    private static func firstScalar(of text: NSString, at offset: Int) -> Unicode.Scalar? {
+        guard offset >= 0, offset < text.length else { return nil }
+        let unit = text.character(at: offset)
+        if UTF16.isLeadSurrogate(unit) {
+            guard offset + 1 < text.length else { return nil }
+            let trail = text.character(at: offset + 1)
+            guard UTF16.isTrailSurrogate(trail) else { return nil }
+            return Unicode.Scalar(0x10000 + ((UInt32(unit) - 0xD800) << 10) + (UInt32(trail) - 0xDC00))
+        }
+        return Unicode.Scalar(unit)
     }
 
     /// lineOffset を含む行の column 列(UTF-16)。行末にクランプし、合成文字境界に丸める

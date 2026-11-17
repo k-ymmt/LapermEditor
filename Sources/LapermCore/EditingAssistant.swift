@@ -75,8 +75,9 @@ public enum EditingAssistant {
             if ListItemLine.parse(text: text, lineRange: lineRange) != nil {
                 foundListLine = true
                 if removing {
-                    // 行頭から最大 indentUnit 分のスペースを削除
-                    let removable = line.prefix(indentUnit.count).prefix(while: { $0 == " " }).count
+                    // 行頭のタブ 1 個(タブでインデントした項目の 1 段)か、最大 indentUnit 分のスペースを削除
+                    let removable = line.first == "\t"
+                        ? 1 : line.prefix(indentUnit.count).prefix(while: { $0 == " " }).count
                     if removable > 0 {
                         line.removeFirst(removable)
                         delta = -removable
@@ -271,9 +272,10 @@ struct ListItemLine {
             return nil
         }
 
-        // マーカー直後に少なくとも 1 個のスペースが必要
-        guard i < contentsEnd, text.character(at: i) == space else { return nil }
-        while i < contentsEnd, text.character(at: i) == space { i += 1 }
+        // マーカー直後に少なくとも 1 個の空白(スペースかタブ。CommonMark はタブも認める: `-\titem`)が必要
+        func isBlank(_ c: unichar) -> Bool { c == space || c == tab }
+        guard i < contentsEnd, isBlank(text.character(at: i)) else { return nil }
+        while i < contentsEnd, isBlank(text.character(at: i)) { i += 1 }
 
         // チェックボックス "[ ]" / "[x]" / "[X]"(直後がスペースまたは行末のときのみ)
         var checkboxLocation: Int?
@@ -285,13 +287,13 @@ struct ListItemLine {
             let isState = state == space
                 || state == unichar(UnicodeScalar("x").value)
                 || state == unichar(UnicodeScalar("X").value)
-            let followedBySpaceOrEnd = i + 3 == contentsEnd || text.character(at: i + 3) == space
+            let followedBySpaceOrEnd = i + 3 == contentsEnd || isBlank(text.character(at: i + 3))
             if isState && followedBySpaceOrEnd {
                 checkboxLocation = i
                 // タスクはチェック状態に関わらず未チェックで継続する
                 continuation += "[ ] "
                 i += 3
-                while i < contentsEnd, text.character(at: i) == space { i += 1 }
+                while i < contentsEnd, isBlank(text.character(at: i)) { i += 1 }
             }
         }
         return ListItemLine(

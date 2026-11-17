@@ -85,3 +85,14 @@ private func fold(_ headingLocation: Int, body: NSRange) -> FoldingState.Fold {
     #expect(shifted.folds.isEmpty)
     #expect(dropped.count == 1)
 }
+
+@Test func hidesMatchesHiddenRanges() {
+    var state = FoldingState()
+    #expect(!state.hides(0))
+    state.insert(fold(0, body: NSRange(location: 4, length: 30)))   // 親
+    state.insert(fold(10, body: NSRange(location: 14, length: 6)))  // 子
+    state.insert(fold(40, body: NSRange(location: 44, length: 0)))  // 本体が空
+    for offset in 0..<60 {
+        #expect(state.hides(offset) == state.hiddenRanges.contains { NSLocationInRange(offset, $0) })
+    }
+}

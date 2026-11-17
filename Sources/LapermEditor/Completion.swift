@@ -159,10 +159,11 @@ final class CompletionController {
     }
 
     /// キャレットが打鍵以外で動いた(矢印、クリック、プログラムからの選択): 一覧は閉じる。Esc の記憶は、きっかけの外へ出たら消す。
-    func caretDidMove(text: NSString, caret: NSRange, plan: HighlightPlan) {
+    /// `text` は Esc で閉じた後(`dismissedAnchor` があるとき)にだけ読む(選択の変化のたびに全文をコピーしない)。
+    func caretDidMove(text: @autoclosure () -> NSString, caret: NSRange, plan: HighlightPlan) {
         close()
         guard let dismissedAnchor else { return }
-        if caret.length > 0 || CompletionTrigger.detect(text: text, caret: caret.location, plan: plan)?.anchor != dismissedAnchor {
+        if caret.length > 0 || CompletionTrigger.detect(text: text(), caret: caret.location, plan: plan)?.anchor != dismissedAnchor {
             self.dismissedAnchor = nil
         }
     }

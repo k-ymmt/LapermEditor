@@ -176,4 +176,42 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     #expect(textView.isFolded(at: 0))
     #expect(textView.outline.count == 2)
 }
+
+/// ガターのシェブロン: 段落 [start, end) の中で本体のある最初の見出し(アウトラインを二分探索で引く)。
+@MainActor @Test func foldMarkerFindsTheHeadingInsideTheParagraph() {
+    let textView = MarkdownTextView()
+    // "# A\n"(0-3) "# B\n"(4-7: 本体なし) "## C\n"(8-12) "x\n"(13-14) "# D"(15-17)
+    textView.string = "# A\n# B\n## C\nx\n# D"
+    textView.highlightAll()
+    let engine = textView.engine
+    #expect(engine.foldMarker(inParagraphFrom: 0, to: 4) == nil, "# A has no body: # B follows directly")
+    #expect(engine.foldMarker(inParagraphFrom: 4, to: 8) == GutterFoldMarker(headingLocation: 4, isFolded: false))
+    #expect(engine.foldMarker(inParagraphFrom: 8, to: 13) == GutterFoldMarker(headingLocation: 8, isFolded: false))
+    #expect(engine.foldMarker(inParagraphFrom: 13, to: 15) == nil)
+    #expect(engine.foldMarker(inParagraphFrom: 15, to: 18) == nil, "the last heading has no body")
+    engine.fold(at: 8)
+    #expect(engine.foldMarker(inParagraphFrom: 8, to: 13) == GutterFoldMarker(headingLocation: 8, isFolded: true))
+    // 段落に複数の見出しが入る範囲でも、本体のある最初のもの
+    #expect(engine.foldMarker(inParagraphFrom: 0, to: 18)?.headingLocation == 4)
+}
+
+/// 多数の折畳を持つ文書でも、パースのたびの同期で折畳ごとにアウトラインを探し直さない(折畳は位置で引き継がれる)。
+@MainActor @Test func manyFoldsSurviveAResyncAfterAnEdit() async {
+    let sections = (0..<2_000).map { "## H\($0)\nbody\n" }.joined()
+    let textView = MarkdownTextView()
+    textView.string = sections
+    textView.highlightAll()
+    let headings = textView.outline.map(\.headingLocation)
+    #expect(headings.count == 2_000)
+    for location in headings { textView.engine.fold(at: location) }
+    #expect(textView.foldedHeadingLocations == headings)
+    // 文書末への入力: どの折畳の本体にも触れない(本体の終端ちょうど)ので、全部そのまま残る
+    let storage = textView.textStorage!
+    storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: "tail")
+    textView.engine.highlightNow()
+    // debug ビルドでは初回のパースが 16ms を超えてバックグラウンドへ回ることがある
+    while let task = textView.engine.highlighter.activeBackgroundParse { await task.value }
+    #expect(textView.foldedHeadingLocations == headings)
+    #expect(textView.outline.last?.bodyRange.length == "body\ntail".utf16.count)
+}
 #endif

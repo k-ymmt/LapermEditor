@@ -42,7 +42,8 @@ struct CodeBlockPreviewSource: BlockPreviewSource {
         width: CGFloat, appearance: CodeBlockPreviewLayout.Appearance, storage: NSTextStorage, theme: MarkdownTheme
     ) -> CodeBlockPreviewLayout? {
         if model == nil {
-            model = CodeBlockPreviewModel.make(block: block, text: storage.string as NSString)
+            // `storage.string` は呼ぶたびに全文をコピーする(ブロックごとに作ると、ブロック数 × 文書長になる)
+            model = CodeBlockPreviewModel.make(block: block, text: storage.mutableString)
         }
         guard let model else { return nil }
         return CodeBlockPreviewLayout.make(model: model, maxWidth: width, appearance: appearance)

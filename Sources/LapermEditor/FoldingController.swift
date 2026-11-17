@@ -107,10 +107,15 @@ final class FoldingController: NSObject {
         let newOutline = OutlineBuilder.build(from: plan, text: text)
         let outlineChanged = newOutline != outline
         outline = newOutline
+        guard !state.isEmpty else {
+            if outlineChanged { onOutlineChanged?() }
+            return
+        }
+        // 見出し位置 → 項目(折畳ごとにアウトラインを先頭から探すと、折畳数 × 見出し数になる)。同じ位置が重なれば先のもの
+        let itemsByLocation = Dictionary(newOutline.map { ($0.headingLocation, $0) }, uniquingKeysWith: { first, _ in first })
         var kept: [FoldingState.Fold] = []
         for fold in state.folds {
-            if let item = newOutline.first(
-                where: { $0.headingLocation == fold.headingLocation }),
+            if let item = itemsByLocation[fold.headingLocation],
                 item.bodyRange.length > 0 {
                 if item.bodyRange != fold.bodyRange {
                     pendingDirtyRanges.append(fold.bodyRange)
@@ -170,7 +175,7 @@ extension FoldingController: NSTextContentStorageDelegate {
               let location = textElement.elementRange?.location else { return true }
         let offset = textContentManager.offset(
             from: textContentManager.documentRange.location, to: location)
-        return !state.hiddenRanges.contains { NSLocationInRange(offset, $0) }
+        return !state.hides(offset)
     }
 }
 

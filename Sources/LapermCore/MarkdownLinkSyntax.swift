@@ -2,8 +2,8 @@ import Foundation
 
 /// Markdown のリンク / 画像の記法を組み立てる純粋関数(Laperm ADR 0045: Embed は `![](<相対パス>)` を挿入する)。
 /// CommonMark の link destination は空白を含めないので、空白(や括弧、`<` `>`)を含むパスは `<…>` で囲む
-/// (`![](<../Attachments/Pasted image 20261015123456.png>)`)。パーセント符号化はしない(`ImageURLResolver` は復号しないので、
-/// `%20` で書くと今は表示できない)。
+/// (`![](<../Attachments/Pasted image 20261015123456.png>)`)。パーセント符号化はしない(`ImageURLResolver` は `%20` も復号して
+/// 読める(Laperm ADR 0054)が、`<…>` で囲めば書いたままのファイル名で読め、テキストとしても読みやすい)。
 public enum MarkdownLinkSyntax {
     /// `[…](…)` / `![…](…)` の括弧の中に書く destination。そのまま書けるパスはそのまま、そうでなければ `<…>` で囲む
     /// (囲いの中の `<` `>` はバックスラッシュで逃がす)。

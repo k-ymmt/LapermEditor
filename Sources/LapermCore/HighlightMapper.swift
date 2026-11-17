@@ -59,14 +59,12 @@ enum HighlightMapper {
         /// cmark-gfm はセルの `\|` を `|` に縮めてからインラインを解釈するので、同じセルの中でその後ろにある
         /// インライン要素の位置は、前にある `\|` の数だけ左にずれて報告される。原文の座標へ戻す。
         static func correctingEscapedPipes(_ range: NSRange, in table: MarkdownTable, text: NSString) -> NSRange {
-            let rows = [table.header] + table.rows
-            guard let row = rows.first(where: { NSLocationInRange(range.location, $0.lineRange) || range.location == NSMaxRange($0.lineRange) }),
+            guard let row = row(of: table, containing: range.location),
                   let cell = row.cells.last(where: { $0.range.location <= range.location }),
-                  cell.range.length > 0
+                  cell.range.length > 0,
+                  // 補正が要るセルか(`\|` が無ければそのまま。部分文字列を作らずに走査する)
+                  containsEscapedPipe(cell.range, in: text)
             else { return range }
-            // 補正が要るセルか(`\|` が無ければそのまま)
-            let cellText = text.substring(with: cell.range)
-            guard cellText.contains("\\|") else { return range }
             func actual(reported: Int) -> Int {
                 var i = cell.range.location
                 var r = cell.range.location
@@ -84,6 +82,34 @@ enum HighlightMapper {
             let start = actual(reported: range.location)
             let end = actual(reported: NSMaxRange(range))
             return NSRange(location: start, length: max(0, end - start))
+        }
+
+        /// `location` を含む(または行末にある)テーブルの行(ヘッダー行かボディの行)。行は位置順で改行を挟んで並ぶので
+        /// 該当するのは高々 1 行で、先頭が `location` 以下の最後の行だけを見ればよい(セル内のインライン要素ごとに全行を
+        /// 走査すると、大きなテーブルで行数の二乗になる)。
+        static func row(of table: MarkdownTable, containing location: Int) -> MarkdownTable.Row? {
+            func matches(_ row: MarkdownTable.Row) -> Bool {
+                NSLocationInRange(location, row.lineRange) || location == NSMaxRange(row.lineRange)
+            }
+            var low = 0
+            var high = table.rows.count
+            while low < high {
+                let mid = (low + high) / 2
+                if table.rows[mid].lineRange.location <= location { low = mid + 1 } else { high = mid }
+            }
+            if low > 0, matches(table.rows[low - 1]) { return table.rows[low - 1] }
+            return matches(table.header) ? table.header : nil
+        }
+
+        /// `range` の中に `\|` があるか。
+        static func containsEscapedPipe(_ range: NSRange, in text: NSString) -> Bool {
+            var i = range.location
+            let end = NSMaxRange(range)
+            while i + 1 < end {
+                if text.character(at: i) == ASCII.backslash, text.character(at: i + 1) == ASCII.pipe { return true }
+                i += 1
+            }
+            return false
         }
 
         // MARK: ブロック要素
@@ -928,23 +954,23 @@ enum HighlightMapper {
             let open = ASCII.leftParen
             let close = ASCII.rightParen
             var end = end
+            // 括弧の数は 1 回だけ数え、末尾から落とした ")" の分だけ減らす(落とすたびに URL 全体を数え直すと、
+            // ")" が並ぶ URL で長さ × 個数の二乗になる)。約物を落としても括弧の数は変わらない。
+            var opens = 0, closes = 0
+            for k in start..<end {
+                let ch = text.character(at: k)
+                if ch == open { opens += 1 } else if ch == close { closes += 1 }
+            }
             while end > start {
                 let c = text.character(at: end - 1)
                 if trailing.contains(c) {
                     end -= 1
                     continue
                 }
-                if c == close {
-                    var opens = 0, closes = 0
-                    for k in start..<end {
-                        let ch = text.character(at: k)
-                        if ch == open { opens += 1 }
-                        if ch == close { closes += 1 }
-                    }
-                    if closes > opens {
-                        end -= 1
-                        continue
-                    }
+                if c == close, closes > opens {
+                    closes -= 1
+                    end -= 1
+                    continue
                 }
                 break
             }
