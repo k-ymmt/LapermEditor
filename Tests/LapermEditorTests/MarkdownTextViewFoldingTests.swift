@@ -196,7 +196,7 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
 }
 
 /// 多数の折畳を持つ文書でも、パースのたびの同期で折畳ごとにアウトラインを探し直さない(折畳は位置で引き継がれる)。
-@MainActor @Test func manyFoldsSurviveAResyncAfterAnEdit() {
+@MainActor @Test func manyFoldsSurviveAResyncAfterAnEdit() async {
     let sections = (0..<2_000).map { "## H\($0)\nbody\n" }.joined()
     let textView = MarkdownTextView()
     textView.string = sections
@@ -209,6 +209,8 @@ private func enumeratedOffsets(_ textView: MarkdownTextView) -> [Int] {
     let storage = textView.textStorage!
     storage.replaceCharacters(in: NSRange(location: storage.length, length: 0), with: "tail")
     textView.engine.highlightNow()
+    // debug ビルドでは初回のパースが 16ms を超えてバックグラウンドへ回ることがある
+    while let task = textView.engine.highlighter.activeBackgroundParse { await task.value }
     #expect(textView.foldedHeadingLocations == headings)
     #expect(textView.outline.last?.bodyRange.length == "body\ntail".utf16.count)
 }
