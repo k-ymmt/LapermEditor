@@ -351,3 +351,29 @@ private func deleteBackward(_ text: String, selection: NSRange) -> EditCommand? 
     #expect(EditingAssistant.linkifyPaste(
         text: text, selection: NSRange(location: 0, length: 6), pasted: "https://x.y") == nil)
 }
+
+// MARK: - タブで区切ったリスト項目(CommonMark はマーカーの後ろのタブも認める)
+
+@Test func continuesBulletListWhoseMarkerIsFollowedByATab() {
+    #expect(newline("-\titem", caret: 6)?.replacementString == "\n- ")
+    #expect(newline("1.\titem", caret: 7)?.replacementString == "\n2. ")
+}
+
+@Test func emptyTabSeparatedItemExitsTheList() {
+    let command = newline("-\t", caret: 2)
+    #expect(command == EditCommand(
+        replacementRange: NSRange(location: 0, length: 2),
+        replacementString: "",
+        selectedRange: NSRange(location: 0, length: 0)))
+}
+
+@Test func tabSeparatedTaskItemContinuesAndToggles() {
+    #expect(newline("-\t[x]\tdone", caret: 10)?.replacementString == "\n- [ ] ")
+    #expect(EditingAssistant.toggleCheckbox(text: "-\t[ ]\ttodo" as NSString, at: 3)?.replacementString == "x")
+}
+
+@Test func outdentRemovesOneLeadingTab() {
+    let command = outdent("\t\t- item", selection: NSRange(location: 6, length: 0))
+    #expect(command?.replacementString == "\t- item")
+    #expect(command?.selectedRange == NSRange(location: 5, length: 0))
+}
