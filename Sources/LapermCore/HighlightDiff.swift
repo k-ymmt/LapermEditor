@@ -31,9 +31,28 @@ public enum HighlightDiff {
         }
         let invalidated = mergeRanges(dirty)
         let toApply = new.spans.filter { span in
-            invalidated.contains { overlaps($0, span.range) }
+            intersectsAny(span.range, sortedDisjoint: invalidated)
         }
         return HighlightChanges(invalidatedRanges: invalidated, spansToApply: toApply)
+    }
+
+    /// `range` が `ranges`(`mergeRanges` の結果: 位置順で互いに離れている)のどれかと `overlaps` で交差するか。
+    /// 候補を二分探索で絞る(スパン数 × 無効化レンジ数の総当たりにしない: 構造が大きく変わる編集では両方が数千になる)。
+    /// 離れたレンジの終端は単調増加なので、終端が `range` の先頭以上の最初のレンジから、先頭が `range` の終端以下の
+    /// レンジまでだけが交差しうる。
+    static func intersectsAny(_ range: NSRange, sortedDisjoint ranges: [NSRange]) -> Bool {
+        var low = 0
+        var high = ranges.count
+        while low < high {
+            let mid = (low + high) / 2
+            if NSMaxRange(ranges[mid]) < range.location { low = mid + 1 } else { high = mid }
+        }
+        var index = low
+        while index < ranges.count, ranges[index].location <= NSMaxRange(range) {
+            if overlaps(ranges[index], range) { return true }
+            index += 1
+        }
+        return false
     }
 
     /// 交差判定。長さ 0 のレンジ(削除編集)は「相手のレンジ内にあるか」で判定する。

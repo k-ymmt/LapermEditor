@@ -24,6 +24,12 @@ public struct FoldingState: Equatable, Sendable {
     public var isEmpty: Bool { folds.isEmpty }
     public var hiddenRanges: [NSRange] { folds.map(\.bodyRange) }
 
+    /// offset がどれかの折畳の本体に含まれる(隠れている)か。`hiddenRanges` と違って配列を作らない
+    /// (レイアウトの段落ごとに呼ばれる)。
+    public func hides(_ offset: Int) -> Bool {
+        folds.contains { NSLocationInRange(offset, $0.bodyRange) }
+    }
+
     public func isFolded(headingLocation: Int) -> Bool {
         folds.contains { $0.headingLocation == headingLocation }
     }

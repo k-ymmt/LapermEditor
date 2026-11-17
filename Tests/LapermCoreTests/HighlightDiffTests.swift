@@ -48,3 +48,42 @@ import Testing
     let changes = HighlightDiff.compute(old: old, new: new)
     #expect(changes.invalidatedRanges == [NSRange(location: 0, length: 10)])
 }
+
+/// 再適用するスパンの絞り込み(二分探索)が、全無効化レンジとの総当たりと同じ結果になる。
+/// 長さ 0 のレンジ(削除の編集レンジ・空スパン)と隣接レンジを多く含む乱数の計画で比べる。
+@Test func spansToApplyMatchBruteForceOverlapCheck() {
+    var generator = SystemRandomNumberGenerator()
+    func randomSpans(_ count: Int) -> [HighlightSpan] {
+        (0..<count).map { _ in
+            HighlightSpan(
+                range: NSRange(location: Int.random(in: 0..<200, using: &generator), length: Int.random(in: 0..<6, using: &generator)),
+                kind: Bool.random(using: &generator) ? .strong : .emphasis)
+        }
+    }
+    for _ in 0..<300 {
+        let old = HighlightPlan(spans: randomSpans(Int.random(in: 0..<40, using: &generator)))
+        let new = HighlightPlan(spans: randomSpans(Int.random(in: 0..<40, using: &generator)))
+        let extra = (0..<Int.random(in: 0..<4, using: &generator)).map { _ in
+            NSRange(location: Int.random(in: 0..<200, using: &generator), length: Int.random(in: 0..<3, using: &generator))
+        }
+        let changes = HighlightDiff.compute(old: old, new: new, alwaysInvalidating: extra)
+        let expected = new.spans.filter { span in
+            changes.invalidatedRanges.contains { HighlightDiff.overlaps($0, span.range) }
+        }
+        #expect(changes.spansToApply == expected)
+    }
+}
+
+/// 構造が大きく変わる編集(数千のスパンが入れ替わる)でも差分の計算が無効化レンジ数 × スパン数にならない。
+@Test func diffWithManyDisjointChangesStaysFast() {
+    let count = 20_000
+    let old = HighlightPlan(spans: (0..<count).map { HighlightSpan(range: NSRange(location: $0 * 10, length: 3), kind: .strong) })
+    let new = HighlightPlan(spans: (0..<count).map { HighlightSpan(range: NSRange(location: $0 * 10, length: 3), kind: .emphasis) })
+    let clock = ContinuousClock()
+    var changes = HighlightChanges()
+    let elapsed = clock.measure { changes = HighlightDiff.compute(old: old, new: new) }
+    #expect(changes.invalidatedRanges.count == count)
+    #expect(changes.spansToApply == new.spans)
+    // 総当たり(2 万 × 2 万 = 4 億回の判定)なら数秒かかる。debug ビルドでも 1 秒を大きく下回る
+    #expect(elapsed < .seconds(1))
+}

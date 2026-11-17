@@ -134,3 +134,19 @@ private func links(in markdown: String) -> [LinkReference] {
     #expect(result[0].destination == "https://example.com/")
     #expect((md as NSString).substring(with: result[0].range) == "https://example.com/")
 }
+
+@Test func dropsOnlyTheUnbalancedClosingParensAtTheEnd() {
+    #expect(links(in: "(see https://e.com/a_(b)))").first?.destination == "https://e.com/a_(b)")
+    #expect(links(in: "https://e.com/a_(b).)").first?.destination == "https://e.com/a_(b)")
+    #expect(links(in: "https://e.com/((a)).").first?.destination == "https://e.com/((a))")
+}
+
+/// 末尾に ")" が大量に並ぶ URL でも、")" を落とすたびに URL 全体を数え直さない(長さ × 個数の二乗にしない)。
+@Test func manyTrailingClosingParensAreTrimmedInLinearTime() {
+    let md = "https://e.com/a" + String(repeating: ")", count: 40_000)
+    let clock = ContinuousClock()
+    var result: [LinkReference] = []
+    let elapsed = clock.measure { result = links(in: md) }
+    #expect(result.first?.destination == "https://e.com/a")
+    #expect(elapsed < .seconds(2))
+}

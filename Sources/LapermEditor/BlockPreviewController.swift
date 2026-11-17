@@ -189,13 +189,16 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
     private func refreshExemptRanges() {
         // 表示を移せない間(IME 変換中)は除外も動かさない(移せたときに `present` がまとめて取り直す)
         guard canPresent() else { return }
+        // 集合で引く(選択の変化のたびに呼ばれるので、ブロック数の二乗にしない)
+        let presentedStarts = Set(presented.map(\.blockParagraphsRange.location))
         let new: [NSRange] = isEnabled && exemptsExpandedBlocks
-            ? entries.filter { entry in !presented.contains { $0.blockParagraphsRange.location == entry.blockParagraphsRange.location } }
-                .map(\.blockParagraphsRange)
+            ? entries.map(\.blockParagraphsRange).filter { !presentedStarts.contains($0.location) }
             : []
         guard new != exemptRanges else { return }
-        for range in exemptRanges where !new.contains(range) { appendDirty(range) }
-        for range in new where !exemptRanges.contains(range) { appendDirty(range) }
+        let newSet = Set(new)
+        let oldSet = Set(exemptRanges)
+        for range in exemptRanges where !newSet.contains(range) { appendDirty(range) }
+        for range in new where !oldSet.contains(range) { appendDirty(range) }
         exemptRanges = new
     }
 
@@ -364,9 +367,14 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
         guard desired != presented, canPresent() else { return false }
         let old = presented
         presented = desired
+        // 先頭位置 → 旧表示の添字(同じ位置が重なれば先のもの: `firstIndex` と同じ)
+        var oldIndexByStart: [Int: Int] = [:]
+        for (index, item) in old.enumerated() where oldIndexByStart[item.blockParagraphsRange.location] == nil {
+            oldIndexByStart[item.blockParagraphsRange.location] = index
+        }
         var matchedOld = Set<Int>()
         for item in desired {
-            if let index = old.firstIndex(where: { $0.blockParagraphsRange.location == item.blockParagraphsRange.location }) {
+            if let index = oldIndexByStart[item.blockParagraphsRange.location] {
                 matchedOld.insert(index)
                 let previous = old[index]
                 if previous.blockParagraphsRange != item.blockParagraphsRange
@@ -460,6 +468,21 @@ final class BlockPreviewController<Source: BlockPreviewSource> {
 
     /// `location` から始まる折りたたまれたブロックの表示(ビューポートレイアウトパスが描画を置くために使う)。
     func presentedBlock(at location: Int) -> PresentedBlock? {
-        presented.first { $0.block.range.location == location }
+        // 位置順なので二分探索(ビューポートのフラグメントごとに呼ばれる)
+        var low = 0
+        var high = presented.count
+        while low < high {
+            let mid = (low + high) / 2
+            if presented[mid].block.range.location < location { low = mid + 1 } else { high = mid }
+        }
+        return low < presented.count && presented[low].block.range.location == location ? presented[low] : nil
+    }
+
+    /// 先頭の段落が `paragraphStart` から始まる折りたたまれたブロック(インデント型コードブロックはブロックの先頭より前の
+    /// 行頭から始まる)。
+    func presentedBlock(startingParagraphAt paragraphStart: Int) -> PresentedBlock? {
+        guard let item = presentedBlock(containingParagraphAt: paragraphStart),
+              item.blockParagraphsRange.location == paragraphStart else { return nil }
+        return item
     }
 }

@@ -8,7 +8,10 @@ struct LineIndex {
     private let lineStarts: [Int]
 
     init(text: String) {
-        let ns = text as NSString
+        self.init(text: text as NSString)
+    }
+
+    init(text ns: NSString) {
         let length = ns.length
         var starts = [0]
         // character(at:) の 1 文字ずつの呼び出し(ネイティブ String をブリッジした場合は

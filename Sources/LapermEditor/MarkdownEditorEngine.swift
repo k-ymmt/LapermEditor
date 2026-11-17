@@ -62,6 +62,17 @@ final class MarkdownEditorEngine: NSObject {
     private var highlightScheduled = false
     private var lineIndex: LineIndex?
 
+    /// 文書の文字列。テキストストレージの `mutableString` をそのまま使い、`String` へのブリッジ(`NSTextView.string` /
+    /// `UITextView.text`、`NSTextStorage.string`)が毎回行う全文のコピーを避ける(大きな文書では打鍵・キャレット移動の
+    /// たびに数 MB をコピーしていた)。ストレージの今の中身を指す生きた参照なので、その場で読むだけにして保持しないこと。
+    private var documentString: NSString {
+        if let storage = host?.editorContentStorage?.textStorage { return storage.mutableString }
+        return (host?.editorText ?? "") as NSString
+    }
+
+    /// 文書の長さ(UTF-16)。
+    private var documentLength: Int { documentString.length }
+
     /// アウトラインが実際に変化したときだけ呼ばれる(Equatable 比較)
     var onOutlineChange: (([OutlineItem]) -> Void)?
     /// 折りたたまれている見出しの集合が変わったときに、その見出し位置(昇順)で呼ばれる
@@ -291,7 +302,7 @@ final class MarkdownEditorEngine: NSObject {
     private func updateFrontMatter() {
         guard let host else { return }
         refreshFrontMatterInputs()
-        frontMatter.update(frontMatter: highlighter.currentPlan.frontMatter, text: host.editorText as NSString)
+        frontMatter.update(frontMatter: highlighter.currentPlan.frontMatter, text: documentString)
         applyFrontMatterChanges()
     }
 
@@ -366,7 +377,7 @@ final class MarkdownEditorEngine: NSObject {
               let lineRange = frontMatter.lineRange(
                 atTablePoint: CGPoint(x: point.x - tableFrame.minX, y: point.y - tableFrame.minY))
         else { return nil }
-        let text = host.editorText as NSString
+        let text = documentString
         guard lineRange.location < text.length else { return nil }
         return NSRange(location: TextMotions.lineEnd(text: text, at: lineRange.location), length: 0)
     }
@@ -380,7 +391,7 @@ final class MarkdownEditorEngine: NSObject {
         refreshTableInputs()
         let plan = highlighter.currentPlan
         tables.update(
-            plan: plan, storage: storage, text: storage.string as NSString,
+            plan: plan, storage: storage, text: storage.mutableString,
             unresolvedWikiLinkRanges: highlighter.unresolvedWikiLinkRanges(within: plan.tables.map(\.range)))
         applyTableChanges()
     }
@@ -457,7 +468,7 @@ final class MarkdownEditorEngine: NSObject {
         for (location, frame) in tablePreviewFrames where frame.insetBy(dx: -2, dy: -2).contains(point) {
             guard let caret = tables.caretLocation(
                 inTableAt: location, tablePoint: CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)),
-                  caret <= (host?.editorText as NSString?)?.length ?? 0
+                  caret <= documentLength
             else { continue }
             return NSRange(location: caret, length: 0)
         }
@@ -471,7 +482,7 @@ final class MarkdownEditorEngine: NSObject {
     private func updateCodeBlocks() {
         guard let host, let storage = host.editorContentStorage?.textStorage else { return }
         refreshCodeBlockInputs()
-        codeBlocks.update(plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString)
+        codeBlocks.update(plan: highlighter.currentPlan, storage: storage, text: storage.mutableString)
         applyCodeBlockChanges()
     }
 
@@ -499,7 +510,7 @@ final class MarkdownEditorEngine: NSObject {
               let host, let contentManager = host.editorLayoutManager?.textContentManager,
               let elementRange = fragment.textElement?.elementRange else { return nil }
         let paragraphStart = contentManager.offset(from: contentManager.documentRange.location, to: elementRange.location)
-        guard let item = codeBlocks.presented.first(where: { $0.blockParagraphsRange.location == paragraphStart }) else { return nil }
+        guard let item = codeBlocks.presentedBlock(startingParagraphAt: paragraphStart) else { return nil }
         let location = item.block.range.location
         let origin = host.editorTextContainerOrigin
         let frame = fragment.layoutFragmentFrame
@@ -521,7 +532,7 @@ final class MarkdownEditorEngine: NSObject {
             let local = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
             guard !codeBlocks.isOnCopyButton(inCodeBlockAt: location, point: local),
                   let caret = codeBlocks.caretLocation(inCodeBlockAt: location, point: local),
-                  caret <= (host?.editorText as NSString?)?.length ?? 0
+                  caret <= documentLength
             else { continue }
             return NSRange(location: caret, length: 0)
         }
@@ -581,7 +592,7 @@ final class MarkdownEditorEngine: NSObject {
         guard let host, let storage = host.editorContentStorage?.textStorage else { return }
         refreshLinkPreviewInputs()
         linkPreviews.update(
-            plan: highlighter.currentPlan, storage: storage, text: storage.string as NSString, store: linkPreviewStore,
+            plan: highlighter.currentPlan, storage: storage, text: storage.mutableString, store: linkPreviewStore,
             isActive: isLinkPreviewActive)
         applyLinkPreviewChanges()
     }
@@ -633,7 +644,7 @@ final class MarkdownEditorEngine: NSObject {
     func linkPreviewHit(atPoint point: CGPoint) -> LinkHit? {
         for (location, frame) in linkPreviewFrames where frame.contains(point) {
             guard let target = linkPreviews.linkTarget(forLinkPreviewAt: location),
-                  target.editCaret <= (host?.editorText as NSString?)?.length ?? 0 else { continue }
+                  target.editCaret <= documentLength else { continue }
             return LinkHit(target: .url(destination: target.destination), editCaret: NSRange(location: target.editCaret, length: 0), isRendered: true)
         }
         return nil
@@ -700,7 +711,7 @@ final class MarkdownEditorEngine: NSObject {
 
     private func refreshLivePreviewFocus() {
         guard let host else { return }
-        livePreview.selectionDidChange(host.editorSelectedRanges, text: host.editorText as NSString)
+        livePreview.selectionDidChange(host.editorSelectedRanges, text: documentString)
     }
 
     /// エディタ(テキストビュー)が first responder になった / でなくなった。ビューの become / resign
@@ -768,7 +779,7 @@ final class MarkdownEditorEngine: NSObject {
         guard !ranges.isEmpty,
               let contentStorage = host?.editorContentStorage,
               let storage = contentStorage.textStorage else { return }
-        let text = storage.string as NSString
+        let text: NSString = storage.mutableString
         // 位置順に走査し、直前に求めた段落に収まるレンジは段落の算出を省く(段落ごとに 1 回)。
         // マーカーごとに paragraphRange を求めると、1 行に何万ものマーカーがある文書で
         // 行長 × マーカー数の二乗コストになる。
@@ -862,7 +873,7 @@ final class MarkdownEditorEngine: NSObject {
         // bodyRange の直前は見出し(最終)行の改行。その行の contentsEnd = 見出し行末。
         // アウトラインは次の flush まで旧座標のことがある(IME 中の flush 遅延など)ので、
         // 文書外を指していたら何もしない(getLineStart の NSRangeException 防止)。
-        let text = host.editorText as NSString
+        let text = documentString
         let terminatorLocation = fold.bodyRange.location - 1
         guard terminatorLocation >= 0, terminatorLocation < text.length else { return }
         host.editorSelect(NSRange(location: TextMotions.lineEnd(text: text, at: terminatorLocation), length: 0))
@@ -941,9 +952,17 @@ final class MarkdownEditorEngine: NSObject {
     /// 本体のない見出し(折畳不可)にはシェブロンを出さない。
     func foldMarker(inParagraphFrom start: Int, to end: Int) -> GutterFoldMarker? {
         guard isFoldingEnabled else { return nil }
-        guard let item = foldingController.outline.first(where: {
-            $0.headingLocation >= start && $0.headingLocation < end && $0.bodyRange.length > 0
-        }) else { return nil }
+        // アウトラインは見出し位置の昇順: 段落の先頭以降の最初の見出しから二分探索で始める(ガターの行ごとに
+        // 全見出しを走査しない)
+        let outline = foldingController.outline
+        var low = 0
+        var high = outline.count
+        while low < high {
+            let mid = (low + high) / 2
+            if outline[mid].headingLocation < start { low = mid + 1 } else { high = mid }
+        }
+        guard let item = outline[low...].prefix(while: { $0.headingLocation < end }).first(where: { $0.bodyRange.length > 0 })
+        else { return nil }
         return GutterFoldMarker(
             headingLocation: item.headingLocation,
             isFolded: foldingController.isFolded(headingLocation: item.headingLocation))
@@ -953,7 +972,7 @@ final class MarkdownEditorEngine: NSObject {
 
     /// UTF-16 オフセットの 1-based 行番号。行インデックスは編集で破棄され、次回必要時に作り直す。
     func lineNumber(atOffset offset: Int) -> Int {
-        let index = lineIndex ?? LineIndex(text: host?.editorText ?? "")
+        let index = lineIndex ?? LineIndex(text: documentString)
         lineIndex = index
         return index.lineNumber(at: offset)
     }
@@ -1197,7 +1216,7 @@ final class MarkdownEditorEngine: NSObject {
     /// 中でもない。段落は押した文字のもの(複数の段落にまたがるリンクは、段落ごとに描かれ方が違う)。
     func isRenderedAsLink(at characterIndex: Int) -> Bool {
         guard livePreview.isEnabled, let host else { return false }
-        let text = host.editorText as NSString
+        let text = documentString
         guard characterIndex <= text.length else { return false }
         let paragraph = text.paragraphRange(for: NSRange(location: characterIndex, length: 0))
         if livePreview.isFocused(paragraph: paragraph) { return false }
@@ -1212,7 +1231,7 @@ final class MarkdownEditorEngine: NSObject {
             return LinkURLResolver.resolve(destination: destination, baseURL: baseURL)?.absoluteString ?? destination
         case .wiki(let reference):
             guard let host else { return nil }
-            let text = host.editorText as NSString
+            let text = documentString
             guard NSMaxRange(reference.range) <= text.length else { return nil }
             return text.substring(with: reference.range)
         }

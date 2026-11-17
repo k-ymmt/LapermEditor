@@ -134,3 +134,18 @@ private func cellTexts(_ row: MarkdownTable.Row, in text: String) -> [String] {
     #expect(table.isTouched(byEditBefore: NSRange(location: 2, length: 1)))
     #expect(table.isTouched(byEditBefore: NSRange(location: 0, length: 2)) == false)
 }
+
+/// セル内のインライン要素の位置補正は、行を二分探索で引いても各行のセルに正しく効く(先頭・途中・最後の行と、
+/// `\|` の無い行が混ざる大きなテーブル)。
+@Test func escapedPipeCorrectionFindsTheRowInALargeTable() {
+    var lines = ["| h \\| `a` | b |", "|---|---|"]
+    for i in 0..<300 {
+        lines.append(i % 3 == 0 ? "| x \\| `c\(i)` | **d** |" : "| `e\(i)` | f |")
+    }
+    let md = lines.joined(separator: "\n")
+    let plan = MarkdownParser().highlightPlan(for: md)
+    let ns = md as NSString
+    let codes = plan.spans.filter { $0.kind == .inlineCode }.map { ns.substring(with: $0.range) }
+    #expect(codes == ["`a`"] + (0..<300).map { "`\($0 % 3 == 0 ? "c" : "e")\($0)`" })
+    #expect(plan.spans.filter { $0.kind == .strong }.map { ns.substring(with: $0.range) } == Array(repeating: "**d**", count: 100))
+}

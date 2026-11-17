@@ -268,7 +268,7 @@ final class BlockFragmentProvider: NSObject, NSTextLayoutManagerDelegate {
             // 追加行(キャレット行)までブロックに入るときは、余白が本文と追加行の間に入ってしまうので付けず、
             // 追加行の下の予約(`CodeBlockFragment.reservedBottomHeight`)で確保する。
             let followedByExtraLine = edges.includesTrailingExtraLine
-                && Self.endsWithLineBreak(range, in: storage.string as NSString)
+                && Self.endsWithLineBreak(range, in: storage.mutableString)
             let spacingAfter = edges.isLast && !followedByExtraLine
             guard edges.isFirst || spacingAfter else { return nil }
             let padding = theme.codeBlockVerticalPadding
